@@ -64,5 +64,16 @@
     "area": "Limitations",
     "description": "PS says faces + Firefox — decide add vs known limitation, update pitch.",
     "link": "/docs/limitations"
+  },
+  {
+    "id": "architecture-v3-locked",
+    "title": "PerScope — Locked Architecture (v3) — copyable MD",
+    "owner": "All — Cosmic Crux",
+    "status": "ongoing",
+    "priority": "P0",
+    "due": "2026-09-08",
+    "area": "Architecture",
+    "description": "Three callers + 3 extractors + 3-tier + Qwen3 server now live at /docs/architecture — MD is copyable (Copy MD button + per-block). Review and implement.",
+    "link": "/docs/architecture"
   }
 ]
