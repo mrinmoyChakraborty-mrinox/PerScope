@@ -1,0 +1,68 @@
+[
+  {
+    "id": "mcp-gap",
+    "title": "MCP confirm-flow gap — decide polling vs held-open",
+    "owner": "Person 1 + 5",
+    "status": "urgent",
+    "priority": "P0",
+    "due": "2026-09-06",
+    "area": "Bridge / Validator",
+    "description": "MCP tools/call is request/response only — pending approve has no push. Decide check_pending_action vs hold-open before finals.",
+    "link": "/docs/tool-schema"
+  },
+  {
+    "id": "florence-fallback",
+    "title": "Florence-2 WASM fallback proof",
+    "owner": "Person 2 (Jeet)",
+    "status": "must-do",
+    "priority": "P0",
+    "due": "2026-09-06",
+    "area": "Perception",
+    "description": "Browser ONNX experimental — profile WebGPU→WASM per model, confirm DOM+OCR graceful degrade.",
+    "link": "/docs/kickoff"
+  },
+  {
+    "id": "qwen-adjudication",
+    "title": "Tier2 Qwen 2B adjudication — wire to offscreen",
+    "owner": "Person 3 + 2",
+    "status": "ongoing",
+    "priority": "P1",
+    "due": "2026-09-07",
+    "area": "Privacy",
+    "description": "4 models in one offscreen doc — memory profiling + Sanitization Plan → deterministic redactor.",
+    "link": "/docs/tasks/03-privacy-redaction"
+  },
+  {
+    "id": "reasoning-server",
+    "title": "Reasoning Server — minimal Qwen3 via Ollama/vLLM",
+    "owner": "Person 5 + 1",
+    "status": "urgent",
+    "priority": "P0",
+    "due": "2026-09-07",
+    "area": "Server",
+    "description": "Required PS deliverable — 7-tool constrained output, multi-turn scroll→re-evaluate, rented GPU noted.",
+    "link": "/docs/tasks/05-server-bridge-playground"
+  },
+  {
+    "id": "capture-review",
+    "title": "Popup Capture Review (Visual + Context)",
+    "owner": "Person 4 (Shritama)",
+    "status": "must-do",
+    "priority": "P1",
+    "due": "2026-09-08",
+    "area": "Extension",
+    "description": "States clean/ambiguous/blocked, Send vs Send & Submit, chat adapters + clipboard fallback.",
+    "link": "/docs/tasks/04-extension-automation"
+  },
+  {
+    "id": "face-firefox-decision",
+    "title": "Face + Firefox decisions — document honestly",
+    "owner": "Person 6 + 3 + 4",
+    "status": "urgent",
+    "priority": "P0",
+    "due": "2026-09-06",
+    "area": "Limitations",
+    "description": "PS says faces + Firefox — decide add vs known limitation, update pitch.",
+    "link": "/docs/limitations"
+  }
+]

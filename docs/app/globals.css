@@ -1,19 +1,45 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
 :root{color-scheme:dark}
-body{background:#0a0a0f;color:#e6e6f0}
-.prose{max-width:78ch}
-.prose h1{font-size:2rem;font-weight:800;margin:1.2em 0 .6em}
-.prose h2{font-size:1.35rem;font-weight:700;margin:1.4em 0 .5em;color:#cbb8ff}
-.prose h3{font-size:1.1rem;font-weight:600;margin:1.2em 0 .4em}
-.prose p{margin:.6em 0;line-height:1.7}
-.prose ul{list-style:disc;padding-left:1.4em;margin:.6em 0}
+*{scrollbar-width:thin;scrollbar-color:#23233a #0a0a0f}
+::-webkit-scrollbar{width:8px;height:8px}
+::-webkit-scrollbar-track{background:#0a0a0f}
+::-webkit-scrollbar-thumb{background:#23233a;border-radius:8px}
+::-webkit-scrollbar-thumb:hover{background:#2a2a4a}
+body{background:#0a0a0f;color:#e6e6f0;font-feature-settings:"ss01" 1; -webkit-font-smoothing:antialiased}
+::selection{background:#7c5cff33}
+
+/* Prose — GitHub-dark inspired, tighter */
+.prose{max-width:78ch; --tw-prose-body:#e6e6f0}
+.prose h1{font-size:2.15rem;font-weight:900;letter-spacing:-.02em;margin:1.2em 0 .5em;background:linear-gradient(135deg,#fff 30%,#cbb8ff 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+.prose h2{font-size:1.35rem;font-weight:800;letter-spacing:-.015em;margin:1.6em 0 .5em;color:#e6e6f0;position:relative;padding-left:14px}
+.prose h2::before{content:"";position:absolute;left:0;top:.35em;bottom:.2em;width:3px;border-radius:999px;background:linear-gradient(#7c5cff,#00e5a0)}
+.prose h3{font-size:1.05rem;font-weight:700;margin:1.3em 0 .4em;color:#cbb8ff}
+.prose p{margin:.65em 0;line-height:1.75;color:#d8d8e8}
+.prose ul{list-style:none;padding-left:0;margin:.7em 0}
+.prose ul li{position:relative;padding-left:1.35em;margin:.35em 0}
+.prose ul li::before{content:"";position:absolute;left:0;top:.7em;width:6px;height:6px;border-radius:50%;background:#7c5cff66;border:1px solid #7c5cff}
 .prose ol{list-style:decimal;padding-left:1.4em}
-.prose code{font-size:.9em;background:#1c1c2a;padding:.15em .35em;border-radius:4px}
-.prose pre{background:#14141c;border:1px solid #23233a;padding:12px;border-radius:10px;overflow:auto}
-.prose table{width:100%;border-collapse:collapse;margin:12px 0;font-size:.9em}
-.prose th,.prose td{border:1px solid #23233a;padding:8px;text-align:left}
-.prose th{background:#1a1a2a;color:#cbb8ff}
-.prose blockquote{border-left:3px solid #7c5cff;padding-left:12px;color:#b8b8d0;margin:10px 0}
-.prose a{color:#7c5cff;text-decoration:underline}
+.prose li{line-height:1.7}
+.prose code{font-size:.88em;background:#1c1c2a;border:1px solid #23233a;padding:.15em .38em;border-radius:6px;color:#cbb8ff}
+.prose pre{background:#0f0f1a;border:1px solid #23233a;padding:14px;border-radius:12px;overflow:auto;box-shadow:inset 0 1px 0 #ffffff0a}
+.prose pre code{background:transparent;border:0;padding:0;color:#e6e6f0}
+.prose table{width:100%;border-collapse:separate;border-spacing:0;margin:14px 0;font-size:.88em;border:1px solid #23233a;border-radius:12px;overflow:hidden}
+.prose th,.prose td{border-bottom:1px solid #23233a;padding:9px 10px;text-align:left}
+.prose tr:last-child td{border-bottom:0}
+.prose th{background:#15151f;color:#cbb8ff;font-weight:700;font-size:.82em;letter-spacing:.04em;text-transform:uppercase}
+.prose blockquote{border-left:3px solid #7c5cff;background:#14141c;padding:10px 14px;border-radius:0 10px 10px 0;color:#b8b8d0;margin:12px 0}
+.prose a{color:#8b6cff;text-decoration:none;border-bottom:1px dashed #7c5cff66;transition:all .15s}
+.prose a:hover{color:#a48fff;border-bottom-color:#7c5cff}
+.prose hr{border:0;border-top:1px solid #23233a;margin:1.5em 0}
+.prose img{border-radius:12px;border:1px solid #23233a}
+
+/* Utilities */
+.glass{backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px)}
+.card-hover{transition:all .2s cubic-bezier(.2,.8,.2,1)}
+.card-hover:hover{transform:translateY(-2px);box-shadow:0 10px 30px #00000055, 0 0 0 1px #7c5cff33}
+.shine{position:relative;overflow:hidden}
+.shine::after{content:"";position:absolute;inset:0;background:linear-gradient(105deg,transparent 40%,#ffffff0a 50%,transparent 60%);transform:translateX(-100%);transition:transform .8s}
+.shine:hover::after{transform:translateX(100%)}
