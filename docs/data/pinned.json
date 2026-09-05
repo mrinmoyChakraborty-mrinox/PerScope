@@ -75,5 +75,16 @@
     "area": "Architecture",
     "description": "Three callers + 3 extractors + 3-tier + Qwen3 server now live at /docs/architecture — MD is copyable (Copy MD button + per-block). Review and implement.",
     "link": "/docs/architecture"
+  },
+  {
+    "id": "ppt-improvement-plan",
+    "title": "PPT — SIH Final Merged Improvement Plan (modify deck)",
+    "owner": "Person 6 + All — 6-slide fixes",
+    "status": "urgent",
+    "priority": "P0",
+    "due": "2026-09-06",
+    "area": "Pitch",
+    "description": "Fix Ettin 60B→68M, Qwen naming, rebuild Slide 6, add metrics table (15 metrics), demo proof, face/Firefox, browser compat. 77→86-92. Copyable MD at /docs/ppt-improvement-plan.",
+    "link": "/docs/ppt-improvement-plan"
   }
 ]

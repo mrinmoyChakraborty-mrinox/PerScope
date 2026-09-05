@@ -6,6 +6,7 @@ const DOCS_DIR = path.join(process.cwd());
 
 // Files we expose as team docs (top-level + tasks)
 export const DOC_ENTRIES = [
+  { slug: "ppt-improvement-plan", file: "PPT_IMPROVEMENT_PLAN.md", title: "PPT — Final Merged Improvement Plan", group: "Pitch" },
   { slug: "kickoff", file: "KICKOFF.md", title: "Kickoff — What to Add", group: "Meta" },
   { slug: "architecture", file: "architecture.md", title: "Locked Architecture (v3)", group: "Core" },
   { slug: "tool-schema", file: "tool-schema.md", title: "Tool Schema — 7 tools", group: "Core" },
