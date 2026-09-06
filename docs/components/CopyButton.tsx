@@ -10,10 +10,10 @@ export function CopyButton({ text, label = "Copy MD" }: { text: string; label?: 
         setCopied(true);
         setTimeout(() => setCopied(false), 1400);
       }}
-      className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border transition ${
+      className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border transition shadow-sm ${
         copied
-          ? "bg-[#00e5a0] text-black border-[#00e5a0]"
-          : "bg-[#1a1a2a] text-[#b8b8d0] border-[#23233a] hover:bg-[#23233a] hover:text-white"
+          ? "bg-[#2563eb] dark:bg-[#00e5a0] text-white dark:text-black border-[#2563eb] dark:border-[#00e5a0]"
+          : "bg-[var(--card)] text-[var(--muted)] border-[var(--border)] hover:bg-[var(--card-soft)] hover:text-[var(--text)]"
       }`}
       title="Copy raw markdown to clipboard"
     >
@@ -31,7 +31,7 @@ export function CopyCodeButton({ code }: { code: string }) {
         setCopied(true);
         setTimeout(() => setCopied(false), 1200);
       }}
-      className="px-2 py-1 rounded-md bg-[#0a0a0f] border border-[#23233a] text-[11px] text-[#8a8aa0] hover:text-white hover:border-[#7c5cff]/50 transition"
+      className="px-2 py-1 rounded-md bg-[var(--code-bg)] border border-[var(--code-border)] text-[11px] text-[var(--faint)] hover:text-[var(--text)] hover:border-[var(--accent)]/40 transition"
     >
       {copied ? "✓" : "Copy"}
     </button>
