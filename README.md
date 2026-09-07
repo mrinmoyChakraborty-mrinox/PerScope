@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="perscope_banner.png" alt="PerScope — See the content. Not the sensitive." width="100%" />
+</p>
+
 # PerScope — See everything. Leak nothing.
 
 > **SIH26171 — On-device Visual Perception for Light-weight Browser Agents**
