@@ -1,9 +1,8 @@
 import { getDoc, getDocSlugs } from "@/lib/docs";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { CopyButton } from "@/components/CopyButton";
+import { Markdown } from "@/components/Markdown";
 
 export function generateStaticParams() {
   return getDocSlugs().map((slug) => ({ slug: slug.split("/") }));
@@ -40,32 +39,7 @@ export default function DocPage({ params }: { params: { slug?: string[] } }) {
           <CopyButton text={content} label="Copy MD" />
         </div>
         <article className="prose max-w-none">
-          <ReactMarkdown
-            remarkPlugins={[remarkGfm]}
-            components={{
-              pre: ({ children }: any) => {
-                // Extract raw code text for per-block copy
-                const codeText = (() => {
-                  try {
-                    const child = (children as any)?.props?.children ?? children;
-                    return String(child ?? "");
-                  } catch {
-                    return "";
-                  }
-                })();
-                return (
-                  <div className="relative">
-                    <pre>{children}</pre>
-                    <div className="absolute top-2 right-2">
-                      <span className="px-2 py-1 rounded-md bg-[#0a0a0f]/80 border border-[#23233a] text-[11px] text-[#8a8aa0] backdrop-blur">copyable</span>
-                    </div>
-                  </div>
-                );
-              },
-            }}
-          >
-            {content}
-          </ReactMarkdown>
+          <Markdown content={content} />
         </article>
         <div className="flex gap-2 pt-4 border-t border-[#23233a]">
           <CopyButton text={content} label="Copy full MD" />

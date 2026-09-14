@@ -1,66 +1,65 @@
-# PerScope — Security Model (v3)
+# PerScope — Security Model (v4, Tested + Planned)
+
+> Tested guarantees (gates, fallback, caption scrubbing) are implemented. Validator / confirm-flow / logging guarantees are locked design, not yet built — marked per row.
 
 ## Two Boundaries
 
 ```
-[Webpage: DOM + screenshot]
+[Input image: screenshot / upload]
   ↓ (on-device only)
-[Perception + Tiered Detection + Qwen 2B → Sanitization Plan → Deterministic Redaction → Self-Audit]
- ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ TRUST BOUNDARY: Sanitized Context ─ ─ ─ ─ ─ ─ ─ ─ ─ ─
-[PerScope Reasoning Server / Real MCP Agent / Playground / Paste-Target Chat] — reasoning over sanitized context only
+[BlazeFace + PaddleOCR + Ettin-68M + heuristics + FastVLM-0.5B → Fusion → Safety Gates → Value-Only Geometry → Canvas Redaction → Caption Scrubbing]  TESTED
+  ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ TRUST BOUNDARY: Sanitized Context (intended, not yet wired) ─ ─ ─ ─ ─ ─ ─ ─ ─ ─
+[Reasoning Server / Real MCP Agent / Playground / Paste-Target Chat] — reasoning over sanitized context only  PLANNED
   ↓ {id, tool, params}
-[Validator: isDestructive()] — identical for all callers
+[Validator: isDestructive()] — identical for all callers  PLANNED
   ↓
-[content.js: live DOM execution]
+[content.js: live DOM execution]  PLANNED
 ```
 
 ## Guarantees
 
-### 1. Redact-before-serialize (plan/execute split)
+### 1. Never trust model output blindly (TESTED — plan/propose split)
 
-- Tier2 Qwen 2B **decides** (Sanitization Plan: spans → `[PERSON]`/`[EMAIL]` etc.) — internal, never transmitted, never trusted to rewrite.
-- **Deterministic redactor executes**: DOM `value` replacement (structure/IDs/classes/roles untouched) + image bbox masking. Non-model step cannot hallucinate.
+- FastVLM-0.5B **proposes** (`redactions`, `additional_redactions`, `rejected_candidates`) — never executes.
+- **Safety gates validate**: every proposal must reference a real fused `candidate_id` / OCR id and pass type allowlists.
+- Failure → **`fusion_fallback`**: deterministic (heuristics + NER) output only. Distinguishes `ok` from `adjudication_failed`/`qwen_failed`-class states — a gate failure never presents as "clean".
+- **Value-only geometry chokepoint**: exact match → full OCR box; substring → proportional sub-box with whole-line guards; otherwise **REJECT** rather than over-redact.
 
-### 2. Never send/store raw screenshot
+### 2. Caption scrubbing — second safety layer (TESTED)
 
-Sanitized Context is structured JSON (`elements: [{id, type, label, value:"[EMAIL]", bbox, ...}]`) + optional sanitized image/visual. Raw screenshot + raw DOM text never cross the boundary and are not persisted (Dashboard stores redacted-only entries with `Clear All`).
+Every known sensitive value is replaced with `[REDACTED:TYPE]` in any generated caption/description **before** it reaches UI or the evidence object. Covers a related but not identical failure mode to output re-scan.
 
-### 3. Uniform validator — same gate for every caller
+### 3. Output-level self-audit (OPEN DECISION)
 
-`isDestructive({tool, params, element})` runs on **every** `click`/`type`/`submit`/`select_option` before `content.js` touches DOM. Same function for:
+v3 self-audit (re-run Tier0+Tier1 on the *output* payload, fail-closed) has **not** been re-implemented on the fusion pipeline. Decide explicitly whether caption scrubbing suffices or output re-scan returns. Do not leave silent.
 
-- PerScope Reasoning Server (our own model — no shortcut for "our model is trusted"),
-- Real MCP agent (Claude Code/Codex via bridge),
-- Playground,
-- **Hidden prompt-injection text on the page itself** (validator evaluates what the *action* would do, not where the instruction came from).
+### 4. Never send/store raw image (TESTED locally; boundary wiring PLANNED)
 
-Outcome for destructive: `{status:"blocked", reason, pending_id}` → side panel Approve/Deny (60s timeout → `timeout`) → `{type:"action_update", pending_id, status:"ok"|"denied"|"timeout"}`. Security Log records every blocked + confirm outcome. `scroll` and `read_page`/`list_interactive_elements` are never gated.
+Evidence object holds findings, bboxes, scrubbed caption, timings, device info. Dashboard stores redacted-only entries with PNG/JSON export + (planned) `Clear All`. Nothing in the tested build transmits anything to any server.
 
-### 4. Fail-closed self-audit
+### 5. Uniform validator — same gate for every caller (PLANNED)
 
-After redaction, **re-run Tier0 + Tier1 on the output payload** (not input). If hit → block payload entirely, log, do not auto-retry. Low-confidence OCR matches never silently clear as safe — they escalate.
+`isDestructive({tool, params, element})` runs on **every** `click`/`type`/`submit`/`select_option` before `content.js` touches DOM. Same function for PerScope Reasoning Server (no "our model is trusted" shortcut), real MCP agent, Playground, and **hidden prompt-injection text on the page** (evaluates what the *action* would do, not where the instruction came from). Destructive → `{status:"blocked", reason, pending_id}` → side-panel Approve/Deny (60s timeout → `timeout`) → `{type:"action_update", ...}`. `scroll` / `read_page` / `list_interactive_elements` never gated. `content.js` re-resolves `element_id` against live DOM (`stale_element` on mismatch).
 
-### 5. OCR confidence escalation (the v3 fix)
-
-- **DOM-sourced** Tier0 match (checksum etc.) → trusted directly.
-- **OCR-sourced** Tier0 match: trusted only if **high PaddleOCR confidence** *and* checksum passes; otherwise escalate to Tier1 (Ettin). Prevents low-signal OCR from silently passing PII as "safe."
-
-### 6. Fail-closed vs. "clean" distinction
+### 6. Clean vs. ambiguous vs. blocked (TESTED in pipeline, PLANNED in UI)
 
 - `clean` = no sensitive info found (explicit).
-- `blocked`/`ambiguous` = region could not be safely sanitized — capture does not proceed until reviewed. The UI must distinguish these; Dashboard must not conflate "0 redacted" with "0 found due to error."
+- `ambiguous`/low-confidence = fail-closed, user reviews before continuing.
+- `blocked` = region could not be safely sanitized — capture does not proceed until reviewed.
+- UI + Dashboard must not conflate "0 redacted" with "0 found due to error".
 
-## What the validator is NOT
+## What the validator is NOT (planned)
 
-- It does not try to detect prompt-injection language with an LLM. It is a local, deterministic check on the proposed *action* (e.g. `Delete Account` button, `submit` on a form that deletes data).
-- It does not depend on the caller being honest about `element_id` — `content.js` re-resolves the id against current DOM and returns `stale_element` if mismatched.
+- Not an LLM prompt-injection detector — a local, deterministic check on the proposed *action*.
+- Not dependent on caller honesty about `element_id`.
 
 ## Permissions & Surface Area
 
-- Manifest `tabs` + `scripting` required for Chat Destination & Injection Layer — disclosed, not silent.
+- Manifest `tabs` + `scripting` required for the (planned) Chat Destination & Injection Layer — disclosed, not silent.
 - Offscreen document is the only WebGPU/ONNX host; `background.js` never touches pixels or token streams.
+- Tested MV3 manifest loads ORT WASM from `chrome.runtime.getURL("ort/")`, not CDN (MV3 CSP).
 
-## Citations (corrected per Person 6)
+## Citations
 
-- Offscreen + WebGPU pattern: **community-proven, publicly documented** (not "Hugging Face's own reference Gemma extension").
-- Server model: **Qwen3** family (not Qwen2.5, which is dated as of 2026) — open-weight, Apache 2.0.
+- Offscreen + WebGPU pattern: **community-proven, publicly documented** (not an official vendor reference extension).
+- Server model: **TBD, explicitly not Qwen** — open-weight, Apache-2.0-compatible or equivalent, via vLLM/Ollama.

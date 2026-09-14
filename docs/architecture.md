@@ -1,164 +1,128 @@
-﻿# PerScope — Locked Architecture (v3)
+﻿# PerScope — Final Architecture (v4, Tested)
 
 > **SIH26171 — On-Device Visual Perception for Light-weight Browser Agents**
-> Team Cosmic Crux — v3 update. Three things changed since v2: (1) perception is three parallel extractors, (2) redaction is a three-tier escalation, (3) server-side reasoning is **required**, not optional.
+> Team Cosmic Crux — v4. Supersedes v3 (DOM + PaddleOCR + Florence-2-base, tiered escalation regex → Ettin → Qwen 2B) and all earlier drafts.
+> **Read Sections 1–3 as tested ground truth. Read Sections 4–6 as intended design (planned, not yet built).**
 
-## 0. Locked Architecture
+## 0. Status — What's Tested vs. What's Still Planned
+
+| Layer | Status |
+|---|---|
+| Perception (face + OCR) | **Tested** — BlazeFace + PaddleOCR, ONNX, on-device |
+| PII detection & fusion | **Tested** — NER + heuristics + FastVLM adjudication, fused |
+| Redaction (value-only geometry + canvas) | **Tested** — most validated part of the system |
+| Safety gates / fail-closed | **Tested** — unvalidated model output → `fusion_fallback`, never blind trust |
+| Caption scrubbing | **Tested** — `[REDACTED:TYPE]` before UI/evidence |
+| Action validator / confirm flow | **Planned** — no WS client, no `content.js` action layer in tested build |
+| Reasoning Server / MCP bridge / Playground | **Planned** — tested build is local-only; nothing crosses a trust boundary yet |
+| DOM-based extraction | **Superseded** — tested pipeline works on images, not live DOM |
+
+## 1. End-to-End Flow — As Tested
 
 ```mermaid
-flowchart LR
-    G["Real MCP Agent<br/>Claude Code / Codex"]
-    RS["PerScope Reasoning Server<br/>Qwen3, self-hosted, open-weight<br/>REQUIRED"]
-    A["Demo Playground<br/>manual simulated agent"]
-    H["MCP Bridge<br/>stdio ⇄ WebSocket, zero logic"]
-    B["WebSocket Server"]
-    C["Chrome Extension<br/>background.js<br/>keepalive + validator"]
-    D["Offscreen Document<br/>offscreen.js<br/>DOM Extractor + PaddleOCR + Florence-2-base<br/>Tier0 Regex/Checksum → Tier1 Ettin-68M → Tier2 Qwen 2B<br/>→ Sanitization Plan → Deterministic Redaction → Self-Audit"]
-    E["Content Script<br/>content.js<br/>live DOM + AI-chat injection"]
-    F["Extension UI<br/>Popup (Capture) + Side Panel + Dashboard"]
-
-    G -->|"MCP stdio, auto-spawned"| H
-    H <-->|WebSocket| C
-    RS <-->|WebSocket| C
-    A <-->|WebSocket| C
-    C -->|Chrome Runtime Messages| D
-    D -->|sanitized context| E
-    E -->|State, Actions| F
-    C -->|UI updates| F
+flowchart TD
+    IN["Input Image\n(file upload OR visible-tab capture)"]
+    IN --> FACE["Face Detection\nBlazeFace, ONNX\n128x128 planar RGB, NMS (IoU 0.3, min conf 0.6)"]
+    IN --> OCR["OCR\nPaddleOCR PP-OCRv6-small\nper-box recognition, min confidence 0.5"]
+    OCR --> NER["Signal 1: Ettin-68M NER\ntoken classification over OCR text\nBIO labels -> entity spans"]
+    OCR --> HEUR["Signal 2: Deterministic Heuristics\nregex/label dictionaries: DOB, phone, email, IDs, account/UPI/IFSC/IBAN"]
+    IN --> FVLM["Signal 3: FastVLM-0.5B\nmultimodal adjudicator — image + OCR/fused evidence\nJSON: caption, redactions, additional_redactions, rejected_candidates"]
+    NER --> FUSE["Fusion\nmerge overlapping candidates\ncandidate_types, sources, confidence, ocr_ids"]
+    HEUR --> FUSE
+    FACE --> FUSE
+    FUSE --> GATE["Safety Gates\nFastVLM proposals must reference real fused candidate_id / OCR ids + type allowlists"]
+    FVLM --> GATE
+    GATE -->|"validated"| GEOM["Value-Only Geometry Resolution\nexact match -> full OCR box; substring -> proportional sub-box; otherwise REJECT"]
+    GATE -->|"fails validation"| FALLBACK["fusion_fallback\ndeterministic output only"]
+    FALLBACK --> GEOM
+    GEOM --> REDACT["Canvas Redaction\nblur or black-box (OffscreenCanvas)"]
+    REDACT --> CAP["Caption Scrubbing\nevery sensitive value -> [REDACTED:TYPE]"]
+    CAP --> OUT["Redacted Image + Evidence Object\n(findings, bboxes, caption, timings, device info)"]
 ```
 
-**Three callers, one validator, one schema.** Demo Playground, MCP Bridge (real agent), and PerScope Reasoning Server all speak the identical `{id, tool, params}` WebSocket schema. The extension cannot tell them apart — that is the point.
+- All models on-device — WebGPU with WASM/CPU fallback, no cloud calls.
+- Core principle (tested reading): layout and non-sensitive content stay intact; only value pixel regions are covered. Value-only, never whole-line.
+- Self-audit (re-scan output payload) has **not** been re-implemented on the new pipeline — the tested equivalent is **caption scrubbing**. Explicit decision needed whether output-level self-audit is still required on top.
 
-### What changed vs v2
+### What changed vs v3
 
-| Dimension | v2 | v3 |
+| Dimension | v3 (planned) | v4 (tested) |
 |---|---|---|
-| Perception | Single small VLM (Moondream/SmolVLM) | **Three parallel extractors**: DOM Extractor (native, no model) + PaddleOCR (text+boxes+confidence) + Florence-2-base (caption, grounding, layout) |
-| Redaction | Regex + optional NER | **Three-tier escalation**: Tier0 Regex/Checksum → Tier1 Ettin-68M NER → Tier2 Qwen 2B adjudication → **Deterministic Redaction** → **Self-Audit (fail-closed)** |
-| Server reasoning | Optional demo | **Required deliverable**: self-hosted Qwen3 family (open-weight) via vLLM/Ollama, constrained to tool schema |
-| Tool schema | 5 tools | **7 tools**: `read_page`, `list_interactive_elements`, `click`, `type`, `submit`, `select_option` (new), `scroll` (new, never gated) |
-| Offscreen models | 1 | **4** (PaddleOCR, Florence-2, Ettin-68M, Qwen 2B) — DOM Extractor needs no model |
+| Input | DOM snapshot + screenshot | **Image only** (upload or visible-tab capture) |
+| Perception | DOM Extractor + PaddleOCR + Florence-2-base | **BlazeFace + PaddleOCR + FastVLM-0.5B** |
+| PII detection | Sequential tiers: regex → Ettin (residual) → Qwen 2B (ambiguous only) | **Parallel fusion**: Ettin + heuristics + FastVLM all run, then fused + gated |
+| Adjudication | Qwen3.5-2B plans, deterministic redactor executes | **FastVLM-0.5B proposes, safety gates validate, fallback on failure** |
+| Faces | Open gap | **Solved via BlazeFace** |
+| Geometry | Whole-box masking | **Value-only chokepoint** (exact / proportional-sub-box / reject) |
+| Server reasoning | Qwen3 family | **Model TBD, explicitly not Qwen** |
+| Qwen lineage | Qwen 2B on-device + Qwen2.5/3 server | **Qwen dropped entirely, both sides** |
 
-### What is unchanged
+## 2. Detection — Parallel Fusion, Not Sequential Escalation
 
-- Chrome service workers **must** send keepalive every 20–30s or are killed idle — `background.js` pings `{type:"ping"}` / expects `{type:"pong"}` from day one.
-- Service workers **cannot** access WebGPU/DOM — `offscreen.js` is the only host for Transformers.js + ONNX Runtime Web (WebGPU with WASM fallback).
-- `content.js` is the **only** component touching live DOM — now also owns AI-chat-tab injection.
-- `minimum_chrome_version: 116` required for WebSocket-in-service-worker.
-
-### Open team decisions (do not adopt silently)
-
-- **Firefox:** PS says "chrome, Firefox". Decide: build real Firefox support or state **Chrome-first, Firefox-compatible architecture (not validated)** on stage.
-- **Face redaction:** PS names "blurring faces" explicitly. Current pipeline is text/PII-only. Decide: add lightweight face detection (e.g. BlazeFace/MediaPipe) in perception, or list as **known limitation** — do not leave silent.
-
-## 1. End-to-End Flow
-
-```
-1. Inputs — DOM snapshot + screenshot (active tab)
-2. Local Perception — DOM Extractor + PaddleOCR (text/boxes/confidence) + Florence-2-base
-3. Tier0 Regex/Checksum — DOM matches trusted directly; OCR matches trusted only at high confidence, else escalate (never silently clear)
-4. Tier1 Ettin-68M NER — runs only on residual text; output is CANDIDATES, not auto-redactions
-5. Tier2 Qwen 2B — adjudicates ambiguous candidates via context → internal Sanitization Plan (never transmitted)
-6. Deterministic Redaction — DOM values only + image-region masking via bboxes (OpenRedaction patterns)
-7. Self-Audit — re-run Tier0+Tier1 on OUTPUT payload; fail-closed (block + log) if anything remains
- ─ ─ ─ ─ ─ ─ ─ ─ ─ TRUST BOUNDARY ─ ─ ─ ─ ─ ─ ─ ─ ─
-8. Sanitized Context (DOM + optional image/Visual) → Server
-9. Server Reasoning (Qwen3, open-weight, vLLM/Ollama) — constrained to 7-tool schema via structured/function-calling; multi-turn (action or request for more evidence like scroll)
-10. Action Validator — isDestructive() gates every action (server/MCP/Playground/prompt-injection all identical)
-11. content.js executes validated action → loop to 1
+```mermaid
+graph TD
+    A["Input: OCR text + image"]
+    A --> B["Ettin-68M NER — always runs"]
+    A --> C["Deterministic Heuristics — always runs"]
+    A --> D["FastVLM-0.5B — always runs, adjudicator"]
+    B --> E["Fusion: candidate_types, sources, confidence, ocr_ids"]
+    C --> E
+    D --> F["Safety Gates: must reference real fused candidates"]
+    E --> F
+    F -->|"validated"| G["Value-Only Geometry -> Canvas Redaction"]
+    F -->|"invalid"| H["fusion_fallback: deterministic signals only"]
+    H --> G
 ```
 
-**Core principle enforced throughout:** *We change content, not structure — structure, semantics, relationships intact; only sensitive values replaced.*
+FastVLM is a source that must earn trust against independently existing evidence — never the last word. Deterministic + NER signals are never blocked by a FastVLM failure because they never waited on it.
 
-## 2. Perception — Three Extractors
+## 3. Extension Components
 
-| Extractor | Output | Confidence | Owner |
+Tested structure: `popup.html`/`dashboard.html` → `background/service-worker.js` → `offscreen.html`/`offscreen.js` → `src/pipeline/` → `src/popup/`.
+
+| Component | File | Responsibility | Status |
 |---|---|---|---|
-| **DOM Extractor** | elements, attributes, ARIA labels, bboxes, relationships | n/a (native) | Person 2 |
-| **PaddleOCR** (`ppu-paddle-ocr`, `V6_SMALL_MODEL`) | text, bboxes, **per-token confidence** | 0–1 per token | Person 2 — downstream Tier0 depends on this score |
-| **Florence-2-base** (`onnx-community/Florence-2-base`) | `<MORE_DETAILED_CAPTION>`, dense grounding, layout | caption confidence | Person 2 — experimental ONNX/browser support, fallback = DOM+OCR only |
+| `background.js` | `extension/background/background.js` | WS client (3 callers), 20s keepalive, routing, `isDestructive()`, `pendingActions` | **Planned** — tested SW: offscreen lifecycle + tab capture only |
+| `offscreen.js` | `extension/offscreen/offscreen.js` | Hosts **BlazeFace, PaddleOCR, Ettin-68M, FastVLM-0.5B** via Transformers.js + ORT Web; idle pre-warm NER + FastVLM | **Tested** |
+| `content.js` | `extension/content/content.js` | Only live-DOM access; actions + chat injection | **Planned** |
+| Popup | `extension/popup/` | Tab selector, Capture, progress, Review (Visual+Context, clean/ambiguous/blocked), Send / Send & Submit | **Partially tested** (upload/capture/device-tier/progress exist; Send-to-Chat planned) |
+| Side Panel | `extension/sidepanel/` | Live view + Approve/Deny | **Planned** (tested equiv: dashboard bbox-overlay review) |
+| Dashboard | `extension/dashboard/` | Privacy Log + Security Log, redacted-only, Clear All | **Partially tested** (telemetry/evidence/export exist; two-log structure planned) |
+| Chat Injection | `extension/content/chat-adapters/` | Tab discovery, per-site adapters, via `content.js` | **Planned** |
 
-All three must match Person 1's schema exactly; bbox conventions (viewport vs. page) must be reconciled explicitly. Test WebGPU + WASM fallback per-model, benchmark combined.
+Manifest: `minimum_chrome_version: "116"` (for future WS keepalive). Tested MV3 manifest loads ORT WASM from `chrome.runtime.getURL("ort/")`, not CDN (MV3 CSP). Chrome-only; no Firefox claim without testing.
 
-## 3. Tiered Detection & Redaction
+## 4. Tool Schema & Security (planned action layer — contract locked)
 
-```
-Tier0: Regex + checksum (OpenRedaction base)
-  ├─ DOM value → match + checksum pass → redact immediately
-  ├─ OCR text, high confidence + checksum pass → redact
-  └─ OCR low confidence OR checksum fail → ESCALATE (never clear)
+See `tool-schema.md` for the seven tools (`read_page`, `list_interactive_elements`, `click`, `type`, `submit`, `select_option`, `scroll`). All callers use `{id, tool, params}` ↔ `{id, status:"ok"|"blocked"|"error"}` + unsolicited `{type:"action_update", pending_id, ...}` + `{type:"ping"}` ↔ `{type:"pong"}`. Validator identical for server/MCP/Playground/injected text. Never send/store raw screenshot. MCP `tools/call` cannot carry unsolicited push — gap tracked in `tool-schema.md` (polling `check_pending_action` vs held-open response, undecided).
 
-Tier1: Ettin-68M NER (kalyan-ks/ettin-68m-nemotron-pii, 55 types, 68M)
-  └─ runs only on residual → outputs candidates: {type, span, context}
-
-Tier2: Qwen 2B (Qwen/Qwen3.5-2B, Apache 2.0) — local adjudication
-  └─ prompt: candidate + DOM role + page section + OCR confidence
-  └─ output: Sanitization Plan {spans → replacements} — internal only
-
-Deterministic Redaction (non-model)
-  ├─ DOM: value replacement, IDs/classes/roles untouched
-  └─ Image: bbox masking (black/blur) via Sharp-equivalent
-
-Self-Audit
-  └─ re-run Tier0+Tier1 on OUTPUT → if hit → block payload, log, fail-closed
-```
-
-Password-field masking: separate, always-on, outside tiering.
-
-Face detection: **gap** — add or explicitly defer (see Limitations).
-
-## 4. Extension Components
-
-| Component | File | Responsibility |
-|---|---|---|
-| `background.js` | `extension/background/background.js` | WS client (3 callers multiplexed), 20s keepalive, routing by `id`/`type`, `isDestructive()`, `pendingActions: Map<pending_id>`, `chrome.offscreen` lifecycle |
-| `offscreen.js` | `extension/offscreen/offscreen.js` | Hosts 4 models via Transformers.js + ORT Web; message handler for `CAPTURE`/`DETECT`/`REASON` |
-| `content.js` | `extension/content/content.js` | Only live-DOM access; `list_interactive_elements`, `click`/`type`/`submit`/`select_option`/`scroll`, reports state; also Chat Injection Layer |
-| Popup | `extension/popup/` | Tab selector, Capture, live progress, Capture Review (Visual+Context, clean/ambiguous/blocked), Send / Send & Submit |
-| Side Panel | `extension/sidepanel/` | Live view + Approve/Deny for blocked actions |
-| Dashboard | `extension/dashboard/` | Privacy Log (redactions per capture: source, count/type, destination) + Security Log (blocked+confirm outcomes), Clear All |
-| Chat Injection | `extension/content/chat-adapters/` | Tab discovery for ChatGPT/Claude/Gemini, 2–3 per-site adapters + clipboard fallback, via `content.js` |
-
-Manifest additions: `permissions: ["tabs","scripting","offscreen"]`, `host_permissions: ["<all_urls>"]`, `minimum_chrome_version: "116"`. Firefox: manifest v3 with `browser_specific_settings`.
-
-## 5. Server, Bridge, Playground
+## 5. Server, Bridge, Playground (planned — required, not built)
 
 | Component | Path | Notes |
 |---|---|---|
 | **Playground** | `playground/` | Node WS client, scripted demo, "what agent sees" panel |
-| **MCP Bridge** | `bridge/` | Thin stdio⇄WebSocket translator, zero logic, auto-spawned; translates `tools/call` ↔ `{id,tool,params}` |
-| **Reasoning Server** | `server/` | Self-hosted Qwen3 (vLLM/Ollama), constrained to 7-tool schema via function-calling; supports `scroll`-then-re-evaluate multi-turn; rented GPU for SIH latency is permitted and must be stated |
+| **MCP Bridge** | `bridge/` | Thin stdio⇄WebSocket translator, zero logic, auto-spawned |
+| **Reasoning Server** | `server/` | **Model TBD, explicitly not Qwen** — open-weight, self-hostable via vLLM/Ollama; rented GPU for SIH latency permitted and must be stated; constrained to 7-tool schema via function-calling; multi-turn (`scroll`-then-re-evaluate) |
 
-Bridge gap: MCP `tools/call` is request/response only — cannot carry unsolicited `action_update` push. Decision before finals: **polling tool `check_pending_action`** vs **held-open response** (if transport allows).
+## 6. Human Mode (planned)
 
-## 6. Tool Schema & Security
+Popup Capture flow + Capture Review (Visual + Context) + Send vs Send & Submit + destination picker + wrapper text — see root README § Two Products. First-class product surface, same pipeline and trust boundary, person instead of model deciding invocation.
 
-See `tool-schema.md` for the seven tools. All callers use:
-```
-{id:"req_123", tool:"click", params:{element_id:"el_3"}}
-→ {id:"req_123", status:"ok"} | {id:"req_123", status:"blocked", reason, pending_id} | {status:"error", reason:"stale_element"}
-+ unsolicited: {type:"action_update", pending_id, status:"ok"|"denied"|"timeout"}
-+ keepalive: {type:"ping"} ↔ {type:"pong"}
-```
-Validator: identical for server/MCP/Playground/injected text. Never send/store raw screenshot.
+## 7. Limitations (honest — tested)
 
-## 7. Build Order (summary)
-
-Full time-boxed order in `build-order.md`. MVP: three extractors (Florence degradable), Tier0+Tier1 (Tier2 degradable to conservative default), deterministic redaction + self-audit, validator, and a **minimal working Reasoning Server** — Human Mode Capture is first cut if time runs short.
-
-## 8. Limitations (honest)
-
-- Face blurring: not yet implemented (text/PII only).
-- Florence-2 ONNX browser support: experimental.
-- Firefox: architecture compatible, not validated.
-- Qwen 2B adjudication: requires offscreen memory profiling.
+- FastVLM-0.5B small: bland captions, occasional JSON-schema misses — survives via fallback.
+- Heuristics can over-redact at edges (safe-direction tradeoff).
+- WASM fallback single-threaded (int64 crash on threaded build) — slow CPU inference; demo on WebGPU hardware.
+- Server / action layer / Send-to-Chat / per-site adapters: not built.
+- Firefox: architecture-compatible, not validated.
 - See `limitations.md` for full list.
 
-## 9. References
+## 8. References
 
-- Transformers.js Chrome Extension — `huggingface.co/blog/transformersjs-chrome-extension` — offscreen+WebGPU pattern (community-proven, not official HF Gemma extension).
+- Transformers.js Chrome Extension — `huggingface.co/blog/transformersjs-chrome-extension`.
 - PaddleOCR.js — ONNX+WASM/WebGPU in-browser OCR.
-- Ettin-68M — `kalyan-ks/ettin-68m-nemotron-pii`.
-- OpenRedaction — `sam247/openredaction` (Tier0 base).
+- Ettin-68M-Nemotron-PII ONNX — `huggingface.co/rulesentry-io/ettin-68m-nemotron-pii-onnx`.
+- BlazeFace ONNX — `huggingface.co/garavv/blazeface-onnx`.
+- FastVLM-0.5B ONNX — `huggingface.co/onnx-community/FastVLM-0.5B-ONNX`.
+- OpenRedaction — `sam247/openredaction` (historical Tier0 base; heuristics now own this role).
 - MCP — `modelcontextprotocol.io/specification/2025-06-18/architecture`.
-- Qwen3.5-2B — `Qwen/Qwen3.5-2B` (Apache 2.0); server Qwen3 via vLLM/Ollama.

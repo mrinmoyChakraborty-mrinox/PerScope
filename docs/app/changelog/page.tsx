@@ -1,6 +1,5 @@
 import { getDoc } from "@/lib/docs";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import { Markdown } from "@/components/Markdown";
 
 export default function Changelog() {
   const doc = getDoc("changelog") as any;
@@ -15,7 +14,7 @@ export default function Changelog() {
         <strong>Template:</strong> <code>## YYYY-MM-DD — Area — Author</code> → Change / Why / Impact / Follow-up. Keep newest first. Link to PR or commit if useful.
       </div>
       <article className="prose max-w-none">
-        <ReactMarkdown remarkPlugins={[remarkGfm]}>{doc.content}</ReactMarkdown>
+        <Markdown content={doc.content} />
       </article>
     </div>
   );
