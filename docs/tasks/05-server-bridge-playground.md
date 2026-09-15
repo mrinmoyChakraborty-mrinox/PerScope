@@ -49,6 +49,20 @@ This did not exist in v2. It is the **literal PS requirement**: transmit sanitiz
 
 Net-new, biggest scope, and required — unlike bridge (bonus). Treat as equal priority to Playground from day one.
 
+## D. URGENT — Playground audit follow-ups (added 2026-09-15, Person 5 Banashree)
+
+Fix 1 DONE: `playground/playground/` flattened to `playground/` (`js/{client,demo,server} + ui/playground.html,css,js`); `perscopee.*` renamed; stale refs cleared; zero `perscopee` matches remain. `package.json main:index.js` still dangles — covered below.
+
+Pinned in `docs/data/pinned.json` (`status:urgent`, due 2026-09-18). Work top-down:
+
+2. `playground-ws-single` — single WS client, no auto-run (`ui/playground.js` wins; demote `js/client/websocket-client.js`).
+3. `playground-schema-parity` — `text`→`value`, `option`→`value`, `submit`+`element_id`, `scroll`/`click` shapes per `docs/tool-schema.md`.
+4. `playground-validator-flow` — real `isDestructive()` + `blocked/pending_id` + `action_update` + Approve/Deny + 60s timeout (with Person 1).
+5. `playground-keepalive-errors` — `ping`↔`pong` 20s + timeouts + `error/blocked` UI + `addEvent(msg,status,source)` unification.
+6. `playground-sanitized-truth` — kill fake `3/3/PASS`, redact mock values, add real Person 2+3 payload adapter (with Person 2+3).
+7. `playground-ui-deadweight` — remove Pause/dead Execute/dup scenario controls/2nd theme toggle/latency hack; fix badges + agent-input show logic.
+8. `playground-packaging` — runnable `playground/package.json` scripts + `playground/README.md`.
+
 ## Citations (corrected per Person 6)
 
 - Server model: **Qwen3**, not Qwen2.5 (dated generation).

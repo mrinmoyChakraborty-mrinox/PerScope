@@ -86,5 +86,82 @@
     "area": "Pitch",
     "description": "Fix Ettin 60B→68M, Qwen naming, rebuild Slide 6, add metrics table (15 metrics), demo proof, face/Firefox, browser compat. 77→86-92. Copyable MD at /docs/ppt-improvement-plan.",
     "link": "/docs/ppt-improvement-plan"
+  },
+  {
+    "id": "playground-ws-single",
+    "title": "Playground: single WS client, no auto-run demo",
+    "owner": "Person 5 (Banashree)",
+    "status": "urgent",
+    "priority": "P0",
+    "due": "2026-09-18",
+    "area": "Playground",
+    "description": "DONE-1 was flatten+rename (playground/ui/playground.*). Now: keep ONE client (ui/playground.js), delete or demote js/client/websocket-client.js to Node smoke-test, remove runDemoSequence-on-open. Demo runs only via Start Demo buttons.",
+    "link": "/docs/tasks/05-server-bridge-playground"
+  },
+  {
+    "id": "playground-schema-parity",
+    "title": "Playground: tool-schema param parity (value, element_id, scroll_y)",
+    "owner": "Person 5 (Banashree)",
+    "status": "urgent",
+    "priority": "P0",
+    "due": "2026-09-18",
+    "area": "Playground",
+    "description": "type {element_id,text}→{element_id,value}; select_option {element_id,option}→{element_id,value}; submit {}→{element_id}; scroll amount 1→'page'|int with {scroll_y} response; click ok-shape to bare {status:ok}. Files: ui/playground.js, js/server/websocket-server.js, js/client/websocket-client.js. Contract: docs/tool-schema.md.",
+    "link": "/docs/tool-schema"
+  },
+  {
+    "id": "playground-validator-flow",
+    "title": "Playground: real validator + confirm-flow roundtrip",
+    "owner": "Person 5 + 1",
+    "status": "urgent",
+    "priority": "P0",
+    "due": "2026-09-18",
+    "area": "Playground",
+    "description": "Replace simulated BLOCKED (runDestructiveScenario/runInjectionScenario use only timeouts, no WS) with real isDestructive() in mock server, {status:blocked,reason,pending_id} responses, action_update push handling in sendRequest, Approve/Deny UI + 60s timeout, stale_element path. Contract: docs/tool-schema.md confirm-flow + security-model.md §5.",
+    "link": "/docs/tool-schema"
+  },
+  {
+    "id": "playground-keepalive-errors",
+    "title": "Playground: ping/pong keepalive + error surfacing",
+    "owner": "Person 5 (Banashree)",
+    "status": "urgent",
+    "priority": "P0",
+    "due": "2026-09-18",
+    "area": "Playground",
+    "description": "Add {type:ping}↔{type:pong} 20s keepalive both sides, request timeouts, and UI rendering of status:error/blocked (invalid_json, unknown_tool, element_not_found) instead of silent success log. Unify demo-state addEvent(msg,status,source) signature.",
+    "link": "/docs/tool-schema"
+  },
+  {
+    "id": "playground-sanitized-truth",
+    "title": "Playground: sanitized truth — kill fake 3/3/PASS, add real-payload adapter",
+    "owner": "Person 5 + 2 + 3",
+    "status": "urgent",
+    "priority": "P0",
+    "due": "2026-09-18",
+    "area": "Playground",
+    "description": "updatePrivacySummary() hardcodes 3/3/PASS + Email/Phone/Card unrelated to hotel mock; list_interactive_elements leaks raw Mumbai/dates. Show MOCK badge, return [REDACTED:TYPE]-style values, add adapter hook for real Person 2+3 sanitized JSON (candidate_types/sources/confidence). Do not expand TravelEase mock further.",
+    "link": "/docs/tasks/05-server-bridge-playground"
+  },
+  {
+    "id": "playground-ui-deadweight",
+    "title": "Playground: remove dead UI (Pause, Execute, dup controls, latency hack)",
+    "owner": "Person 5 (Banashree)",
+    "status": "urgent",
+    "priority": "P0",
+    "due": "2026-09-18",
+    "area": "Playground",
+    "description": "Delete Pause (flag never checked mid-chain), wire or delete Execute Action (logs only), merge scenario-select + scenario-cards into one control, single theme toggle, static latency element instead of runtime DOM append, fix tool Active/gated badges, fix agent-input display:none vs JS show conflict.",
+    "link": "/docs/tasks/05-server-bridge-playground"
+  },
+  {
+    "id": "playground-packaging",
+    "title": "Playground: runnable package (scripts + README)",
+    "owner": "Person 5 (Banashree)",
+    "status": "urgent",
+    "priority": "P0",
+    "due": "2026-09-18",
+    "area": "Playground",
+    "description": "playground/package.json main:index.js dangles, no start/dev scripts, ESM import of demo-state fails over file://. Add start (node js/server/websocket-server.js) + serve (static ui/), fix main entry, add playground/README.md (run both, WS URL ws://localhost:8080), remove committed package-lock or document it.",
+    "link": "/docs/tasks/05-server-bridge-playground"
   }
 ]
