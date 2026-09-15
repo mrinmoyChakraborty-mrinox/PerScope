@@ -1,0 +1,44 @@
+{
+  "name": "perscope",
+  "version": "0.1.0",
+  "private": true,
+  "description": "PerScope — See everything. Leak nothing. On-device perception + zero-trust redaction layer (SIH26171 — ISRO / Smart Automation). Local PaddleOCR + Florence-2 + Ettin + Qwen3.5-2B adjudication with Sharp redaction.",
+  "keywords": [
+    "pii",
+    "redaction",
+    "privacy",
+    "ocr",
+    "paddleocr",
+    "florence-2",
+    "qwen",
+    "sharp",
+    "isro",
+    "sih"
+  ],
+  "author": "Mrinmoy Chakraborty <chakrabortymrinmoy27011@gmail.com>",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "type": "commonjs",
+  "scripts": {
+    "test": "node tests/qwen_regression.test.mjs",
+    "test:verbose": "node --test tests/qwen_regression.test.mjs 2>&1 || node tests/qwen_regression.test.mjs",
+    "perception": "node v3.mjs",
+    "redact": "node v3.mjs",
+    "redact:pure-test": "node qwen_redaction_pure.mjs",
+    "pii": "node piidetector.js"
+  },
+  "dependencies": {
+    "@huggingface/tokenizers": "^0.1.3",
+    "@huggingface/transformers": "^4.2.0",
+    "@playwright/mcp": "^0.0.79",
+    "onnxruntime-node": "^1.29.0",
+    "ppu-paddle-ocr": "^6.4.3",
+    "sharp": "^0.34.5"
+  },
+  "overrides": {
+    "sharp": "^0.34.5"
+  },
+  "devDependencies": {}
+}

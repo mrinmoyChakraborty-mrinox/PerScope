@@ -1,21 +1,39 @@
+<p align="center">
+  <img src="perscope_banner.png" alt="PerScope — See the content. Not the sensitive." width="100%" />
+</p>
+
 # PerScope — See everything. Leak nothing.
 
 > **SIH26171 — On-device Visual Perception for Light-weight Browser Agents**
 > Organization: ISRO / Department of Space · Category: Software · Theme: Smart Automation
 
-> This document reflects the **Final Architecture Overview (Team Cosmic Crux)** and supersedes all earlier drafts (Moondream/SmolVLM, OpenRedaction-only, agent-only framing).
+> This document reflects the **Final Architecture Overview (Team Cosmic Crux)** and supersedes all earlier drafts (Moondream/SmolVLM, OpenRedaction-only, agent-only framing, and the DOM + Florence-2 + Qwen tiered-escalation plan).
+
+## 0. Status — What's Tested vs. What's Still Planned
+
+This reflects a **real, working, tested prototype** — not just a plan. The perception and redaction pipeline below matches what was implemented and verified end-to-end (Chrome MV3 extension + a Node.js reference implementation kept in 1:1 algorithmic parity). **Read the perception/redaction sections as ground truth. Read the server/action sections as intended design, not yet built.**
+
+| Layer | Status |
+|---|---|
+| Perception (face + OCR detection) | **Tested, working** — BlazeFace + PaddleOCR, both ONNX, both on-device |
+| PII detection & fusion | **Tested, working** — three independent signals fused with confidence scoring |
+| Redaction (value-only geometry + canvas rendering) | **Tested, working** — most mature, most validated part of the system |
+| Safety gates / fail-closed behavior | **Tested, working** — unvalidated model output falls back to deterministic output, never blind trust |
+| Action validator / confirm flow / dashboard logging | **Planned** — no WebSocket client, no tool-schema execution, no `content.js` action layer in the tested build |
+| Server-side reasoning / MCP bridge / Playground | **Planned** — tested build is the local perception+redaction module only; nothing transmits sanitized context to any server yet |
+| DOM-based extraction | **Superseded** — tested pipeline works on images (screenshots / uploads), not the live DOM |
 
 ## Core Principle
 
 > **We change content, not structure — structure, semantics, and relationships remain intact. Only sensitive values are replaced.**
 
-Everything else in this document is a consequence of that one sentence.
+Tested-prototype reading: layout, non-sensitive content, and page appearance stay fully visible; only the pixel regions holding a sensitive **value** are blurred/blacked out. Value-only, never whole-line — `Account Number:` stays visible, only the number is covered.
 
 ## Overview
 
-PerScope is a **local, zero-trust perception and redaction layer** that sits between any webpage and any AI — agent or human. It is not an agent and not a browser automation script. It is a **tool-server**, reachable four different ways, that guarantees nothing sensitive leaves the device unredacted and nothing destructive executes without passing a local validator — regardless of who or what is asking.
+PerScope is a **local, zero-trust perception and redaction layer** between any webpage and any AI — agent or human. It is not an agent and not a browser automation script. It is a **tool-server**, reachable four different ways, that guarantees nothing sensitive leaves the device unredacted and nothing destructive executes without passing a local validator.
 
-The local pipeline (perception → tiered detection → Qwen3.5-2B reasoning → deterministic redaction) decides what is sensitive and removes it — that is the only thing PerScope constrains. Once sanitized context crosses the trust boundary, the server-side agent (open-weight Qwen2.5-Instruct) reasons over it **completely freely**. When the server decides an action is needed (click, type, submit, scroll, etc.), it calls back into the extension to perform it — the extension is the only component with permission to touch the real DOM. The only check after the server decides is whether that specific action is destructive, evaluated locally.
+The local pipeline (perception → PII fusion → redaction) is **tested and working**. What comes after — sending sanitized output to a server that reasons freely and calls back into the extension to act — is the intended design (see Architecture → Server Reasoning / Action Validation) but **not yet built**. Once built: the server reasons over sanitized data however it wants; the extension is the only thing with permission to touch the real DOM; the only check after the server decides is whether that specific action is destructive.
 
 ### Four Consumption Modes
 
@@ -23,113 +41,92 @@ All four speak the identical `{id, tool, params}` schema into the identical loca
 
 | Mode | Who is calling | Status |
 |---|---|---|
-| **PerScope Reasoning Server** | Self-hosted open-weight LLM (Qwen2.5-Instruct 7B) operated by PerScope | **Required** — PS deliverable |
+| **PerScope Reasoning Server** | Self-hosted open-weight LLM/VLM — model not yet chosen (explicitly **not** Qwen) | **Required — PS deliverable, not yet built** |
 | **Real MCP Agent** | Claude Code / Codex via auto-launched, zero-logic MCP bridge | Bonus — proves protocol compatibility |
 | **Demo Playground** | Manual simulated agent (same WebSocket schema) | Demo / observability console |
 | **Manual query / Send to Chat** | The user directly, no agent — sanitized description to paste or auto-send into any chatbot | Differentiator — works with zero agent installed |
 
 ## Two Products, One Pipeline
 
-One local pipeline, two front doors. Both terminate in the same sanitization pipeline and the same trust boundary.
-
 | Product | How it works |
 |---|---|
-| **Human Mode** | Person, no agent installed, uses the extension directly to safely show a page to whatever AI chat they already have open. Primary surface most users will touch. |
-| **Agent Mode** | Autonomous reasoning system (PerScope's own server or a real MCP agent) drives the extension programmatically via the tool schema. |
+| **Human Mode** | Person, no agent installed, uses the extension directly to safely show a page to whatever AI chat they already have open. Primary surface most users will touch. **Planned UI — not in the tested build.** |
+| **Agent Mode** | Autonomous reasoning system (PerScope's own server or a real MCP agent) drives the extension programmatically via the tool schema. **Action layer planned — not in the tested build.** |
 
-### Human Mode — Popup UI and Capture Flow
+### Human Mode — Popup UI and Capture Flow (planned)
 
-The popup's primary job is the **Capture** action.
+- **Tab selector** (defaults to current tab) + single **Capture** button + always-visible **"Privacy protected ✓"** indicator.
+- **Live progress:** page captured → text extracted → sensitive information detected → sanitizing, with *"Everything stays on this device."*
+- **Capture Review screen (required, before anything is sent):** Visual view (screenshot with masked regions in place) + Context view (structured semantic representation, e.g. `User: [PERSON]`, `Email: [EMAIL]`). Outcome states: **Clean** / **Ambiguous** (fail-closed, user reviews) / **Blocked** (does not proceed until reviewed).
+- **Send to Chat — two actions:** **Send** (injects into chat input only — safer default) vs **Send & Submit** (injects + submits, explicit opt-in). Destination auto-detects known AI-chat tabs; injection executes through `content.js`. Content is **wrapped, not dumped raw**, with a short explanatory header so the destination AI understands `[PERSON]`/`[EMAIL]`/`[REDACTED:TYPE]` placeholders.
 
-**Popup, default state:**
-- **Tab selector** — pick which open tab to capture (defaults to current tab).
-- Single **Capture** button — not "Analyze/Scan/Redact".
-- **"Privacy protected ✓"** trust indicator, always visible.
+### Chat Destination & Injection Layer (planned)
 
-**On Capture — live progress** reusing the existing pipeline stages: page captured → text extracted → sensitive information detected → sanitizing, with persistent line *"Everything stays on this device."*
-
-**Capture Review screen (required, before anything is sent):** PerScope shows exactly what would be transmitted.
-
-- **Visual view** — screenshot-style representation with sensitive regions masked in place.
-- **Context view** — structured, semantic representation of what will actually be sent (e.g. `User: [PERSON]`, `Email: [EMAIL]`, `Status: Active`) — placeholders preserve semantics per the core principle.
-
-Outcome states (not always "success"):
-- **Clean** — "No sensitive information detected" (distinct from "0 items redacted").
-- **Ambiguous / low-confidence** — fail-closed; user reviews before continuing.
-- **Blocked** — region could not be safely sanitized; capture does not proceed until reviewed.
-
-Stats shown: count and type of items redacted.
-
-**Send to Chat — two distinct actions:**
-- **Send** — injects sanitized content into the destination chat's input box only. Safer default.
-- **Send & Submit** — injects and submits in one step; requires explicit opt-in (same principle as destructive-action confirmation).
-
-**Destination selection:** PerScope auto-detects open tabs that look like known AI chats (ChatGPT, Claude, Gemini, etc.) and offers the default target; user can pick any open tab manually. Injection executes through `content.js` — same DOM-execution boundary as every other action.
-
-**Wrapped, not dumped raw:** sanitized content is inserted inside a short explanatory wrapper (e.g. *"I captured the following webpage through PerScope. It was processed locally and sensitive information was redacted before being sent. Please analyze the sanitized content below."*) so the destination AI understands placeholders like `[PERSON]`/`[EMAIL]`.
-
-### Chat Destination & Injection Layer
-
-First-class component alongside the extension components: owns tab discovery (finding candidate AI-chat tabs), per-site adapters (input-box selectors for ChatGPT/Claude/Gemini, etc.), and the Send / Send & Submit distinction. Executes through `content.js`; does not introduce a second way to touch the live page. See Architecture → Extension-Side Components below.
+First-class component alongside the extension components: tab discovery, per-site adapters (ChatGPT/Claude/Gemini input-box selectors), Send / Send & Submit distinction. Executes through `content.js`; no second DOM path. See Architecture below.
 
 ## Architecture
 
-### End-to-End Flow
+### End-to-End Flow — As Tested
 
-Every stage above the trust boundary runs 100% on-device. Only sanitized context crosses.
+Every model runs on-device — WebGPU with WASM/CPU fallback, no cloud calls.
 
-1. **Inputs** — DOM snapshot + screenshot from the active tab.
-2. **Local Perception** — DOM Extractor (elements, attrs, ARIA, bboxes) + PaddleOCR (text, bboxes, confidence) + Florence-2-base (captions, region grounding) produce a unified text-and-layout representation.
-3. **Tiered PII Detection —** Tier 0 regex + checksum (auto-redacts high-confidence hits; OCR-sourced low-confidence or failed-checksum → escalates, never cleared) → Tier 1 Ettin-68M NER (runs only on residual text; output is candidates, NOT auto-redacted) → Tier 2 Qwen3.5-2B local (`Qwen/Qwen3.5-2B`, Apache 2.0 — adjudicates candidates using context, invoked only when ambiguous).
-4. **Sanitization Plan** — internal-only mapping of spans to replacement values; never transmitted.
-5. **Deterministic Redaction** — DOM redaction (values only) + image redaction (mask/blur via bbox, powered by Open Redaction Library patterns), non-model, structure 100% intact.
-6. **Self-Audit** — re-runs Tier 0 + Tier 1 on the *output* payload; fail-closed (block + log) if anything remains.
-7. **Sanitized Context crosses the trust boundary** — Sanitized DOM + optional Sanitized Image / Sanitized Visual Representation.
-8. **Server Reasoning** — Qwen2.5-Instruct (open-weight, self-hosted via vLLM/Ollama; same family as on-device Qwen3.5-2B), cloud-hosted only for SIH demo latency. Constrained to tool schema (`read_page`, `list_interactive_elements`, `click`, `type`, `submit`, `select_option`, `scroll`) via structured/function-calling output; multi-turn (can return action or request for more evidence like `scroll`).
-9. **Action Validator** — `isDestructive()` check gates every proposed action; same gate regardless of source (server, MCP agent, Playground, or hidden prompt-injection text on the page). This is the entire prompt-injection defense.
-10. **Local execution** — validated actions executed locally by `content.js` on the real DOM.
-11. **Continuous Action Loop** — perception → reasoning → validation → execution repeats until the task completes.
-
-> **Methodology (PDF § Technical Approach):** 1 Capture Evidence (DOM+OCR+Vision) → 2 Detect PII (NER flags emails/phones/names/addresses) → 3 Reason Locally (on-device LLM decides sensitivity) → 4 Redact & Verify (values masked, structure kept, self-audited) → 5 Send Sanitized Data (only cleaned context crosses trust boundary) → 6 Act on the Page (local agent executes safely, results loop back).
-
-```
-Trust boundary:  Sanitized Context  ===  Server LLM/VLM
-Everything above === runs on-device; raw DOM/screenshot/PII never cross.
-```
-
-### Tiered Detection — Pyramid, Not Flat Pipeline
-
-Detection escalates only as far as needed. Most PII resolves at the base, near-zero cost; the heaviest model runs only for genuinely ambiguous cases and can be skipped entirely on a clean page.
-
-```
-L1 · Local Perception         — DOM Extractor + PaddleOCR + Florence-2-base — runs on every page
-L2 · Tiered PII Detection     — Regex/Checksum first, Ettin-68M NER only on what's left
-L3 · Local Reasoning          — Qwen3.5-2B judges ambiguous cases only
-L4 · Deterministic Redaction  — executes the plan, structure stays intact
- ─ ─ ─ ─ ─ ─ TRUST BOUNDARY ─ ─ ─ ─ ─ ─
-L5 · Server Reasoning         — open-weight Qwen2.5-Instruct, sanitized input only
-L6 · Execution & Validation   — every action validated before it runs  →  loops to L1
+```mermaid
+flowchart TD
+    IN["Input Image\n(file upload OR visible-tab capture)"]
+    IN --> FACE["Face Detection\nBlazeFace, ONNX\n128x128 planar RGB, NMS (IoU 0.3, min conf 0.6)"]
+    IN --> OCR["OCR\nPaddleOCR PP-OCRv6-small\nper-box recognition, min confidence 0.5"]
+    OCR --> NER["Signal 1: Ettin-68M NER\ntoken classification over OCR text"]
+    OCR --> HEUR["Signal 2: Deterministic Heuristics\nregex/label dictionaries: DOB, phone, email, IDs, account/UPI/IFSC/IBAN"]
+    IN --> FVLM["Signal 3: FastVLM-0.5B\nmultimodal adjudicator — image + evidence\nreturns JSON redactions"]
+    NER --> FUSE["Fusion\nmerge overlapping candidates\ncandidate_types, sources, confidence, ocr_ids"]
+    HEUR --> FUSE
+    FACE --> FUSE
+    FUSE --> GATE["Safety Gates\nFastVLM proposals must reference real fused candidate_id / OCR ids + type allowlists"]
+    FVLM --> GATE
+    GATE -->|"validated"| GEOM["Value-Only Geometry\n exact match -> full OCR box; substring -> proportional sub-box; otherwise REJECT"]
+    GATE -->|"fails validation"| FALLBACK["fusion_fallback\ndeterministic output only"]
+    FALLBACK --> GEOM
+    GEOM --> REDACT["Canvas Redaction\nblur or black-box, on-device"]
+    REDACT --> CAP["Caption Scrubbing\nevery sensitive value -> [REDACTED:TYPE]"]
+    CAP --> OUT["Redacted Image + Evidence Object"]
 ```
 
-Why Ettin flags are not auto-redacted: NER gives entity type, not sensitivity. Tier 1 output is a candidate list; only Qwen3.5-2B's context-adjudicated Sanitization Plan is executed, and only by the deterministic redactor — the model never gets the chance to hallucinate a redaction.
+What is **not** yet part of this tested flow: transmission to any server, tool-schema execution, browser actions. The "sanitized context crosses a trust boundary" stage is the intended next step, not yet built.
 
-Why regex is not DOM-only: it runs on DOM values (checksum trusted directly) *and* OCR text (checksum trusted only at high OCR confidence).
+> **Methodology:** 1 Capture image → 2 Detect (BlazeFace + PaddleOCR + Ettin-68M + heuristics + FastVLM-0.5B, fused) → 3 Validate (safety gates, fail-closed fallback) → 4 Redact value-only regions (canvas) + scrub captions → 5 Emit redacted image + evidence (stays on device until the server/action layer lands).
+
+```
+Trust boundary (intended, not yet wired):  Sanitized Context  ===  Server LLM/VLM
+Everything above === runs on-device today; raw image/PII never leave the device.
+```
+
+### Detection — Parallel Fusion, Not Sequential Escalation
+
+Supersedes the old "pyramid of tiers" (regex → NER → Qwen escalation). All three signals run on the same input and are merged/cross-validated; the multimodal model's output is a **proposal to be checked**, not a gate. Even if FastVLM fails, deterministic + NER signals are never blocked by that failure.
+
+**Why redaction can't hallucinate:** FastVLM proposals are validated against real fused `candidate_id`s / OCR ids + type allowlists; failures fall back to deterministic + NER fusion alone. The model is never the last word.
+
+**Value-only geometry (single chokepoint):** exact match → full OCR box; substring → proportional sub-box with whole-line guards; anything not proven value-specific is **rejected** rather than over-redacted. Direct answer to the PS "precision of redaction" criterion (20%).
+
+**Face redaction — previously an open gap, now solved and tested** via BlazeFace feeding the same redaction pipeline.
 
 ### Extension-Side Components
 
-| Component | Responsibility |
-|---|---|
-| `background.js` | WebSocket client (outbound only), 20s keepalive, message routing by `id`/`type`, action validator (`isDestructive()`), pending-action map for confirm flow |
-| `offscreen.js` | Hosts all on-device models (DOM/OCR/vision perception, Tier 0–2 detection, Qwen3.5-2B reasoning) via Transformers.js + ONNX Runtime Web, WebGPU with WASM fallback |
-| `content.js` | Only component with live DOM access — captures state, executes validated actions (`click`/`type`/`submit`/`select_option`/`scroll`), reports back |
-| Side panel | Live view during active tool-call sequence: bounding boxes, redaction happening, Approve/Deny prompt for blocked actions. Power-user inspection surface, one level below Dashboard history |
-| Dashboard | Privacy Log (every redaction: detected item, confidence, exact payload sent, per capture — source tab, count/type, destination) + Security Log (every blocked/flagged action + confirm-flow outcome), redacted-only storage, Clear All button |
-| Popup | Primary human-facing surface — tab selector + Capture button, live progress, Capture Review (Visual + Context views, states: clean/ambiguous/blocked), Send / Send & Submit |
-| Chat Destination & Injection Layer | Discovers candidate AI-chat tabs, holds per-site adapters for locating a chat's input box, executes injection/submission through `content.js` |
+Status marked per row — tested prototype is `popup.html`/`dashboard.html` → `background/service-worker.js` → `offscreen.html`/`offscreen.js` → `src/pipeline/` → `src/popup/`.
 
-Manifest requirement: `minimum_chrome_version: 116` — required for WebSocket-in-service-worker keepalive. **Chrome-only**; no Firefox claim without actual testing (offscreen-document and WebGPU support differ).
+| Component | Responsibility | Status |
+|---|---|---|
+| `background.js` / service worker | WebSocket client (outbound only), 20s keepalive, routing, `isDestructive()`, pending-action map + confirm flow | **Planned** — tested SW manages offscreen lifecycle + tab capture only |
+| `offscreen.js` | Hosts on-device models via Transformers.js/ONNX Runtime Web, WebGPU + WASM fallback | **Tested — BlazeFace, PaddleOCR, Ettin-68M NER, FastVLM-0.5B** (idle pre-warm of NER + FastVLM). No Qwen 2B, no Florence-2, no DOM extraction |
+| `content.js` | Only live-DOM access — captures state, executes validated actions | **Planned** — tested pipeline works on images, not live DOM |
+| Side panel | Live view + Approve/Deny prompt | **Planned** — tested equivalent is the dashboard bbox-overlay review UI |
+| Dashboard | Privacy Log + Security Log, redacted-only storage, Clear All | **Partially tested** — tested dashboard shows telemetry, caption/evidence/prompt panes, PNG/JSON export; two-log structure not yet built |
+| Popup | Tab selector + Capture, Review, Send / Send & Submit | **Partially tested, different shape** — tested popup has upload/capture-tab, device tier, style toggles, progress steps; no Send-to-Chat yet |
+| Chat Destination & Injection Layer | AI-chat tab discovery, per-site adapters, injection via `content.js` | **Planned** |
 
-### Action Validation & Confirm Flow
+Manifest: `minimum_chrome_version: 116` for the future WebSocket keepalive; tested MV3 manifest loads ONNX Runtime WASM from `chrome.runtime.getURL("ort/")` (not CDN) to satisfy MV3 CSP. **Chrome-only**; no Firefox claim without testing.
+
+### Action Validation & Confirm Flow (planned — design locked, not built)
 
 ```
 Caller (Server / Agent / Playground) -> {id, tool: "click", params} -> background.js -> isDestructive()
@@ -138,81 +135,96 @@ Caller (Server / Agent / Playground) -> {id, tool: "click", params} -> backgroun
        ├─ approve → content.js executes → {type:"action_update", pending_id, status:"ok"}
        ├─ deny    → {type:"action_update", pending_id, status:"denied"}
        └─ 60s timeout → {type:"action_update", pending_id, status:"timeout"}
-  Security Log records blocked / pending confirm.
 ```
 
-Same check runs whether the click was requested by the legitimate caller or surfaced from hidden white-on-white text on the page — validator evaluates what the action would do, not where the instruction came from.
+Same check whether the click came from the legitimate caller or hidden white-on-white page text — the validator evaluates what the action *would do*, not where the instruction came from. That is the entire prompt-injection defense.
 
-### Server-Side Reasoning — Requirement, Not Demo Convenience
+### Server-Side Reasoning — Requirement, Not Demo Convenience (planned — model not chosen)
 
-PS requires transmitting sanitized context to a centralized LLM/VLM and receiving actionable commands back using an open-source/open-weight model. Cloud-hosting is permitted only as hosting convenience.
+PS requires transmitting sanitized context to a centralized LLM/VLM and receiving actionable commands back using an **open-source/open-weight model**. Cloud hosting is permitted only as a hosting convenience during the event.
 
-- **Model:** Qwen2.5-Instruct (server), same family as on-device Qwen3.5-2B (`Qwen/Qwen3.5-2B`, Apache 2.0).
-- **Offline path:** self-hosted via vLLM or Ollama — fully offline, self-hostable; cloud GPUs rented only for demo latency.
-- **During SIH:** same open weights on rented GPU for demo latency — stated explicitly, not required in production.
-- Validator applies identically to PerScope's own server — system defends against its own model proposing a bad action.
+- **Model: not yet chosen — explicitly not Qwen** (too heavy for the budget that drove the FastVLM-0.5B on-device choice). Open-weight LLM/VLM, self-hostable via vLLM or Ollama. Genuinely open decision.
+- **Output contract:** constrained to the tool schema (`read_page`, `list_interactive_elements`, `click`, `type`, `submit`, `select_option`, `scroll`) via structured/function-calling output — never free-form prose.
+- **Multi-turn:** terminal UI action or request for more evidence (`scroll` then re-evaluate).
+- **Validator applies identically** to PerScope's own server — defends against its own model proposing a bad action, not only hostile pages.
 
 ## Tech Stack
 
-| Layer | Technology |
-|---|---|
-| Extension shell | WebExtensions (Manifest V3), Chrome 116+ (Chrome-only) — JS (ES6+) |
-| Perception | DOM Extractor (native), PaddleOCR, Florence-2-base |
-| Fast-path detection | Regex + checksum validation (Luhn, format patterns) — Open Redaction Library (`sam247/openredaction`) |
-| PII candidate detection | Ettin-68M NER (`kalyan-ks/ettin-68m-nemotron-pii`, 55 entity types, edge-optimized) |
-| Local reasoning / adjudication | Qwen3.5-2B (`Qwen/Qwen3.5-2B`, Apache 2.0 — adjudicates ambiguous cases only) |
-| Redaction execution | Deterministic (non-model) DOM + image redactor (mask/blur via bbox) |
-| On-device runtime | Transformers.js, ONNX Runtime Web, WebGPU, WASM (fallback) |
-| Transport | WebSocket (`background.js` keepalive — 20s), MCP Bridge (stdio ⇄ WebSocket, zero logic) |
-| Server-side reasoning | Qwen2.5-Instruct, vLLM / Ollama (self-hosted, open-weight) |
-| Real-agent compatibility | Model Context Protocol (`@modelcontextprotocol/sdk`) — `modelcontextprotocol.io/specification/2025-06-18/architecture` |
+**Confirmed, tested (perception + redaction module):**
 
-## Feasibility Snapshot (per PDF)
+| Layer | Technology | Status |
+|---|---|---|
+| Extension shell | Chrome MV3 (popup, background SW, offscreen document, dashboard) | Tested |
+| Face detection | BlazeFace ONNX (`garavv/blazeface-onnx`), ~0.5 MB | **Tested — closes the "blurring faces" gap** |
+| OCR | PaddleOCR PP-OCRv6-small (det + rec), per-box recognition, min conf 0.5 | Tested |
+| PII candidates (NER) | Ettin-68M-Nemotron-PII ONNX (`rulesentry-io/ettin-68m-nemotron-pii-onnx`), WebGPU pinned, single-thread WASM fallback | Tested |
+| PII candidates (rules) | Regex/label dictionaries (DOB, phone, email, IDs, account/UPI/IFSC/IBAN…) | Tested |
+| Multimodal adjudication | FastVLM-0.5B ONNX (`onnx-community/FastVLM-0.5B-ONNX`), WebGPU pinned, greedy decode — **replaces Florence-2-base and Qwen 2B** | Tested |
+| Redaction rendering | Canvas (OffscreenCanvas), blur or black-box | Tested |
+| On-device runtime | `onnxruntime-web` + `@huggingface/transformers` v4, WebGPU pinned per model, WASM/CPU fallback | Tested |
+| Node reference | `v7.mjs`-class reference impl, 1:1 algorithmic parity with browser pipeline | Tested (parity reference) |
 
-- **Technical:** Transformers.js + ONNX Runtime Web + WebGPU/WASM run PaddleOCR, Florence-2, Ettin-68M and Qwen3.5-2B inside a standard Chrome extension.
-- **Economical:** Open-weight Qwen models remove licensing cost; on-device inference cuts server compute.
-- **Social:** PII stays on-device; Send to Chat works with zero agent installed.
-- **Legal:** Raw DOM/screenshots/PII never leave device; offline self-hosted deployment satisfies data-sovereignty.
-- **Operational:** Manifest V3 install; side panel + dashboard Privacy/Security Logs + Approve/Deny confirm flow.
-- **Security:** Fail-closed self-audit + uniform `isDestructive()` validator (hostile pages and model mistakes).
+**Retired:** Florence-2-base, Qwen3.5-2B (may exist in `models/` but inactive); DOM-based extraction (superseded by image capture); Qwen dropped server-side too.
+
+**Planned:** WebSocket transport + MCP bridge (stdio ⇄ WebSocket); server-side model (open, non-Qwen, via vLLM/Ollama); `isDestructive()` validator + side-panel confirm; per-site chat adapters.
+
+## Feasibility Snapshot
+
+- **Technical:** ONNX Runtime Web + Transformers.js v4 + WebGPU/WASM run BlazeFace, PaddleOCR, Ettin-68M, FastVLM-0.5B inside a standard Chrome extension — verified end-to-end.
+- **Economical:** Open-weight models, no licensing cost; on-device inference cuts server compute.
+- **Social:** PII stays on-device; Send-to-Chat (planned) works with zero agent installed.
+- **Legal:** Raw image/PII never leave the device; offline self-hosted server path satisfies data-sovereignty.
+- **Operational:** MV3 install; dashboard evidence/PNG-JSON export today, Privacy/Security Logs + Approve/Deny planned.
+- **Security:** Safety gates + `fusion_fallback` + caption scrubbing (tested) + uniform `isDestructive()` validator (planned) cover hostile pages *and* model mistakes.
+
+## Known Limitations (tested — state proactively)
+
+- FastVLM-0.5B is small: captions can be bland, occasionally misses the JSON schema — pipeline survives via fallback, richness bounded by capacity.
+- Heuristics can over-redact at edges (e.g. number row inheriting nearby label context) — safe-direction tradeoff, not perfect precision.
+- WASM fallback is single-threaded (int64 inputs crash the threaded build) — CPU inference of larger models is slow; demo on WebGPU-capable hardware.
+- Server model, action layer, Send-to-Chat, per-site adapters: not built — demo honestly as "local perception + redaction, tested" + "planned server/action layer".
 
 ## Research and References
 
 - Transformers.js Chrome Extension — `huggingface.co/blog/transformersjs-chrome-extension` — offscreen documents + WebGPU pattern.
 - PaddleOCR.js — `github.com/PaddlePaddle/PaddleOCR/blob/main/docs/version3.x/inference_deployment/cross_platform/browser.en.md` — ONNX Runtime + WASM/WebGPU in-browser OCR.
-- Ettin-68M-Nemotron-PII — `huggingface.co/kalyan-ks/ettin-68m-nemotron-pii` — 55 entity types, edge-optimized.
+- Ettin-68M-Nemotron-PII ONNX — `huggingface.co/rulesentry-io/ettin-68m-nemotron-pii-onnx` — edge-optimized token classification.
+- BlazeFace ONNX — `huggingface.co/garavv/blazeface-onnx` — lightweight face detection (~0.5 MB).
+- FastVLM-0.5B ONNX — `huggingface.co/onnx-community/FastVLM-0.5B-ONNX` — on-device multimodal adjudication.
 - safeclipper — `github.com/AFK-surf/safeclipper` — local OCR + bbox image redaction.
 - PrivacyLens — `github.com/shitijkarsolia/privacylens` — PII redaction with pre-send review.
-- MCP — `modelcontextprotocol.io/specification/2025-06-18/architecture` + `openredaction` — `github.com/sam247/openredaction`.
-- On-device model: Qwen3.5-2B — `huggingface.co/Qwen/Qwen3.5-2B` (Apache 2.0).
+- MCP — `modelcontextprotocol.io/specification/2025-06-18/architecture`.
 
 ## Repository Structure
 
 ```
 /extension
-  /background        # background.js — owned by: Extension/Automation
-  /offscreen          # offscreen.js — owned by: Perception + Privacy/Redaction
-  /content             # content.js — owned by: Extension/Automation
-  /sidepanel
-  /dashboard
-  /popup               # Capture flow — owned by: Extension/Automation
-  manifest.json
-/server                # PerScope Reasoning Server — owned by: Server/Bridge/Playground
-/bridge                # MCP stdio<->WebSocket bridge — owned by: Server/Bridge/Playground
-/playground             # Demo WebSocket client/UI — owned by: Server/Bridge/Playground
+  /background        # background.js / service worker — tested: offscreen lifecycle + capture; planned: WS client + validator
+  /offscreen         # offscreen.js — TESTED: BlazeFace + PaddleOCR + Ettin-68M + FastVLM-0.5B
+  /content           # content.js — planned (live-DOM + chat injection)
+  /sidepanel         # planned (Approve/Deny)
+  /dashboard         # tested: telemetry/evidence/export; planned: Privacy + Security logs
+  /popup             # tested: upload/capture/device-tier/progress; planned: Capture Review + Send
+  manifest.json      # MV3, min Chrome 116, local ORT WASM via chrome.runtime.getURL("ort/")
+/server              # PerScope Reasoning Server — PLANNED (model TBD, non-Qwen)
+/bridge              # MCP stdio<->WebSocket bridge — PLANNED
+/playground          # Demo WebSocket client/UI — PLANNED
 /docs
-  architecture.md      # do not generate content — placeholder only
-  tool-schema.md        # do not generate content — placeholder only
+  architecture.md    # v4 — tested pipeline ground truth + planned server/action design
+  tool-schema.md     # 7-tool schema (planned action layer — unchanged contract)
+  security-model.md  # gates + fallback + caption scrubbing (tested) + validator (planned)
+  limitations.md     # honest tested limits
+  build-order.md     # perception/redaction done → server/action next
 README.md
 LICENSE
 .gitignore
 ```
 
+> Historical Node reference scripts (`v3.mjs` — Florence-2 + Qwen pipeline, `qwen_redaction_pure.mjs`, `QWEN_REDACTION_PIPELINE_PLAN.md`) are **superseded** by the tested BlazeFace + PaddleOCR + Ettin + FastVLM-0.5B parallel-fusion pipeline. Kept for record; do not build against them.
+
 ## Team
 
 **Cosmic Crux — SIH26171**
-
-Component ownership by area:
 
 | Area | Ownership |
 |---|---|
@@ -222,16 +234,16 @@ Component ownership by area:
 | Server / Bridge / Playground | Server/Bridge/Playground |
 | Research / QA | Research/QA |
 
-> Member names and detailed task breakdowns are tracked under `/docs/tasks/<role>.md` (added separately per owner).
+> Member names and detailed task breakdowns are tracked under `/docs/tasks/<role>.md`.
 
 ## Status
 
-This is a research-grounded architecture at prototype-build stage. This README is the consolidated reference and supersedes earlier drafts. For full detail see:
+Local perception + redaction: **tested end-to-end**. Server reasoning + action layer + Human Mode Send-to-Chat: **planned**. For full detail see:
 
 - [`/docs/architecture.md`](/docs/architecture.md)
 - [`/docs/tool-schema.md`](/docs/tool-schema.md)
-
-These files already exist / will be added separately — their content is not generated here.
+- [`/docs/security-model.md`](/docs/security-model.md)
+- [`/docs/limitations.md`](/docs/limitations.md)
 
 ## License
 

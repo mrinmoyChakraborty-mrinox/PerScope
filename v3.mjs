@@ -24,7 +24,7 @@ import {
    is a description, not a DOM mutation.
    ============================================================ */
 
-const IMAGE_PATH = process.env.IMAGE_PATH || "./s1.jpg";
+const IMAGE_PATH = process.env.IMAGE_PATH || "./login.png";
 
 /* ---------------- PaddleOCR (ppu-paddle-ocr, real detector+recognizer) ---------------- */
 
@@ -161,13 +161,34 @@ function filterPlaceholderChunks(chunks) {
 async function loadFlorence() {
     logSection("Loading Florence-2");
 
-    const model = await Florence2ForConditionalGeneration.from_pretrained(
-        FLORENCE_MODEL,
-        { dtype: "fp32" }
-    );
-    const processor = await AutoProcessor.from_pretrained(FLORENCE_MODEL);
-
-    return { model, processor };
+    let lastError = null;
+    for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+            const model = await Florence2ForConditionalGeneration.from_pretrained(
+                FLORENCE_MODEL,
+                { dtype: "fp32" }
+            );
+            const processor = await AutoProcessor.from_pretrained(FLORENCE_MODEL);
+            if (attempt > 0) console.log(`[Florence] Loaded after retry (attempt ${attempt + 1})`);
+            return { model, processor };
+        } catch (error) {
+            lastError = error;
+            const msg = String(error.message || error);
+            console.warn(`[WARN] Florence load attempt ${attempt + 1} failed: ${msg}`);
+            const isCorrupt = msg.includes("Protobuf parsing failed") || msg.includes("Load model from") || msg.includes("Unexpected") || msg.includes("ENOENT");
+            if (isCorrupt && attempt === 0) {
+                try {
+                    const cacheDir = `node_modules/@huggingface/transformers/.cache/${FLORENCE_MODEL.replace("/", "__")}`;
+                    // transformers cache layout is .../.cache/onnx-community__Florence-2-base etc — try both
+                    await fs.rm("node_modules/@huggingface/transformers/.cache/onnx-community", { recursive: true, force: true });
+                    console.log(`[Florence] Cleared corrupted cache, retrying download...`);
+                } catch {}
+                continue;
+            }
+            throw lastError;
+        }
+    }
+    throw lastError;
 }
 
 async function runFlorenceTask({ model, processor, image, task }) {
@@ -193,7 +214,16 @@ async function runFlorenceTask({ model, processor, image, task }) {
 }
 
 async function runFlorence(image) {
-    const { model, processor } = await loadFlorence();
+    let model, processor;
+    try {
+        const loaded = await loadFlorence();
+        model = loaded.model;
+        processor = loaded.processor;
+    } catch (error) {
+        console.warn(`[WARN] Florence load failed (will continue without caption): ${error.message}`);
+        console.warn(`[HINT] Delete corrupted cache: rm -rf node_modules/@huggingface/transformers/.cache and re-run. Check network/disk.`);
+        return { global_description: { task: "<MORE_DETAILED_CAPTION>", error: error.message, skipped: true } };
+    }
     const results = {};
 
     for (const config of FLORENCE_TASKS) {
@@ -964,29 +994,92 @@ function mergeNERPredictions(predictions, tokenIds, tokenizer, offsetMapping, to
     return entities;
 }
 
+async function resolveNERModelId() {
+    // Try local first, then HF auto-download fallback
+    const candidates = [
+        NER_MODEL, // "./models/ettin-68m-nemotron-pii-onnx" (user local)
+        "rulesentry-io/ettin-68m-nemotron-pii-onnx", // ONNX export (270MB, recommended)
+        "kalyan-ks/ettin-68m-nemotron-pii", // PyTorch original (will be converted via optimum)
+    ];
+    for (const cand of candidates) {
+        if (cand.startsWith("./") || cand.startsWith("/") || cand.startsWith("C:")) {
+            try {
+                await fs.access(cand);
+                return cand;
+            } catch {
+                continue;
+            }
+        } else {
+            // HF hub ID — always considered available (will download if not cached)
+            return cand;
+        }
+    }
+    // No local, return HF ONNX as default download target
+    return "rulesentry-io/ettin-68m-nemotron-pii-onnx";
+}
+
 async function loadNER() {
     logSection("Loading Ettin NER");
 
-    const tokenizer = await AutoTokenizer.from_pretrained(NER_MODEL);
-    const model = await AutoModelForTokenClassification.from_pretrained(
-        NER_MODEL,
-        { dtype: "fp32", model_file_name: NER_MODEL_FILE_NAME }
-    );
+    const modelId = await resolveNERModelId();
+    console.log(`[NER] Model: ${modelId} ${modelId !== NER_MODEL ? "(auto-download)" : ""}`);
 
-    const id2label = normalizeId2Label(model.config?.id2label);
-    if (Object.keys(id2label).length === 0) {
-        throw new Error("NER id2label missing.");
+    let lastError = null;
+    // Try candidate + one retry after cache clear if protobuf corrupted
+    for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+            const tokenizer = await AutoTokenizer.from_pretrained(modelId);
+            const model = await AutoModelForTokenClassification.from_pretrained(
+                modelId,
+                { dtype: "fp32", model_file_name: NER_MODEL_FILE_NAME }
+            );
+            const id2label = normalizeId2Label(model.config?.id2label);
+            if (Object.keys(id2label).length === 0) {
+                throw new Error("NER id2label missing.");
+            }
+            const configuredMax = Number(
+                model.config?.max_position_embeddings ?? NER_MAX_TOKENS
+            );
+            const maxTokens = Math.min(
+                NER_MAX_TOKENS,
+                configuredMax > 0 ? configuredMax : NER_MAX_TOKENS
+            );
+            if (attempt > 0) console.log(`[NER] Loaded after retry (attempt ${attempt + 1})`);
+            return { tokenizer, model, id2label, maxTokens };
+        } catch (error) {
+            lastError = error;
+            const msg = String(error.message || error);
+            console.warn(`[WARN] NER load attempt ${attempt + 1} failed: ${msg}`);
+            const isCorrupt = msg.includes("Protobuf parsing failed") || msg.includes("Load model from") || msg.includes("ENOENT");
+            if (isCorrupt && attempt === 0) {
+                // Try clearing HF cache for this model and retry once
+                try {
+                    const cacheDir = `node_modules/@huggingface/transformers/.cache/${modelId.replace("/", "__")}`;
+                    await fs.rm(cacheDir, { recursive: true, force: true });
+                    console.log(`[NER] Cleared cache ${cacheDir}, retrying...`);
+                } catch {}
+                continue;
+            }
+            // If local path failed, try next HF candidate
+            if (modelId === NER_MODEL && attempt === 0) {
+                console.log(`[NER] Falling back to HF hub download...`);
+                try {
+                    const hfId = "rulesentry-io/ettin-68m-nemotron-pii-onnx";
+                    const tokenizer = await AutoTokenizer.from_pretrained(hfId);
+                    const model = await AutoModelForTokenClassification.from_pretrained(
+                        hfId,
+                        { dtype: "fp32", model_file_name: NER_MODEL_FILE_NAME }
+                    );
+                    const id2label = normalizeId2Label(model.config?.id2label);
+                    return { tokenizer, model, id2label, maxTokens: Math.min(NER_MAX_TOKENS, Number(model.config?.max_position_embeddings ?? NER_MAX_TOKENS)) };
+                } catch (e2) {
+                    lastError = e2;
+                }
+            }
+            throw lastError;
+        }
     }
-
-    const configuredMax = Number(
-        model.config?.max_position_embeddings ?? NER_MAX_TOKENS
-    );
-    const maxTokens = Math.min(
-        NER_MAX_TOKENS,
-        configuredMax > 0 ? configuredMax : NER_MAX_TOKENS
-    );
-
-    return { tokenizer, model, id2label, maxTokens };
+    throw lastError;
 }
 
 /**
@@ -1957,31 +2050,49 @@ EVIDENCE \u2014 IMAGE DIMENSIONS: ${evidence.image.width} x ${evidence.image.hei
 Respond with ONLY valid JSON matching the schema above.`;
 }
 
-// Isolated loader — lazy, env-gated, swappable
+// Isolated loader — lazy, env-gated, swappable, auto-downloads if not cached
 let _qwenCache = null;
+const QWEN_FALLBACK_MODELS = [
+    QWEN_MODEL, // user-configured (e.g. "onnx-community/Qwen3.5-2B")
+    "onnx-community/Qwen2.5-0.5B-Instruct",
+    "Xenova/Qwen2-0.5B-Instruct",
+];
 async function loadQwen() {
     if (!QWEN_ENABLED) return null;
     if (_qwenCache) return _qwenCache;
-    try {
-        logSection("Loading Qwen3.5-2B");
-        // Dynamic import so pipeline still runs when transformers version lacks Qwen VL support
-        const { AutoModelForCausalLM, AutoProcessor } = await import("@huggingface/transformers");
-        // Processor for multimodal prompt; fallback to text-only if not available
-        let processor = null;
-        let model = null;
-        try {
-            processor = await AutoProcessor.from_pretrained(QWEN_MODEL);
-        } catch (e) {
-            if (QWEN_DEBUG) console.warn(`[QWEN] processor load failed: ${e.message}`);
+    const { AutoModelForCausalLM, AutoProcessor } = await import("@huggingface/transformers");
+    for (const modelId of QWEN_FALLBACK_MODELS) {
+        for (let attempt = 0; attempt < 2; attempt++) {
+            try {
+                logSection(`Loading Qwen (${modelId})${attempt > 0 ? ` retry ${attempt + 1}` : ""}`);
+                let processor = null;
+                let model = null;
+                try {
+                    processor = await AutoProcessor.from_pretrained(modelId);
+                } catch (e) {
+                    if (QWEN_DEBUG) console.warn(`[QWEN] processor load failed for ${modelId}: ${e.message}`);
+                }
+                model = await AutoModelForCausalLM.from_pretrained(modelId, { dtype: QWEN_DTYPE });
+                console.log(`[QWEN] Loaded ${modelId}`);
+                _qwenCache = { model, processor, modelId };
+                return _qwenCache;
+            } catch (e) {
+                const msg = String(e.message || e);
+                console.warn(`[QWEN] load failed for ${modelId} attempt ${attempt + 1}: ${msg}`);
+                const isCorrupt = msg.includes("Protobuf parsing failed") || msg.includes("Load model from") || msg.includes("ENOENT") || msg.includes("404");
+                if (isCorrupt && attempt === 0) {
+                    try {
+                        await fs.rm(`node_modules/@huggingface/transformers/.cache/${modelId.replace("/", "__")}`, { recursive: true, force: true });
+                    } catch {}
+                    continue;
+                }
+                break; // try next fallback model
+            }
         }
-        model = await AutoModelForCausalLM.from_pretrained(QWEN_MODEL, { dtype: QWEN_DTYPE });
-        _qwenCache = { model, processor };
-        return _qwenCache;
-    } catch (e) {
-        console.warn(`[QWEN] load failed: ${e.message}`);
-        if (QWEN_REQUIRED) throw e;
-        return null;
     }
+    console.warn(`[QWEN] all candidates failed — adjudication will fallback to fusion`);
+    if (QWEN_REQUIRED) throw new Error("Qwen required but no model could be loaded");
+    return null;
 }
 
 async function runQwenRedactionAdjudication({ imagePath, evidence }) {
@@ -2449,8 +2560,15 @@ async function buildEvidence() {
 
     // Run Ettin ONCE on the complete OCR text sequence (with context!)
     // Ettin is now a candidate detector, not final redaction authority.
-    const ner = await loadNER();
-    const nerFindings = await runNER(ner, ocr);
+    let nerFindings = [];
+    try {
+        const ner = await loadNER();
+        nerFindings = await runNER(ner, ocr);
+    } catch (e) {
+        console.warn(`[WARN] Ettin NER unavailable (continuing with deterministic only): ${e.message}`);
+        console.warn(`[HINT] Expected model at ./models/ettin-68m-nemotron-pii-onnx — download via HF or set NER_MODEL env`);
+        nerFindings = [];
+    }
 
     // Deterministic sensitive-field context analysis (parallel metadata, OCR text preserved for Ettin)
     const deterministicFindings = extractSensitiveFieldCandidates(ocr);

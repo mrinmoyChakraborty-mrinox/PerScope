@@ -1,6 +1,14 @@
 node_modules/
-dist/
+ort
+.next/
+out/
 __pycache__/
 .env
 *.log
 .DS_Store
+s1.jpg
+# Team docs site
+docs/node_modules/
+docs/.next/
+docs/out/
+models
