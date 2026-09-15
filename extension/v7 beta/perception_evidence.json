@@ -1,0 +1,2972 @@
+{
+  "input_mode": {
+    "image": true,
+    "dom": false
+  },
+  "image": {
+    "width": 1011,
+    "height": 663,
+    "redacted_output": "./output.png"
+  },
+  "global_description": {
+    "caption": null,
+    "source": "fastvlm",
+    "model": "onnx-community/FastVLM-0.5B-ONNX",
+    "status": "error"
+  },
+  "florence": {
+    "description": "",
+    "caption": "",
+    "source": "fastvlm",
+    "model": "onnx-community/FastVLM-0.5B-ONNX"
+  },
+  "ocr": {
+    "model": "ppu-paddle-ocr (PP-OCRv6-small, detector+recognizer)",
+    "text": "Bhushan Diwakar A / DOB :05/07/2002 4906 5637 6032 本 / Male 3市可 Aadhaar is proofof identity, not of citizenship or date of birth. It should be used with verification (online authentication or scanning of QR code / offline XML). 4906 5637 6032 3,",
+    "confidence": 0.8898390040352738,
+    "items": [
+      {
+        "id": "ocr_0",
+        "text": "Bhushan Diwakar",
+        "confidence": 0.9938731670379639,
+        "bbox": [
+          333,
+          169,
+          576,
+          206
+        ]
+      },
+      {
+        "id": "ocr_2",
+        "text": "A / DOB :05/07/2002",
+        "confidence": 0.9214079942968156,
+        "bbox": [
+          329,
+          211,
+          738,
+          250
+        ]
+      },
+      {
+        "id": "ocr_3",
+        "text": "4906 5637 6032",
+        "confidence": 0.9888639620372227,
+        "bbox": [
+          890,
+          233,
+          992,
+          261
+        ]
+      },
+      {
+        "id": "ocr_4",
+        "text": "本",
+        "confidence": 0.7413622140884399,
+        "bbox": [
+          111,
+          253,
+          175,
+          280
+        ]
+      },
+      {
+        "id": "ocr_5",
+        "text": "/ Male",
+        "confidence": 0.7413622140884399,
+        "bbox": [
+          326,
+          254,
+          492,
+          306
+        ]
+      },
+      {
+        "id": "ocr_6",
+        "text": "3市可",
+        "confidence": 0.6479915579160055,
+        "bbox": [
+          342,
+          382,
+          944,
+          419
+        ]
+      },
+      {
+        "id": "ocr_7",
+        "text": "Aadhaar is proofof identity, not of citizenship",
+        "confidence": 0.9827314285521812,
+        "bbox": [
+          341,
+          423,
+          862,
+          460
+        ]
+      },
+      {
+        "id": "ocr_8",
+        "text": "or date of birth. It should be used with verification (online",
+        "confidence": 0.9939146911511656,
+        "bbox": [
+          342,
+          458,
+          982,
+          491
+        ]
+      },
+      {
+        "id": "ocr_9",
+        "text": "authentication or scanning of QR code / offline XML).",
+        "confidence": 0.9920167394404141,
+        "bbox": [
+          340,
+          491,
+          928,
+          524
+        ]
+      },
+      {
+        "id": "ocr_10",
+        "text": "4906 5637 6032",
+        "confidence": 0.9494226234299796,
+        "bbox": [
+          332,
+          534,
+          743,
+          582
+        ]
+      },
+      {
+        "id": "ocr_11",
+        "text": "3,",
+        "confidence": 0.731248289346695,
+        "bbox": [
+          264,
+          591,
+          751,
+          656
+        ]
+      }
+    ],
+    "reading_order": [
+      {
+        "id": "ocr_0",
+        "reading_order": 0,
+        "bbox": [
+          333,
+          169,
+          576,
+          206
+        ]
+      },
+      {
+        "id": "ocr_2",
+        "reading_order": 1,
+        "bbox": [
+          329,
+          211,
+          738,
+          250
+        ]
+      },
+      {
+        "id": "ocr_3",
+        "reading_order": 2,
+        "bbox": [
+          890,
+          233,
+          992,
+          261
+        ]
+      },
+      {
+        "id": "ocr_4",
+        "reading_order": 3,
+        "bbox": [
+          111,
+          253,
+          175,
+          280
+        ]
+      },
+      {
+        "id": "ocr_5",
+        "reading_order": 4,
+        "bbox": [
+          326,
+          254,
+          492,
+          306
+        ]
+      },
+      {
+        "id": "ocr_6",
+        "reading_order": 5,
+        "bbox": [
+          342,
+          382,
+          944,
+          419
+        ]
+      },
+      {
+        "id": "ocr_7",
+        "reading_order": 6,
+        "bbox": [
+          341,
+          423,
+          862,
+          460
+        ]
+      },
+      {
+        "id": "ocr_8",
+        "reading_order": 7,
+        "bbox": [
+          342,
+          458,
+          982,
+          491
+        ]
+      },
+      {
+        "id": "ocr_9",
+        "reading_order": 8,
+        "bbox": [
+          340,
+          491,
+          928,
+          524
+        ]
+      },
+      {
+        "id": "ocr_10",
+        "reading_order": 9,
+        "bbox": [
+          332,
+          534,
+          743,
+          582
+        ]
+      },
+      {
+        "id": "ocr_11",
+        "reading_order": 10,
+        "bbox": [
+          264,
+          591,
+          751,
+          656
+        ]
+      }
+    ]
+  },
+  "ui_structure": {
+    "imageWidth": 1011,
+    "imageHeight": 663,
+    "elements": [
+      {
+        "id": "ocr_0",
+        "text": "Bhushan Diwakar",
+        "bbox": [
+          333,
+          169,
+          576,
+          206
+        ],
+        "centerX": 454.5,
+        "centerY": 187.5,
+        "normCenterX": 0.4495548961424332,
+        "normCenterY": 0.2828054298642534,
+        "width": 243,
+        "height": 37
+      },
+      {
+        "id": "ocr_2",
+        "text": "A / DOB :05/07/2002",
+        "bbox": [
+          329,
+          211,
+          738,
+          250
+        ],
+        "centerX": 533.5,
+        "centerY": 230.5,
+        "normCenterX": 0.5276953511374877,
+        "normCenterY": 0.3476621417797888,
+        "width": 409,
+        "height": 39
+      },
+      {
+        "id": "ocr_3",
+        "text": "4906 5637 6032",
+        "bbox": [
+          890,
+          233,
+          992,
+          261
+        ],
+        "centerX": 941,
+        "centerY": 247,
+        "normCenterX": 0.9307616221562809,
+        "normCenterY": 0.37254901960784315,
+        "width": 102,
+        "height": 28
+      },
+      {
+        "id": "ocr_4",
+        "text": "本",
+        "bbox": [
+          111,
+          253,
+          175,
+          280
+        ],
+        "centerX": 143,
+        "centerY": 266.5,
+        "normCenterX": 0.1414441147378833,
+        "normCenterY": 0.4019607843137255,
+        "width": 64,
+        "height": 27
+      },
+      {
+        "id": "ocr_5",
+        "text": "/ Male",
+        "bbox": [
+          326,
+          254,
+          492,
+          306
+        ],
+        "centerX": 409,
+        "centerY": 280,
+        "normCenterX": 0.4045499505440158,
+        "normCenterY": 0.42232277526395173,
+        "width": 166,
+        "height": 52
+      },
+      {
+        "id": "ocr_6",
+        "text": "3市可",
+        "bbox": [
+          342,
+          382,
+          944,
+          419
+        ],
+        "centerX": 643,
+        "centerY": 400.5,
+        "normCenterX": 0.636003956478734,
+        "normCenterY": 0.6040723981900452,
+        "width": 602,
+        "height": 37
+      },
+      {
+        "id": "ocr_7",
+        "text": "Aadhaar is proofof identity, not of citizenship",
+        "bbox": [
+          341,
+          423,
+          862,
+          460
+        ],
+        "centerX": 601.5,
+        "centerY": 441.5,
+        "normCenterX": 0.5949554896142433,
+        "normCenterY": 0.6659125188536953,
+        "width": 521,
+        "height": 37
+      },
+      {
+        "id": "ocr_8",
+        "text": "or date of birth. It should be used with verification (online",
+        "bbox": [
+          342,
+          458,
+          982,
+          491
+        ],
+        "centerX": 662,
+        "centerY": 474.5,
+        "normCenterX": 0.6547972304648862,
+        "normCenterY": 0.7156862745098039,
+        "width": 640,
+        "height": 33
+      },
+      {
+        "id": "ocr_9",
+        "text": "authentication or scanning of QR code / offline XML).",
+        "bbox": [
+          340,
+          491,
+          928,
+          524
+        ],
+        "centerX": 634,
+        "centerY": 507.5,
+        "normCenterX": 0.6271018793273986,
+        "normCenterY": 0.7654600301659125,
+        "width": 588,
+        "height": 33
+      },
+      {
+        "id": "ocr_10",
+        "text": "4906 5637 6032",
+        "bbox": [
+          332,
+          534,
+          743,
+          582
+        ],
+        "centerX": 537.5,
+        "centerY": 558,
+        "normCenterX": 0.5316518298714145,
+        "normCenterY": 0.8416289592760181,
+        "width": 411,
+        "height": 48
+      },
+      {
+        "id": "ocr_11",
+        "text": "3,",
+        "bbox": [
+          264,
+          591,
+          751,
+          656
+        ],
+        "centerX": 507.5,
+        "centerY": 623.5,
+        "normCenterX": 0.5019782393669634,
+        "normCenterY": 0.9404223227752639,
+        "width": 487,
+        "height": 65
+      }
+    ],
+    "groups": [
+      {
+        "id": "group_000",
+        "type": "segmented_control",
+        "bbox": [
+          329,
+          211,
+          992,
+          261
+        ],
+        "children": [
+          "ocr_2",
+          "ocr_3"
+        ],
+        "confidence": 0.85,
+        "evidence": [
+          "same_row",
+          "similar_height",
+          "horizontal_siblings"
+        ]
+      },
+      {
+        "id": "group_001",
+        "type": "segmented_control",
+        "bbox": [
+          111,
+          253,
+          492,
+          306
+        ],
+        "children": [
+          "ocr_4",
+          "ocr_5"
+        ],
+        "confidence": 0.85,
+        "evidence": [
+          "same_row",
+          "similar_height",
+          "horizontal_siblings"
+        ]
+      }
+    ],
+    "relationships": [
+      {
+        "ocr_id_a": "ocr_0",
+        "ocr_id_b": "ocr_2",
+        "sameRow": false,
+        "sameColumn": true,
+        "above": true,
+        "below": false,
+        "leftOf": false,
+        "rightOf": false,
+        "near": false,
+        "overlaps": false,
+        "horizontallyAligned": false,
+        "verticallyAligned": true,
+        "significantOverlap": true,
+        "significantVerticalOverlap": false,
+        "contains": false,
+        "containsReverse": false,
+        "likelySameContainer": true,
+        "sameVerticalPosition": true,
+        "sameHorizontalPosition": true
+      },
+      {
+        "ocr_id_a": "ocr_0",
+        "ocr_id_b": "ocr_3",
+        "sameRow": false,
+        "sameColumn": false,
+        "above": true,
+        "below": false,
+        "leftOf": true,
+        "rightOf": false,
+        "near": false,
+        "overlaps": false,
+        "horizontallyAligned": false,
+        "verticallyAligned": false,
+        "significantOverlap": false,
+        "significantVerticalOverlap": false,
+        "contains": false,
+        "containsReverse": false,
+        "likelySameContainer": false,
+        "sameVerticalPosition": true,
+        "sameHorizontalPosition": false
+      },
+      {
+        "ocr_id_a": "ocr_0",
+        "ocr_id_b": "ocr_4",
+        "sameRow": false,
+        "sameColumn": false,
+        "above": true,
+        "below": false,
+        "leftOf": false,
+        "rightOf": true,
+        "near": false,
+        "overlaps": false,
+        "horizontallyAligned": false,
+        "verticallyAligned": false,
+        "significantOverlap": false,
+        "significantVerticalOverlap": false,
+        "contains": false,
+        "containsReverse": false,
+        "likelySameContainer": false,
+        "sameVerticalPosition": false,
+        "sameHorizontalPosition": false
+      },
+      {
+        "ocr_id_a": "ocr_0",
+        "ocr_id_b": "ocr_5",
+        "sameRow": false,
+        "sameColumn": true,
+        "above": true,
+        "below": false,
+        "leftOf": false,
+        "rightOf": false,
+        "near": false,
+        "overlaps": false,
+        "horizontallyAligned": false,
+        "verticallyAligned": true,
+        "significantOverlap": true,
+        "significantVerticalOverlap": false,
+        "contains": false,
+        "containsReverse": false,
+        "likelySameContainer": true,
+        "sameVerticalPosition": false,
+        "sameHorizontalPosition": true
+      },
+      {
+        "ocr_id_a": "ocr_0",
+        "ocr_id_b": "ocr_6",
+        "sameRow": false,
+        "sameColumn": false,
+        "above": true,
+        "below": false,
+        "leftOf": false,
+        "rightOf": false,
+        "near": false,
+        "overlaps": false,
+        "horizontallyAligned": false,
+        "verticallyAligned": false,
+        "significantOverlap": true,
+        "significantVerticalOverlap": false,
+        "contains": false,
+        "containsReverse": false,
+        "likelySameContainer": true,
+        "sameVerticalPosition": false,
+        "sameHorizontalPosition": false
+      },
+      {
+        "ocr_id_a": "ocr_0",
+        "ocr_id_b": "ocr_7",
+        "sameRow": false,
+        "sameColumn": false,
+        "above": true,
+        "below": false,
+        "leftOf": false,
+        "rightOf": false,
+        "near": false,
+        "overlaps": false,
+        "horizontallyAligned": false,
+        "verticallyAligned": false,
+        "significantOverlap": true,
+        "significantVerticalOverlap": false,
+        "contains": false,
+        "containsReverse": false,
+        "likelySameContainer": true,
+        "sameVerticalPosition": false,
+        "sameHorizontalPosition": false
+      },
+      {
+        "ocr_id_a": "ocr_0",
+        "ocr_id_b": "ocr_8",
+        "sameRow": false,
+        "sameColumn": false,
+        "above": true,
+        "below": false,
+        "leftOf": false,
+        "rightOf": false,
+        "near": false,
+        "overlaps": false,
+        "horizontallyAligned": false,
+        "verticallyAligned": false,
+        "significantOverlap": true,
+        "significantVerticalOverlap": false,
+        "contains": false,
+        "containsReverse": false,
+        "likelySameContainer": true,
+        "sameVerticalPosition": false,
+        "sameHorizontalPosition": false
+      },
+      {
+        "ocr_id_a": "ocr_0",
+        "ocr_id_b": "ocr_9",
+        "sameRow": false,
+        "sameColumn": false,
+        "above": true,
+        "below": false,
+        "leftOf": false,
+        "rightOf": false,
+        "near": false,
+        "overlaps": false,
+        "horizontallyAligned": false,
+        "verticallyAligned": false,
+        "significantOverlap": true,
+        "significantVerticalOverlap": false,
+        "contains": false,
+        "containsReverse": false,
+        "likelySameContainer": true,
+        "sameVerticalPosition": false,
+        "sameHorizontalPosition": false
+      },
+      {
+        "ocr_id_a": "ocr_0",
+        "ocr_id_b": "ocr_10",
+        "sameRow": false,
+        "sameColumn": true,
+        "above": true,
+        "below": false,
+        "leftOf": false,
+        "rightOf": false,
+        "near": false,
+        "overlaps": false,
+        "horizontallyAligned": false,
+        "verticallyAligned": true,
+        "significantOverlap": true,
+        "significantVerticalOverlap": false,
+        "contains": false,
+        "containsReverse": false,
+        "likelySameContainer": true,
+        "sameVerticalPosition": false,
+        "sameHorizontalPosition": true
+      },
+      {
+        "ocr_id_a": "ocr_0",
+        "ocr_id_b": "ocr_11",
+        "sameRow": false,
+        "sameColumn": true,
+        "above": true,
+        "below": false,
+        "leftOf": false,
+        "rightOf": false,
+        "near": false,
+        "overlaps": false,
+        "horizontallyAligned": false,
+        "verticallyAligned": true,
+        "significantOverlap": true,
+        "significantVerticalOverlap": false,
+        "contains": false,
+        "containsReverse": false,
+        "likelySameContainer": true,
+        "sameVerticalPosition": false,
+        "sameHorizontalPosition": true
+      },
+      {
+        "ocr_id_a": "ocr_2",
+        "ocr_id_b": "ocr_4",
+        "sameRow": false,
+        "sameColumn": false,
+        "above": true,
+        "below": false,
+        "leftOf": false,
+        "rightOf": true,
+        "near": false,
+        "overlaps": false,
+        "horizontallyAligned": false,
+        "verticallyAligned": false,
+        "significantOverlap": false,
+        "significantVerticalOverlap": false,
+        "contains": false,
+        "containsReverse": false,
+        "likelySameContainer": false,
+        "sameVerticalPosition": true,
+        "sameHorizontalPosition": false
+      },
+      {
+        "ocr_id_a": "ocr_2",
+        "ocr_id_b": "ocr_5",
+        "sameRow": false,
+        "sameColumn": false,
+        "above": true,
+        "below": false,
+        "leftOf": false,
+        "rightOf": false,
+        "near": false,
+        "overlaps": false,
+        "horizontallyAligned": false,
+        "verticallyAligned": false,
+        "significantOverlap": true,
+        "significantVerticalOverlap": false,
+        "contains": false,
+        "containsReverse": false,
+        "likelySameContainer": true,
+        "sameVerticalPosition": true,
+        "sameHorizontalPosition": false
+      },
+      {
+        "ocr_id_a": "ocr_2",
+        "ocr_id_b": "ocr_6",
+        "sameRow": false,
+        "sameColumn": true,
+        "above": true,
+        "below": false,
+        "leftOf": false,
+        "rightOf": false,
+        "near": false,
+        "overlaps": false,
+        "horizontallyAligned": false,
+        "verticallyAligned": true,
+        "significantOverlap": true,
+        "significantVerticalOverlap": false,
+        "contains": false,
+        "containsReverse": false,
+        "likelySameContainer": true,
+        "sameVerticalPosition": false,
+        "sameHorizontalPosition": false
+      },
+      {
+        "ocr_id_a": "ocr_2",
+        "ocr_id_b": "ocr_7",
+        "sameRow": false,
+        "sameColumn": true,
+        "above": true,
+        "below": false,
+        "leftOf": false,
+        "rightOf": false,
+        "near": false,
+        "overlaps": false,
+        "horizontallyAligned": false,
+        "verticallyAligned": true,
+        "significantOverlap": true,
+        "significantVerticalOverlap": false,
+        "contains": false,
+        "containsReverse": false,
+        "likelySameContainer": true,
+        "sameVerticalPosition": false,
+        "sameHorizontalPosition": true
+      },
+      {
+        "ocr_id_a": "ocr_2",
+        "ocr_id_b": "ocr_8",
+        "sameRow": false,
+        "sameColumn": true,
+        "above": true,
+        "below": false,
+        "leftOf": false,
+        "rightOf": false,
+        "near": false,
+        "overlaps": false,
+        "horizontallyAligned": false,
+        "verticallyAligned": true,
+        "significantOverlap": true,
+        "significantVerticalOverlap": false,
+        "contains": false,
+        "containsReverse": false,
+        "likelySameContainer": true,
+        "sameVerticalPosition": false,
+        "sameHorizontalPosition": false
+      },
+      {
+        "ocr_id_a": "ocr_2",
+        "ocr_id_b": "ocr_9",
+        "sameRow": false,
+        "sameColumn": true,
+        "above": true,
+        "below": false,
+        "leftOf": false,
+        "rightOf": false,
+        "near": false,
+        "overlaps": false,
+        "horizontallyAligned": false,
+        "verticallyAligned": true,
+        "significantOverlap": true,
+        "significantVerticalOverlap": false,
+        "contains": false,
+        "containsReverse": false,
+        "likelySameContainer": true,
+        "sameVerticalPosition": false,
+        "sameHorizontalPosition": true
+      },
+      {
+        "ocr_id_a": "ocr_2",
+        "ocr_id_b": "ocr_10",
+        "sameRow": false,
+        "sameColumn": true,
+        "above": true,
+        "below": false,
+        "leftOf": false,
+        "rightOf": false,
+        "near": false,
+        "overlaps": false,
+        "horizontallyAligned": false,
+        "verticallyAligned": true,
+        "significantOverlap": true,
+        "significantVerticalOverlap": false,
+        "contains": false,
+        "containsReverse": false,
+        "likelySameContainer": true,
+        "sameVerticalPosition": false,
+        "sameHorizontalPosition": true
+      },
+      {
+        "ocr_id_a": "ocr_2",
+        "ocr_id_b": "ocr_11",
+        "sameRow": false,
+        "sameColumn": true,
+        "above": true,
+        "below": false,
+        "leftOf": false,
+        "rightOf": false,
+        "near": false,
+        "overlaps": false,
+        "horizontallyAligned": false,
+        "verticallyAligned": true,
+        "significantOverlap": true,
+        "significantVerticalOverlap": false,
+        "contains": false,
+        "containsReverse": false,
+        "likelySameContainer": true,
+        "sameVerticalPosition": false,
+        "sameHorizontalPosition": true
+      },
+      {
+        "ocr_id_a": "ocr_3",
+        "ocr_id_b": "ocr_6",
+        "sameRow": false,
+        "sameColumn": false,
+        "above": true,
+        "below": false,
+        "leftOf": false,
+        "rightOf": false,
+        "near": false,
+        "overlaps": false,
+        "horizontallyAligned": false,
+        "verticallyAligned": false,
+        "significantOverlap": false,
+        "significantVerticalOverlap": false,
+        "contains": false,
+        "containsReverse": false,
+        "likelySameContainer": true,
+        "sameVerticalPosition": false,
+        "sameHorizontalPosition": false
+      },
+      {
+        "ocr_id_a": "ocr_3",
+        "ocr_id_b": "ocr_7",
+        "sameRow": false,
+        "sameColumn": false,
+        "above": true,
+        "below": false,
+        "leftOf": false,
+        "rightOf": true,
+        "near": false,
+        "overlaps": false,
+        "horizontallyAligned": false,
+        "verticallyAligned": false,
+        "significantOverlap": false,
+        "significantVerticalOverlap": false,
+        "contains": false,
+        "containsReverse": false,
+        "likelySameContainer": false,
+        "sameVerticalPosition": false,
+        "sameHorizontalPosition": false
+      },
+      {
+        "ocr_id_a": "ocr_3",
+        "ocr_id_b": "ocr_8",
+        "sameRow": false,
+        "sameColumn": false,
+        "above": true,
+        "below": false,
+        "leftOf": false,
+        "rightOf": false,
+        "near": false,
+        "overlaps": false,
+        "horizontallyAligned": false,
+        "verticallyAligned": false,
+        "significantOverlap": false,
+        "significantVerticalOverlap": false,
+        "contains": false,
+        "containsReverse": false,
+        "likelySameContainer": false,
+        "sameVerticalPosition": false,
+        "sameHorizontalPosition": false
+      },
+      {
+        "ocr_id_a": "ocr_3",
+        "ocr_id_b": "ocr_9",
+        "sameRow": false,
+        "sameColumn": false,
+        "above": true,
+        "below": false,
+        "leftOf": false,
+        "rightOf": false,
+        "near": false,
+        "overlaps": false,
+        "horizontallyAligned": false,
+        "verticallyAligned": false,
+        "significantOverlap": false,
+        "significantVerticalOverlap": false,
+        "contains": false,
+        "containsReverse": false,
+        "likelySameContainer": false,
+        "sameVerticalPosition": false,
+        "sameHorizontalPosition": false
+      },
+      {
+        "ocr_id_a": "ocr_3",
+        "ocr_id_b": "ocr_10",
+        "sameRow": false,
+        "sameColumn": false,
+        "above": true,
+        "below": false,
+        "leftOf": false,
+        "rightOf": true,
+        "near": false,
+        "overlaps": false,
+        "horizontallyAligned": false,
+        "verticallyAligned": false,
+        "significantOverlap": false,
+        "significantVerticalOverlap": false,
+        "contains": false,
+        "containsReverse": false,
+        "likelySameContainer": false,
+        "sameVerticalPosition": false,
+        "sameHorizontalPosition": false
+      },
+      {
+        "ocr_id_a": "ocr_3",
+        "ocr_id_b": "ocr_11",
+        "sameRow": false,
+        "sameColumn": false,
+        "above": true,
+        "below": false,
+        "leftOf": false,
+        "rightOf": true,
+        "near": false,
+        "overlaps": false,
+        "horizontallyAligned": false,
+        "verticallyAligned": false,
+        "significantOverlap": false,
+        "significantVerticalOverlap": false,
+        "contains": false,
+        "containsReverse": false,
+        "likelySameContainer": false,
+        "sameVerticalPosition": false,
+        "sameHorizontalPosition": false
+      },
+      {
+        "ocr_id_a": "ocr_4",
+        "ocr_id_b": "ocr_5",
+        "sameRow": false,
+        "sameColumn": false,
+        "above": false,
+        "below": false,
+        "leftOf": true,
+        "rightOf": false,
+        "near": false,
+        "overlaps": false,
+        "horizontallyAligned": false,
+        "verticallyAligned": false,
+        "significantOverlap": false,
+        "significantVerticalOverlap": true,
+        "contains": false,
+        "containsReverse": false,
+        "likelySameContainer": true,
+        "sameVerticalPosition": true,
+        "sameHorizontalPosition": false
+      },
+      {
+        "ocr_id_a": "ocr_4",
+        "ocr_id_b": "ocr_6",
+        "sameRow": false,
+        "sameColumn": false,
+        "above": true,
+        "below": false,
+        "leftOf": true,
+        "rightOf": false,
+        "near": false,
+        "overlaps": false,
+        "horizontallyAligned": false,
+        "verticallyAligned": false,
+        "significantOverlap": false,
+        "significantVerticalOverlap": false,
+        "contains": false,
+        "containsReverse": false,
+        "likelySameContainer": false,
+        "sameVerticalPosition": false,
+        "sameHorizontalPosition": false
+      },
+      {
+        "ocr_id_a": "ocr_4",
+        "ocr_id_b": "ocr_7",
+        "sameRow": false,
+        "sameColumn": false,
+        "above": true,
+        "below": false,
+        "leftOf": true,
+        "rightOf": false,
+        "near": false,
+        "overlaps": false,
+        "horizontallyAligned": false,
+        "verticallyAligned": false,
+        "significantOverlap": false,
+        "significantVerticalOverlap": false,
+        "contains": false,
+        "containsReverse": false,
+        "likelySameContainer": false,
+        "sameVerticalPosition": false,
+        "sameHorizontalPosition": false
+      },
+      {
+        "ocr_id_a": "ocr_4",
+        "ocr_id_b": "ocr_8",
+        "sameRow": false,
+        "sameColumn": false,
+        "above": true,
+        "below": false,
+        "leftOf": true,
+        "rightOf": false,
+        "near": false,
+        "overlaps": false,
+        "horizontallyAligned": false,
+        "verticallyAligned": false,
+        "significantOverlap": false,
+        "significantVerticalOverlap": false,
+        "contains": false,
+        "containsReverse": false,
+        "likelySameContainer": false,
+        "sameVerticalPosition": false,
+        "sameHorizontalPosition": false
+      },
+      {
+        "ocr_id_a": "ocr_4",
+        "ocr_id_b": "ocr_9",
+        "sameRow": false,
+        "sameColumn": false,
+        "above": true,
+        "below": false,
+        "leftOf": true,
+        "rightOf": false,
+        "near": false,
+        "overlaps": false,
+        "horizontallyAligned": false,
+        "verticallyAligned": false,
+        "significantOverlap": false,
+        "significantVerticalOverlap": false,
+        "contains": false,
+        "containsReverse": false,
+        "likelySameContainer": false,
+        "sameVerticalPosition": false,
+        "sameHorizontalPosition": false
+      },
+      {
+        "ocr_id_a": "ocr_4",
+        "ocr_id_b": "ocr_10",
+        "sameRow": false,
+        "sameColumn": false,
+        "above": true,
+        "below": false,
+        "leftOf": true,
+        "rightOf": false,
+        "near": false,
+        "overlaps": false,
+        "horizontallyAligned": false,
+        "verticallyAligned": false,
+        "significantOverlap": false,
+        "significantVerticalOverlap": false,
+        "contains": false,
+        "containsReverse": false,
+        "likelySameContainer": false,
+        "sameVerticalPosition": false,
+        "sameHorizontalPosition": false
+      },
+      {
+        "ocr_id_a": "ocr_4",
+        "ocr_id_b": "ocr_11",
+        "sameRow": false,
+        "sameColumn": false,
+        "above": true,
+        "below": false,
+        "leftOf": true,
+        "rightOf": false,
+        "near": false,
+        "overlaps": false,
+        "horizontallyAligned": false,
+        "verticallyAligned": false,
+        "significantOverlap": false,
+        "significantVerticalOverlap": false,
+        "contains": false,
+        "containsReverse": false,
+        "likelySameContainer": false,
+        "sameVerticalPosition": false,
+        "sameHorizontalPosition": false
+      },
+      {
+        "ocr_id_a": "ocr_5",
+        "ocr_id_b": "ocr_6",
+        "sameRow": false,
+        "sameColumn": false,
+        "above": true,
+        "below": false,
+        "leftOf": false,
+        "rightOf": false,
+        "near": false,
+        "overlaps": false,
+        "horizontallyAligned": false,
+        "verticallyAligned": false,
+        "significantOverlap": false,
+        "significantVerticalOverlap": false,
+        "contains": false,
+        "containsReverse": false,
+        "likelySameContainer": true,
+        "sameVerticalPosition": false,
+        "sameHorizontalPosition": false
+      },
+      {
+        "ocr_id_a": "ocr_5",
+        "ocr_id_b": "ocr_7",
+        "sameRow": false,
+        "sameColumn": false,
+        "above": true,
+        "below": false,
+        "leftOf": false,
+        "rightOf": false,
+        "near": false,
+        "overlaps": false,
+        "horizontallyAligned": false,
+        "verticallyAligned": false,
+        "significantOverlap": false,
+        "significantVerticalOverlap": false,
+        "contains": false,
+        "containsReverse": false,
+        "likelySameContainer": true,
+        "sameVerticalPosition": false,
+        "sameHorizontalPosition": false
+      },
+      {
+        "ocr_id_a": "ocr_5",
+        "ocr_id_b": "ocr_8",
+        "sameRow": false,
+        "sameColumn": false,
+        "above": true,
+        "below": false,
+        "leftOf": false,
+        "rightOf": false,
+        "near": false,
+        "overlaps": false,
+        "horizontallyAligned": false,
+        "verticallyAligned": false,
+        "significantOverlap": false,
+        "significantVerticalOverlap": false,
+        "contains": false,
+        "containsReverse": false,
+        "likelySameContainer": true,
+        "sameVerticalPosition": false,
+        "sameHorizontalPosition": false
+      },
+      {
+        "ocr_id_a": "ocr_5",
+        "ocr_id_b": "ocr_9",
+        "sameRow": false,
+        "sameColumn": false,
+        "above": true,
+        "below": false,
+        "leftOf": false,
+        "rightOf": false,
+        "near": false,
+        "overlaps": false,
+        "horizontallyAligned": false,
+        "verticallyAligned": false,
+        "significantOverlap": false,
+        "significantVerticalOverlap": false,
+        "contains": false,
+        "containsReverse": false,
+        "likelySameContainer": false,
+        "sameVerticalPosition": false,
+        "sameHorizontalPosition": false
+      },
+      {
+        "ocr_id_a": "ocr_5",
+        "ocr_id_b": "ocr_10",
+        "sameRow": false,
+        "sameColumn": false,
+        "above": true,
+        "below": false,
+        "leftOf": false,
+        "rightOf": false,
+        "near": false,
+        "overlaps": false,
+        "horizontallyAligned": false,
+        "verticallyAligned": false,
+        "significantOverlap": true,
+        "significantVerticalOverlap": false,
+        "contains": false,
+        "containsReverse": false,
+        "likelySameContainer": true,
+        "sameVerticalPosition": false,
+        "sameHorizontalPosition": false
+      },
+      {
+        "ocr_id_a": "ocr_5",
+        "ocr_id_b": "ocr_11",
+        "sameRow": false,
+        "sameColumn": false,
+        "above": true,
+        "below": false,
+        "leftOf": false,
+        "rightOf": false,
+        "near": false,
+        "overlaps": false,
+        "horizontallyAligned": false,
+        "verticallyAligned": false,
+        "significantOverlap": true,
+        "significantVerticalOverlap": false,
+        "contains": false,
+        "containsReverse": false,
+        "likelySameContainer": true,
+        "sameVerticalPosition": false,
+        "sameHorizontalPosition": true
+      },
+      {
+        "ocr_id_a": "ocr_6",
+        "ocr_id_b": "ocr_7",
+        "sameRow": false,
+        "sameColumn": true,
+        "above": true,
+        "below": false,
+        "leftOf": false,
+        "rightOf": false,
+        "near": false,
+        "overlaps": false,
+        "horizontallyAligned": false,
+        "verticallyAligned": true,
+        "significantOverlap": true,
+        "significantVerticalOverlap": false,
+        "contains": false,
+        "containsReverse": false,
+        "likelySameContainer": true,
+        "sameVerticalPosition": true,
+        "sameHorizontalPosition": true
+      },
+      {
+        "ocr_id_a": "ocr_6",
+        "ocr_id_b": "ocr_8",
+        "sameRow": false,
+        "sameColumn": true,
+        "above": true,
+        "below": false,
+        "leftOf": false,
+        "rightOf": false,
+        "near": false,
+        "overlaps": false,
+        "horizontallyAligned": false,
+        "verticallyAligned": true,
+        "significantOverlap": true,
+        "significantVerticalOverlap": false,
+        "contains": false,
+        "containsReverse": false,
+        "likelySameContainer": true,
+        "sameVerticalPosition": false,
+        "sameHorizontalPosition": true
+      },
+      {
+        "ocr_id_a": "ocr_6",
+        "ocr_id_b": "ocr_9",
+        "sameRow": false,
+        "sameColumn": true,
+        "above": true,
+        "below": false,
+        "leftOf": false,
+        "rightOf": false,
+        "near": false,
+        "overlaps": false,
+        "horizontallyAligned": false,
+        "verticallyAligned": true,
+        "significantOverlap": true,
+        "significantVerticalOverlap": false,
+        "contains": false,
+        "containsReverse": false,
+        "likelySameContainer": true,
+        "sameVerticalPosition": false,
+        "sameHorizontalPosition": true
+      },
+      {
+        "ocr_id_a": "ocr_6",
+        "ocr_id_b": "ocr_10",
+        "sameRow": false,
+        "sameColumn": true,
+        "above": true,
+        "below": false,
+        "leftOf": false,
+        "rightOf": false,
+        "near": false,
+        "overlaps": false,
+        "horizontallyAligned": false,
+        "verticallyAligned": true,
+        "significantOverlap": true,
+        "significantVerticalOverlap": false,
+        "contains": false,
+        "containsReverse": false,
+        "likelySameContainer": true,
+        "sameVerticalPosition": false,
+        "sameHorizontalPosition": false
+      },
+      {
+        "ocr_id_a": "ocr_6",
+        "ocr_id_b": "ocr_11",
+        "sameRow": false,
+        "sameColumn": true,
+        "above": true,
+        "below": false,
+        "leftOf": false,
+        "rightOf": false,
+        "near": false,
+        "overlaps": false,
+        "horizontallyAligned": false,
+        "verticallyAligned": true,
+        "significantOverlap": true,
+        "significantVerticalOverlap": false,
+        "contains": false,
+        "containsReverse": false,
+        "likelySameContainer": true,
+        "sameVerticalPosition": false,
+        "sameHorizontalPosition": false
+      },
+      {
+        "ocr_id_a": "ocr_7",
+        "ocr_id_b": "ocr_8",
+        "sameRow": false,
+        "sameColumn": true,
+        "above": false,
+        "below": false,
+        "leftOf": false,
+        "rightOf": false,
+        "near": true,
+        "overlaps": true,
+        "horizontallyAligned": false,
+        "verticallyAligned": true,
+        "significantOverlap": true,
+        "significantVerticalOverlap": false,
+        "contains": false,
+        "containsReverse": false,
+        "likelySameContainer": true,
+        "sameVerticalPosition": true,
+        "sameHorizontalPosition": true
+      },
+      {
+        "ocr_id_a": "ocr_7",
+        "ocr_id_b": "ocr_9",
+        "sameRow": false,
+        "sameColumn": true,
+        "above": true,
+        "below": false,
+        "leftOf": false,
+        "rightOf": false,
+        "near": false,
+        "overlaps": false,
+        "horizontallyAligned": false,
+        "verticallyAligned": true,
+        "significantOverlap": true,
+        "significantVerticalOverlap": false,
+        "contains": false,
+        "containsReverse": false,
+        "likelySameContainer": true,
+        "sameVerticalPosition": true,
+        "sameHorizontalPosition": true
+      },
+      {
+        "ocr_id_a": "ocr_7",
+        "ocr_id_b": "ocr_10",
+        "sameRow": false,
+        "sameColumn": true,
+        "above": true,
+        "below": false,
+        "leftOf": false,
+        "rightOf": false,
+        "near": false,
+        "overlaps": false,
+        "horizontallyAligned": false,
+        "verticallyAligned": true,
+        "significantOverlap": true,
+        "significantVerticalOverlap": false,
+        "contains": false,
+        "containsReverse": false,
+        "likelySameContainer": true,
+        "sameVerticalPosition": false,
+        "sameHorizontalPosition": true
+      },
+      {
+        "ocr_id_a": "ocr_7",
+        "ocr_id_b": "ocr_11",
+        "sameRow": false,
+        "sameColumn": true,
+        "above": true,
+        "below": false,
+        "leftOf": false,
+        "rightOf": false,
+        "near": false,
+        "overlaps": false,
+        "horizontallyAligned": false,
+        "verticallyAligned": true,
+        "significantOverlap": true,
+        "significantVerticalOverlap": false,
+        "contains": false,
+        "containsReverse": false,
+        "likelySameContainer": true,
+        "sameVerticalPosition": false,
+        "sameHorizontalPosition": true
+      },
+      {
+        "ocr_id_a": "ocr_8",
+        "ocr_id_b": "ocr_9",
+        "sameRow": false,
+        "sameColumn": true,
+        "above": false,
+        "below": false,
+        "leftOf": false,
+        "rightOf": false,
+        "near": true,
+        "overlaps": false,
+        "horizontallyAligned": false,
+        "verticallyAligned": true,
+        "significantOverlap": true,
+        "significantVerticalOverlap": false,
+        "contains": false,
+        "containsReverse": false,
+        "likelySameContainer": true,
+        "sameVerticalPosition": true,
+        "sameHorizontalPosition": true
+      },
+      {
+        "ocr_id_a": "ocr_8",
+        "ocr_id_b": "ocr_10",
+        "sameRow": false,
+        "sameColumn": true,
+        "above": true,
+        "below": false,
+        "leftOf": false,
+        "rightOf": false,
+        "near": false,
+        "overlaps": false,
+        "horizontallyAligned": false,
+        "verticallyAligned": true,
+        "significantOverlap": true,
+        "significantVerticalOverlap": false,
+        "contains": false,
+        "containsReverse": false,
+        "likelySameContainer": true,
+        "sameVerticalPosition": false,
+        "sameHorizontalPosition": false
+      },
+      {
+        "ocr_id_a": "ocr_8",
+        "ocr_id_b": "ocr_11",
+        "sameRow": false,
+        "sameColumn": true,
+        "above": true,
+        "below": false,
+        "leftOf": false,
+        "rightOf": false,
+        "near": false,
+        "overlaps": false,
+        "horizontallyAligned": false,
+        "verticallyAligned": true,
+        "significantOverlap": true,
+        "significantVerticalOverlap": false,
+        "contains": false,
+        "containsReverse": false,
+        "likelySameContainer": true,
+        "sameVerticalPosition": false,
+        "sameHorizontalPosition": false
+      },
+      {
+        "ocr_id_a": "ocr_9",
+        "ocr_id_b": "ocr_10",
+        "sameRow": false,
+        "sameColumn": true,
+        "above": true,
+        "below": false,
+        "leftOf": false,
+        "rightOf": false,
+        "near": false,
+        "overlaps": false,
+        "horizontallyAligned": false,
+        "verticallyAligned": true,
+        "significantOverlap": true,
+        "significantVerticalOverlap": false,
+        "contains": false,
+        "containsReverse": false,
+        "likelySameContainer": true,
+        "sameVerticalPosition": true,
+        "sameHorizontalPosition": true
+      },
+      {
+        "ocr_id_a": "ocr_9",
+        "ocr_id_b": "ocr_11",
+        "sameRow": false,
+        "sameColumn": true,
+        "above": true,
+        "below": false,
+        "leftOf": false,
+        "rightOf": false,
+        "near": false,
+        "overlaps": false,
+        "horizontallyAligned": false,
+        "verticallyAligned": true,
+        "significantOverlap": true,
+        "significantVerticalOverlap": false,
+        "contains": false,
+        "containsReverse": false,
+        "likelySameContainer": true,
+        "sameVerticalPosition": false,
+        "sameHorizontalPosition": false
+      },
+      {
+        "ocr_id_a": "ocr_10",
+        "ocr_id_b": "ocr_11",
+        "sameRow": false,
+        "sameColumn": true,
+        "above": true,
+        "below": false,
+        "leftOf": false,
+        "rightOf": false,
+        "near": false,
+        "overlaps": false,
+        "horizontallyAligned": false,
+        "verticallyAligned": true,
+        "significantOverlap": true,
+        "significantVerticalOverlap": false,
+        "contains": false,
+        "containsReverse": false,
+        "likelySameContainer": true,
+        "sameVerticalPosition": true,
+        "sameHorizontalPosition": true
+      }
+    ],
+    "inputCandidates": [
+      {
+        "type": "input_candidate",
+        "label_ocr_id": "ocr_0",
+        "value_ocr_id": "ocr_2",
+        "confidence": 0.8132190326702687,
+        "evidence": [
+          "vertical_pair",
+          "horizontal_alignment",
+          "close_spacing"
+        ],
+        "label_text": "Bhushan Diwakar",
+        "value_text": "A / DOB :05/07/2002"
+      },
+      {
+        "type": "input_candidate",
+        "label_ocr_id": "ocr_2",
+        "value_ocr_id": "ocr_5",
+        "confidence": 0.758679706601467,
+        "evidence": [
+          "vertical_pair",
+          "horizontal_alignment",
+          "close_spacing"
+        ],
+        "label_text": "A / DOB :05/07/2002",
+        "value_text": "/ Male"
+      },
+      {
+        "type": "input_candidate",
+        "label_ocr_id": "ocr_6",
+        "value_ocr_id": "ocr_7",
+        "confidence": 0.9453488372093023,
+        "evidence": [
+          "vertical_pair",
+          "horizontal_alignment",
+          "close_spacing"
+        ],
+        "label_text": "3市可",
+        "value_text": "Aadhaar is proofof identity, not of citizenship"
+      },
+      {
+        "type": "input_candidate",
+        "label_ocr_id": "ocr_6",
+        "value_ocr_id": "ocr_8",
+        "confidence": 0.9758752076411961,
+        "evidence": [
+          "vertical_pair",
+          "horizontal_alignment",
+          "close_spacing"
+        ],
+        "label_text": "3市可",
+        "value_text": "or date of birth. It should be used with verification (online"
+      },
+      {
+        "type": "input_candidate",
+        "label_ocr_id": "ocr_7",
+        "value_ocr_id": "ocr_9",
+        "confidence": 0.9533403188530691,
+        "evidence": [
+          "vertical_pair",
+          "horizontal_alignment",
+          "close_spacing"
+        ],
+        "label_text": "Aadhaar is proofof identity, not of citizenship",
+        "value_text": "authentication or scanning of QR code / offline XML)."
+      },
+      {
+        "type": "input_candidate",
+        "label_ocr_id": "ocr_9",
+        "value_ocr_id": "ocr_10",
+        "confidence": 0.8727891156462585,
+        "evidence": [
+          "vertical_pair",
+          "horizontal_alignment",
+          "close_spacing"
+        ],
+        "label_text": "authentication or scanning of QR code / offline XML).",
+        "value_text": "4906 5637 6032"
+      },
+      {
+        "type": "input_candidate",
+        "label_ocr_id": "ocr_10",
+        "value_ocr_id": "ocr_11",
+        "confidence": 0.9385842113940557,
+        "evidence": [
+          "vertical_pair",
+          "horizontal_alignment",
+          "close_spacing"
+        ],
+        "label_text": "4906 5637 6032",
+        "value_text": "3,"
+      }
+    ],
+    "buttonCandidates": [
+      {
+        "type": "button_candidate",
+        "text_ocr_id": "ocr_4",
+        "confidence": 0.9,
+        "evidence": [
+          "compact_region",
+          "below_form",
+          "isolated"
+        ],
+        "text": "本",
+        "bbox": [
+          111,
+          253,
+          175,
+          280
+        ],
+        "normCenterX": 0.1414441147378833,
+        "normCenterY": 0.4019607843137255
+      },
+      {
+        "type": "button_candidate",
+        "text_ocr_id": "ocr_5",
+        "confidence": 0.9,
+        "evidence": [
+          "compact_region",
+          "below_form",
+          "isolated"
+        ],
+        "text": "/ Male",
+        "bbox": [
+          326,
+          254,
+          492,
+          306
+        ],
+        "normCenterX": 0.4045499505440158,
+        "normCenterY": 0.42232277526395173
+      },
+      {
+        "type": "button_candidate",
+        "text_ocr_id": "ocr_6",
+        "confidence": 0.9,
+        "evidence": [
+          "compact_region",
+          "below_form",
+          "isolated"
+        ],
+        "text": "3市可",
+        "bbox": [
+          342,
+          382,
+          944,
+          419
+        ],
+        "normCenterX": 0.636003956478734,
+        "normCenterY": 0.6040723981900452
+      },
+      {
+        "type": "button_candidate",
+        "text_ocr_id": "ocr_10",
+        "confidence": 0.9,
+        "evidence": [
+          "compact_region",
+          "below_form",
+          "isolated"
+        ],
+        "text": "4906 5637 6032",
+        "bbox": [
+          332,
+          534,
+          743,
+          582
+        ],
+        "normCenterX": 0.5316518298714145,
+        "normCenterY": 0.8416289592760181
+      },
+      {
+        "type": "button_candidate",
+        "text_ocr_id": "ocr_11",
+        "confidence": 0.9,
+        "evidence": [
+          "compact_region",
+          "below_form",
+          "isolated"
+        ],
+        "text": "3,",
+        "bbox": [
+          264,
+          591,
+          751,
+          656
+        ],
+        "normCenterX": 0.5019782393669634,
+        "normCenterY": 0.9404223227752639
+      }
+    ],
+    "linkCandidates": [
+      {
+        "type": "link_candidate",
+        "text_ocr_id": "ocr_0",
+        "confidence": 0.61,
+        "evidence": [
+          "isolated"
+        ],
+        "text": "Bhushan Diwakar",
+        "bbox": [
+          333,
+          169,
+          576,
+          206
+        ]
+      },
+      {
+        "type": "link_candidate",
+        "text_ocr_id": "ocr_2",
+        "confidence": 0.61,
+        "evidence": [
+          "isolated"
+        ],
+        "text": "A / DOB :05/07/2002",
+        "bbox": [
+          329,
+          211,
+          738,
+          250
+        ]
+      },
+      {
+        "type": "link_candidate",
+        "text_ocr_id": "ocr_3",
+        "confidence": 0.61,
+        "evidence": [
+          "isolated"
+        ],
+        "text": "4906 5637 6032",
+        "bbox": [
+          890,
+          233,
+          992,
+          261
+        ]
+      },
+      {
+        "type": "link_candidate",
+        "text_ocr_id": "ocr_4",
+        "confidence": 0.61,
+        "evidence": [
+          "isolated"
+        ],
+        "text": "本",
+        "bbox": [
+          111,
+          253,
+          175,
+          280
+        ]
+      },
+      {
+        "type": "link_candidate",
+        "text_ocr_id": "ocr_6",
+        "confidence": 0.61,
+        "evidence": [
+          "isolated"
+        ],
+        "text": "3市可",
+        "bbox": [
+          342,
+          382,
+          944,
+          419
+        ]
+      }
+    ],
+    "containers": [
+      {
+        "id": "container_000",
+        "bbox": [
+          329,
+          169,
+          738,
+          250
+        ],
+        "itemIds": [
+          "ocr_0",
+          "ocr_2"
+        ],
+        "confidence": 0.6,
+        "evidence": [
+          "clustered_regions"
+        ]
+      },
+      {
+        "id": "container_001",
+        "bbox": [
+          341,
+          382,
+          944,
+          460
+        ],
+        "itemIds": [
+          "ocr_6",
+          "ocr_7"
+        ],
+        "confidence": 0.6,
+        "evidence": [
+          "clustered_regions"
+        ]
+      },
+      {
+        "id": "container_002",
+        "bbox": [
+          340,
+          458,
+          982,
+          524
+        ],
+        "itemIds": [
+          "ocr_8",
+          "ocr_9"
+        ],
+        "confidence": 0.6,
+        "evidence": [
+          "clustered_regions"
+        ]
+      },
+      {
+        "id": "container_003",
+        "bbox": [
+          264,
+          534,
+          751,
+          656
+        ],
+        "itemIds": [
+          "ocr_10",
+          "ocr_11"
+        ],
+        "confidence": 0.6,
+        "evidence": [
+          "clustered_regions"
+        ]
+      }
+    ]
+  },
+  "face_detection": {
+    "enabled": true,
+    "model": "garavv/blazeface-onnx",
+    "backend": "cpu",
+    "confidence_threshold": 0.6,
+    "faces": [
+      {
+        "source_id": "face_000",
+        "entity": "FACE",
+        "score": 0.92,
+        "bbox": [
+          63.0519068017602,
+          235.1209107041359,
+          256.3925842344761,
+          361.910826086998
+        ],
+        "decision_source": "face_detector",
+        "redaction_style": "blur"
+      }
+    ],
+    "count": 1
+  },
+  "image_redaction": {
+    "output_path": "./output.png",
+    "style": "blur",
+    "face_style": "blur",
+    "regions_redacted": 6,
+    "text_regions_redacted": 5,
+    "face_regions_redacted": 1,
+    "image_width": 1011,
+    "image_height": 663,
+    "status": "fallback",
+    "redaction_complete": true,
+    "fallback": true
+  },
+  "ner": {
+    "model": "./models/ettin-68m-nemotron-pii-onnx",
+    "sequence_mode": "full_ocr_text",
+    "source_text_length": 245,
+    "findings": [
+      {
+        "source_id": "ocr_0",
+        "entity": "first_name",
+        "score": 0.8182255618795826,
+        "text": "Bhushan Diwakar",
+        "bbox": [
+          333,
+          169,
+          576,
+          206
+        ],
+        "start": 0,
+        "end": 7
+      },
+      {
+        "source_id": "ocr_0",
+        "entity": "last_name",
+        "score": 0.9605763946340341,
+        "text": "Bhushan Diwakar",
+        "bbox": [
+          333,
+          169,
+          576,
+          206
+        ],
+        "start": 7,
+        "end": 15
+      },
+      {
+        "source_id": "ocr_2",
+        "entity": "date",
+        "score": 0.9907508104607572,
+        "text": "A / DOB :05/07/2002",
+        "bbox": [
+          329,
+          211,
+          738,
+          250
+        ],
+        "start": 25,
+        "end": 35
+      },
+      {
+        "source_id": "ocr_3",
+        "entity": "phone_number",
+        "score": 0.7181387830949166,
+        "text": "4906 5637 6032",
+        "bbox": [
+          890,
+          233,
+          992,
+          261
+        ],
+        "start": 35,
+        "end": 50
+      },
+      {
+        "source_id": "ocr_10",
+        "entity": "phone_number",
+        "score": 0.7936296275000023,
+        "text": "4906 5637 6032",
+        "bbox": [
+          332,
+          534,
+          743,
+          582
+        ],
+        "start": 227,
+        "end": 242
+      }
+    ]
+  },
+  "deterministic_context": {
+    "findings": [
+      {
+        "source": "deterministic_context",
+        "ocr_ids": [
+          "ocr_2"
+        ],
+        "label": "DOB",
+        "value": "05/07/2002",
+        "field_type": "DATE_OF_BIRTH",
+        "confidence": 0.98,
+        "reason": "Sensitive identifier value associated with DOB label (same line)",
+        "bbox": [
+          522.7368421052631,
+          211,
+          738,
+          250
+        ],
+        "raw_text": "A / DOB :05/07/2002"
+      },
+      {
+        "source": "deterministic_context",
+        "ocr_ids": [
+          "ocr_2",
+          "ocr_3"
+        ],
+        "label": "DOB",
+        "value": "4906 5637 6032",
+        "field_type": "DATE_OF_BIRTH",
+        "confidence": 0.92,
+        "reason": "Sensitive identifier value associated with DOB label (side-by-side)",
+        "bbox": [
+          890,
+          233,
+          992,
+          261
+        ],
+        "raw_text": "A / DOB :05/07/2002 4906 5637 6032"
+      },
+      {
+        "source": "deterministic_context",
+        "ocr_ids": [
+          "ocr_2",
+          "ocr_4",
+          "ocr_6"
+        ],
+        "label": "DOB",
+        "value": "3市可",
+        "field_type": "DATE_OF_BIRTH",
+        "confidence": 0.86,
+        "reason": "Sensitive identifier value associated with DOB label (multi-line label + vertical value)",
+        "bbox": [
+          342,
+          382,
+          944,
+          419
+        ],
+        "raw_text": "A / DOB :05/07/2002 本 / 3市可"
+      }
+    ]
+  },
+  "candidate_fusion": {
+    "candidates": [
+      {
+        "candidate_id": "cand_002",
+        "ocr_ids": [
+          "ocr_2"
+        ],
+        "text": "A / DOB :05/07/2002",
+        "label_context": "DOB",
+        "candidate_types": [
+          "date",
+          "DATE_OF_BIRTH"
+        ],
+        "sources": [
+          "ettin",
+          "deterministic_context"
+        ],
+        "confidence": 0.9907508104607572,
+        "bbox": [
+          329,
+          211,
+          738,
+          250
+        ],
+        "original": {
+          "source_id": "ocr_2",
+          "entity": "date",
+          "score": 0.9907508104607572,
+          "text": "A / DOB :05/07/2002",
+          "bbox": [
+            329,
+            211,
+            738,
+            250
+          ],
+          "start": 25,
+          "end": 35
+        }
+      },
+      {
+        "candidate_id": "cand_000",
+        "ocr_ids": [
+          "ocr_0"
+        ],
+        "text": "Bhushan Diwakar",
+        "label_context": null,
+        "candidate_types": [
+          "first_name",
+          "last_name"
+        ],
+        "sources": [
+          "ettin"
+        ],
+        "confidence": 0.9605763946340341,
+        "bbox": [
+          333,
+          169,
+          576,
+          206
+        ],
+        "original": {
+          "source_id": "ocr_0",
+          "entity": "first_name",
+          "score": 0.8182255618795826,
+          "text": "Bhushan Diwakar",
+          "bbox": [
+            333,
+            169,
+            576,
+            206
+          ],
+          "start": 0,
+          "end": 7
+        }
+      },
+      {
+        "candidate_id": "cand_006",
+        "ocr_ids": [
+          "ocr_2",
+          "ocr_3"
+        ],
+        "text": "4906 5637 6032",
+        "label_context": "DOB",
+        "candidate_types": [
+          "DATE_OF_BIRTH"
+        ],
+        "sources": [
+          "deterministic_context"
+        ],
+        "confidence": 0.92,
+        "bbox": [
+          890,
+          233,
+          992,
+          261
+        ],
+        "original": {
+          "source": "deterministic_context",
+          "ocr_ids": [
+            "ocr_2",
+            "ocr_3"
+          ],
+          "label": "DOB",
+          "value": "4906 5637 6032",
+          "field_type": "DATE_OF_BIRTH",
+          "confidence": 0.92,
+          "reason": "Sensitive identifier value associated with DOB label (side-by-side)",
+          "bbox": [
+            890,
+            233,
+            992,
+            261
+          ],
+          "raw_text": "A / DOB :05/07/2002 4906 5637 6032"
+        }
+      },
+      {
+        "candidate_id": "cand_004",
+        "ocr_ids": [
+          "ocr_10"
+        ],
+        "text": "4906 5637 6032",
+        "label_context": null,
+        "candidate_types": [
+          "phone_number"
+        ],
+        "sources": [
+          "ettin"
+        ],
+        "confidence": 0.7936296275000023,
+        "bbox": [
+          332,
+          534,
+          743,
+          582
+        ],
+        "original": {
+          "source_id": "ocr_10",
+          "entity": "phone_number",
+          "score": 0.7936296275000023,
+          "text": "4906 5637 6032",
+          "bbox": [
+            332,
+            534,
+            743,
+            582
+          ],
+          "start": 227,
+          "end": 242
+        }
+      },
+      {
+        "candidate_id": "cand_003",
+        "ocr_ids": [
+          "ocr_3"
+        ],
+        "text": "4906 5637 6032",
+        "label_context": null,
+        "candidate_types": [
+          "phone_number"
+        ],
+        "sources": [
+          "ettin"
+        ],
+        "confidence": 0.7181387830949166,
+        "bbox": [
+          890,
+          233,
+          992,
+          261
+        ],
+        "original": {
+          "source_id": "ocr_3",
+          "entity": "phone_number",
+          "score": 0.7181387830949166,
+          "text": "4906 5637 6032",
+          "bbox": [
+            890,
+            233,
+            992,
+            261
+          ],
+          "start": 35,
+          "end": 50
+        }
+      },
+      {
+        "candidate_id": "cand_007",
+        "ocr_ids": [
+          "ocr_2",
+          "ocr_4",
+          "ocr_6"
+        ],
+        "text": "3市可",
+        "label_context": "DOB",
+        "candidate_types": [
+          "DATE_OF_BIRTH"
+        ],
+        "sources": [
+          "deterministic_context"
+        ],
+        "confidence": 0.86,
+        "bbox": [
+          342,
+          382,
+          944,
+          419
+        ],
+        "original": {
+          "source": "deterministic_context",
+          "ocr_ids": [
+            "ocr_2",
+            "ocr_4",
+            "ocr_6"
+          ],
+          "label": "DOB",
+          "value": "3市可",
+          "field_type": "DATE_OF_BIRTH",
+          "confidence": 0.86,
+          "reason": "Sensitive identifier value associated with DOB label (multi-line label + vertical value)",
+          "bbox": [
+            342,
+            382,
+            944,
+            419
+          ],
+          "raw_text": "A / DOB :05/07/2002 本 / 3市可"
+        }
+      }
+    ]
+  },
+  "fastvlm_adjudication": {
+    "model": "onnx-community/FastVLM-0.5B-ONNX",
+    "enabled": true,
+    "status": "error",
+    "redaction_complete": true,
+    "fallback": true,
+    "raw": "{\"status\":\"error\",\"reason\":\"No JSON object found in FastVLM output: No JSON object found in FastVLM output. Preview: The/GL/GL milattles.comisdiction\"}",
+    "parsed": null,
+    "validation": null,
+    "caption": null,
+    "redactions": [],
+    "rejected_candidates": [],
+    "reason": "No JSON object found in FastVLM output: No JSON object found in FastVLM output. Preview: The/GL/GL milattles.comisdiction"
+  },
+  "fastvlm_evidence": {
+    "image": {
+      "width": 1011,
+      "height": 663
+    },
+    "ocr": [
+      {
+        "id": "ocr_0",
+        "text": "Bhushan Diwakar",
+        "bbox": [
+          333,
+          169,
+          576,
+          206
+        ],
+        "confidence": 0.9938731670379639
+      },
+      {
+        "id": "ocr_2",
+        "text": "A / DOB :05/07/2002",
+        "bbox": [
+          329,
+          211,
+          738,
+          250
+        ],
+        "confidence": 0.9214079942968156
+      },
+      {
+        "id": "ocr_3",
+        "text": "4906 5637 6032",
+        "bbox": [
+          890,
+          233,
+          992,
+          261
+        ],
+        "confidence": 0.9888639620372227
+      },
+      {
+        "id": "ocr_4",
+        "text": "本",
+        "bbox": [
+          111,
+          253,
+          175,
+          280
+        ],
+        "confidence": 0.7413622140884399
+      },
+      {
+        "id": "ocr_5",
+        "text": "/ Male",
+        "bbox": [
+          326,
+          254,
+          492,
+          306
+        ],
+        "confidence": 0.7413622140884399
+      },
+      {
+        "id": "ocr_6",
+        "text": "3市可",
+        "bbox": [
+          342,
+          382,
+          944,
+          419
+        ],
+        "confidence": 0.6479915579160055
+      },
+      {
+        "id": "ocr_7",
+        "text": "Aadhaar is proofof identity, not of citizenship",
+        "bbox": [
+          341,
+          423,
+          862,
+          460
+        ],
+        "confidence": 0.9827314285521812
+      },
+      {
+        "id": "ocr_8",
+        "text": "or date of birth. It should be used with verification (online",
+        "bbox": [
+          342,
+          458,
+          982,
+          491
+        ],
+        "confidence": 0.9939146911511656
+      },
+      {
+        "id": "ocr_9",
+        "text": "authentication or scanning of QR code / offline XML).",
+        "bbox": [
+          340,
+          491,
+          928,
+          524
+        ],
+        "confidence": 0.9920167394404141
+      },
+      {
+        "id": "ocr_10",
+        "text": "4906 5637 6032",
+        "bbox": [
+          332,
+          534,
+          743,
+          582
+        ],
+        "confidence": 0.9494226234299796
+      },
+      {
+        "id": "ocr_11",
+        "text": "3,",
+        "bbox": [
+          264,
+          591,
+          751,
+          656
+        ],
+        "confidence": 0.731248289346695
+      }
+    ],
+    "ettin_candidates": [
+      {
+        "entity": "first_name",
+        "text": "Bhushan Diwakar",
+        "score": 0.8182255618795826,
+        "source_id": "ocr_0",
+        "bbox": [
+          333,
+          169,
+          576,
+          206
+        ]
+      },
+      {
+        "entity": "last_name",
+        "text": "Bhushan Diwakar",
+        "score": 0.9605763946340341,
+        "source_id": "ocr_0",
+        "bbox": [
+          333,
+          169,
+          576,
+          206
+        ]
+      },
+      {
+        "entity": "date",
+        "text": "A / DOB :05/07/2002",
+        "score": 0.9907508104607572,
+        "source_id": "ocr_2",
+        "bbox": [
+          329,
+          211,
+          738,
+          250
+        ]
+      },
+      {
+        "entity": "phone_number",
+        "text": "4906 5637 6032",
+        "score": 0.7181387830949166,
+        "source_id": "ocr_3",
+        "bbox": [
+          890,
+          233,
+          992,
+          261
+        ]
+      },
+      {
+        "entity": "phone_number",
+        "text": "4906 5637 6032",
+        "score": 0.7936296275000023,
+        "source_id": "ocr_10",
+        "bbox": [
+          332,
+          534,
+          743,
+          582
+        ]
+      }
+    ],
+    "deterministic_candidates": [
+      {
+        "label": "DOB",
+        "value": "05/07/2002",
+        "field_type": "DATE_OF_BIRTH",
+        "confidence": 0.98,
+        "ocr_ids": [
+          "ocr_2"
+        ],
+        "bbox": [
+          522.7368421052631,
+          211,
+          738,
+          250
+        ],
+        "reason": "Sensitive identifier value associated with DOB label (same line)"
+      },
+      {
+        "label": "DOB",
+        "value": "4906 5637 6032",
+        "field_type": "DATE_OF_BIRTH",
+        "confidence": 0.92,
+        "ocr_ids": [
+          "ocr_2",
+          "ocr_3"
+        ],
+        "bbox": [
+          890,
+          233,
+          992,
+          261
+        ],
+        "reason": "Sensitive identifier value associated with DOB label (side-by-side)"
+      },
+      {
+        "label": "DOB",
+        "value": "3市可",
+        "field_type": "DATE_OF_BIRTH",
+        "confidence": 0.86,
+        "ocr_ids": [
+          "ocr_2",
+          "ocr_4",
+          "ocr_6"
+        ],
+        "bbox": [
+          342,
+          382,
+          944,
+          419
+        ],
+        "reason": "Sensitive identifier value associated with DOB label (multi-line label + vertical value)"
+      }
+    ],
+    "fused_candidates": [
+      {
+        "candidate_id": "cand_002",
+        "ocr_ids": [
+          "ocr_2"
+        ],
+        "text": "A / DOB :05/07/2002",
+        "label_context": "DOB",
+        "candidate_types": [
+          "date",
+          "DATE_OF_BIRTH"
+        ],
+        "sources": [
+          "ettin",
+          "deterministic_context"
+        ],
+        "confidence": 0.9907508104607572,
+        "bbox": [
+          329,
+          211,
+          738,
+          250
+        ]
+      },
+      {
+        "candidate_id": "cand_000",
+        "ocr_ids": [
+          "ocr_0"
+        ],
+        "text": "Bhushan Diwakar",
+        "label_context": null,
+        "candidate_types": [
+          "first_name",
+          "last_name"
+        ],
+        "sources": [
+          "ettin"
+        ],
+        "confidence": 0.9605763946340341,
+        "bbox": [
+          333,
+          169,
+          576,
+          206
+        ]
+      },
+      {
+        "candidate_id": "cand_006",
+        "ocr_ids": [
+          "ocr_2",
+          "ocr_3"
+        ],
+        "text": "4906 5637 6032",
+        "label_context": "DOB",
+        "candidate_types": [
+          "DATE_OF_BIRTH"
+        ],
+        "sources": [
+          "deterministic_context"
+        ],
+        "confidence": 0.92,
+        "bbox": [
+          890,
+          233,
+          992,
+          261
+        ]
+      },
+      {
+        "candidate_id": "cand_004",
+        "ocr_ids": [
+          "ocr_10"
+        ],
+        "text": "4906 5637 6032",
+        "label_context": null,
+        "candidate_types": [
+          "phone_number"
+        ],
+        "sources": [
+          "ettin"
+        ],
+        "confidence": 0.7936296275000023,
+        "bbox": [
+          332,
+          534,
+          743,
+          582
+        ]
+      },
+      {
+        "candidate_id": "cand_003",
+        "ocr_ids": [
+          "ocr_3"
+        ],
+        "text": "4906 5637 6032",
+        "label_context": null,
+        "candidate_types": [
+          "phone_number"
+        ],
+        "sources": [
+          "ettin"
+        ],
+        "confidence": 0.7181387830949166,
+        "bbox": [
+          890,
+          233,
+          992,
+          261
+        ]
+      },
+      {
+        "candidate_id": "cand_007",
+        "ocr_ids": [
+          "ocr_2",
+          "ocr_4",
+          "ocr_6"
+        ],
+        "text": "3市可",
+        "label_context": "DOB",
+        "candidate_types": [
+          "DATE_OF_BIRTH"
+        ],
+        "sources": [
+          "deterministic_context"
+        ],
+        "confidence": 0.86,
+        "bbox": [
+          342,
+          382,
+          944,
+          419
+        ]
+      }
+    ]
+  },
+  "final_findings": [
+    {
+      "source_id": "ocr_2",
+      "entity": "date",
+      "score": 0.9907508104607572,
+      "text": "A / DOB :05/07/2002",
+      "bbox": [
+        329,
+        211,
+        738,
+        250
+      ],
+      "candidate_id": "cand_002",
+      "ocr_ids": [
+        "ocr_2"
+      ],
+      "reason": "fusion fallback",
+      "decision_source": "fusion_fallback"
+    },
+    {
+      "source_id": "ocr_0",
+      "entity": "first_name",
+      "score": 0.9605763946340341,
+      "text": "Bhushan Diwakar",
+      "bbox": [
+        333,
+        169,
+        576,
+        206
+      ],
+      "candidate_id": "cand_000",
+      "ocr_ids": [
+        "ocr_0"
+      ],
+      "reason": "fusion fallback",
+      "decision_source": "fusion_fallback"
+    },
+    {
+      "source_id": "ocr_2",
+      "entity": "DATE_OF_BIRTH",
+      "score": 0.92,
+      "text": "4906 5637 6032",
+      "bbox": [
+        890,
+        233,
+        992,
+        261
+      ],
+      "candidate_id": "cand_006",
+      "ocr_ids": [
+        "ocr_2",
+        "ocr_3"
+      ],
+      "reason": "fusion fallback",
+      "decision_source": "fusion_fallback"
+    },
+    {
+      "source_id": "ocr_10",
+      "entity": "phone_number",
+      "score": 0.7936296275000023,
+      "text": "4906 5637 6032",
+      "bbox": [
+        332,
+        534,
+        743,
+        582
+      ],
+      "candidate_id": "cand_004",
+      "ocr_ids": [
+        "ocr_10"
+      ],
+      "reason": "fusion fallback",
+      "decision_source": "fusion_fallback"
+    },
+    {
+      "source_id": "ocr_2",
+      "entity": "DATE_OF_BIRTH",
+      "score": 0.86,
+      "text": "3市可",
+      "bbox": [
+        342,
+        382,
+        944,
+        419
+      ],
+      "candidate_id": "cand_007",
+      "ocr_ids": [
+        "ocr_2",
+        "ocr_4",
+        "ocr_6"
+      ],
+      "reason": "fusion fallback",
+      "decision_source": "fusion_fallback"
+    },
+    {
+      "source_id": "face_000",
+      "entity": "FACE",
+      "score": 0.92,
+      "bbox": [
+        63.0519068017602,
+        235.1209107041359,
+        256.3925842344761,
+        361.910826086998
+      ],
+      "decision_source": "face_detector",
+      "redaction_style": "blur"
+    }
+  ],
+  "redaction": {
+    "chunks": [
+      {
+        "id": "ocr_0",
+        "text": "[REDACTED:first_name]",
+        "bbox": [
+          333,
+          169,
+          576,
+          206
+        ],
+        "confidence": 0.9938731670379639,
+        "redacted": true
+      },
+      {
+        "id": "ocr_2",
+        "text": "[REDACTED:date]",
+        "bbox": [
+          329,
+          211,
+          738,
+          250
+        ],
+        "confidence": 0.9214079942968156,
+        "redacted": true
+      },
+      {
+        "id": "ocr_3",
+        "text": "4906 5637 6032",
+        "bbox": [
+          890,
+          233,
+          992,
+          261
+        ],
+        "confidence": 0.9888639620372227,
+        "redacted": false
+      },
+      {
+        "id": "ocr_4",
+        "text": "本",
+        "bbox": [
+          111,
+          253,
+          175,
+          280
+        ],
+        "confidence": 0.7413622140884399,
+        "redacted": false
+      },
+      {
+        "id": "ocr_5",
+        "text": "/ Male",
+        "bbox": [
+          326,
+          254,
+          492,
+          306
+        ],
+        "confidence": 0.7413622140884399,
+        "redacted": false
+      },
+      {
+        "id": "ocr_6",
+        "text": "3市可",
+        "bbox": [
+          342,
+          382,
+          944,
+          419
+        ],
+        "confidence": 0.6479915579160055,
+        "redacted": false
+      },
+      {
+        "id": "ocr_7",
+        "text": "Aadhaar is proofof identity, not of citizenship",
+        "bbox": [
+          341,
+          423,
+          862,
+          460
+        ],
+        "confidence": 0.9827314285521812,
+        "redacted": false
+      },
+      {
+        "id": "ocr_8",
+        "text": "or date of birth. It should be used with verification (online",
+        "bbox": [
+          342,
+          458,
+          982,
+          491
+        ],
+        "confidence": 0.9939146911511656,
+        "redacted": false
+      },
+      {
+        "id": "ocr_9",
+        "text": "authentication or scanning of QR code / offline XML).",
+        "bbox": [
+          340,
+          491,
+          928,
+          524
+        ],
+        "confidence": 0.9920167394404141,
+        "redacted": false
+      },
+      {
+        "id": "ocr_10",
+        "text": "[REDACTED:phone_number]",
+        "bbox": [
+          332,
+          534,
+          743,
+          582
+        ],
+        "confidence": 0.9494226234299796,
+        "redacted": true
+      },
+      {
+        "id": "ocr_11",
+        "text": "3,",
+        "bbox": [
+          264,
+          591,
+          751,
+          656
+        ],
+        "confidence": 0.731248289346695,
+        "redacted": false
+      }
+    ],
+    "redacted_ocr_text": "[REDACTED:first_name] [REDACTED:date] 4906 5637 6032 本 / Male 3市可 Aadhaar is proofof identity, not of citizenship or date of birth. It should be used with verification (online authentication or scanning of QR code / offline XML). [REDACTED:phone_number] 3,",
+    "entity_types_found": [
+      "date",
+      "first_name",
+      "DATE_OF_BIRTH",
+      "phone_number",
+      "FACE"
+    ],
+    "adjudication_status": "fallback",
+    "redaction_complete": true
+  },
+  "filtering": {
+    "original_chunk_count": 11,
+    "filtered_chunk_count": 11
+  }
+}

@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PerScope Privacy Redactor</title>
+  <link rel="stylesheet" href="popup.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div class="app-container">
+    <!-- Top Header -->
+    <header class="app-header">
+      <div class="brand">
+        <div class="brand-icon">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+            <path d="M12 8v4"/>
+            <path d="M12 16h.01"/>
+          </svg>
+        </div>
+        <div class="brand-text">
+          <h1>PerScope</h1>
+          <span class="badge-version">v7 GPU</span>
+        </div>
+      </div>
+      <div class="header-actions">
+        <button id="btnOpenDashboard" class="icon-btn" title="Open Full Dashboard in Tab">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+            <polyline points="15 3 21 3 21 9"/>
+            <line x1="10" y1="14" x2="21" y2="3"/>
+          </svg>
+        </button>
+        <button id="btnToggleSettings" class="icon-btn" title="Settings">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="3"/>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+          </svg>
+        </button>
+      </div>
+    </header>
+
+    <!-- Hardware / Dedicated GPU Status Bar -->
+    <div class="hardware-status-bar" id="hardwareStatus">
+      <div class="hardware-indicator pulsing" id="gpuIndicator"></div>
+      <div class="hardware-info">
+        <span class="hardware-title">Hardware Acceleration</span>
+        <span class="hardware-device" id="gpuDeviceLabel">Detecting GPU...</span>
+      </div>
+      <span class="hardware-tier-badge" id="gpuTierBadge">CHECKING</span>
+    </div>
+
+    <!-- Collapsible Settings Panel -->
+    <div class="settings-panel hidden" id="settingsPanel">
+      <h3>Pipeline Configuration</h3>
+      <div class="setting-item">
+        <label for="selectDeviceTier">Device Preference</label>
+        <select id="selectDeviceTier" class="form-select">
+          <option value="auto">Auto (Dedicated GPU Priority)</option>
+          <option value="integrated">Integrated GPU</option>
+          <option value="cpu">CPU (WASM SIMD)</option>
+        </select>
+      </div>
+      <div class="setting-item">
+        <label for="selectRedactionStyle">Redaction Style</label>
+        <select id="selectRedactionStyle" class="form-select">
+          <option value="blur">Blur (Privacy Overlay)</option>
+          <option value="black">Black Boxes</option>
+        </select>
+      </div>
+      <div class="setting-item-row">
+        <label class="switch-label">
+          <input type="checkbox" id="checkFastVLM" checked>
+          <span>FastVLM 0.5B Multimodal Adjudication</span>
+        </label>
+      </div>
+      <div class="setting-item-row">
+        <label class="switch-label">
+          <input type="checkbox" id="checkFaceDetection" checked>
+          <span>BlazeFace Face Detection</span>
+        </label>
+      </div>
+    </div>
+
+    <!-- Main Content Area -->
+    <main class="main-content">
+      <!-- Upload / Capture View (Initial) -->
+      <section id="inputSection" class="input-section">
+        <div class="drop-zone" id="dropZone">
+          <div class="drop-icon">
+            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+              <polyline points="17 8 12 3 7 8"/>
+              <line x1="12" y1="3" x2="12" y2="15"/>
+            </svg>
+          </div>
+          <p class="drop-primary">Drop screenshot or image here</p>
+          <p class="drop-secondary">Supports PNG, JPG, WebP • Paste from clipboard (Ctrl+V)</p>
+          <input type="file" id="fileInput" accept="image/*" class="file-input">
+          <button class="btn btn-secondary" id="btnBrowse">Browse Files</button>
+        </div>
+
+        <div class="quick-actions">
+          <button id="btnCaptureTab" class="btn btn-primary btn-full">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>
+              <line x1="8" y1="21" x2="16" y2="21"/>
+              <line x1="12" y1="17" x2="12" y2="21"/>
+            </svg>
+            Capture Active Webpage
+          </button>
+        </div>
+      </section>
+
+      <!-- Processing Stage Stepper -->
+      <section id="processingSection" class="processing-section hidden">
+        <div class="processing-card">
+          <div class="spinner-orbit"></div>
+          <h3 id="currentStageTitle">Processing Image...</h3>
+          <p id="currentStageDetail">Initializing neural models on dedicated GPU</p>
+
+          <div class="steps-progress">
+            <div class="step-item" id="stepOCR">
+              <div class="step-dot"></div>
+              <span>PaddleOCR</span>
+            </div>
+            <div class="step-item" id="stepNER">
+              <div class="step-dot"></div>
+              <span>Ettin NER</span>
+            </div>
+            <div class="step-item" id="stepFace">
+              <div class="step-dot"></div>
+              <span>Face Detector</span>
+            </div>
+            <div class="step-item" id="stepFastVLM">
+              <div class="step-dot"></div>
+              <span>FastVLM Adjudication</span>
+            </div>
+            <div class="step-item" id="stepRedact">
+              <div class="step-dot"></div>
+              <span>Canvas Redaction</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Results View -->
+      <section id="resultsSection" class="results-section hidden">
+        <!-- Results Top Bar -->
+        <div class="results-toolbar">
+          <div class="view-toggle">
+            <button class="toggle-btn active" id="btnViewRedacted">Redacted</button>
+            <button class="toggle-btn" id="btnViewOriginal">Original</button>
+            <button class="toggle-btn" id="btnViewOverlay">PII Overlay</button>
+          </div>
+          <button id="btnReset" class="btn-text">New Image</button>
+        </div>
+
+        <!-- Image Display Box -->
+        <div class="image-viewer-container" id="imageViewerContainer">
+          <img id="resultImage" class="result-img" alt="Result Image">
+          <div id="bboxOverlay" class="bbox-overlay hidden"></div>
+        </div>
+
+        <!-- FastVLM Multimodal Description Card -->
+        <div class="caption-card" id="captionCard">
+          <div class="caption-header">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+            </svg>
+            <span>FastVLM 0.5B Image Caption</span>
+          </div>
+          <p id="captionText" class="caption-text">Analyzing image content...</p>
+        </div>
+
+        <!-- Stats Chips -->
+        <div class="stats-grid">
+          <div class="stat-chip">
+            <span class="stat-val" id="statTextRedacted">0</span>
+            <span class="stat-label">PII Regions</span>
+          </div>
+          <div class="stat-chip">
+            <span class="stat-val" id="statFacesRedacted">0</span>
+            <span class="stat-label">Faces</span>
+          </div>
+          <div class="stat-chip">
+            <span class="stat-val" id="statTotalTime">0 ms</span>
+            <span class="stat-label">Inference Time</span>
+          </div>
+        </div>
+
+        <!-- Export Buttons -->
+        <div class="action-buttons">
+          <button id="btnDownloadImage" class="btn btn-primary">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+              <polyline points="7 10 12 15 17 10"/>
+              <line x1="12" y1="15" x2="12" y2="3"/>
+            </svg>
+            Download PNG
+          </button>
+          <button id="btnCopyClipboard" class="btn btn-secondary">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+            </svg>
+            Copy
+          </button>
+          <button id="btnDownloadEvidence" class="btn btn-ghost" title="Download Evidence JSON">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="16 18 22 12 16 6"/>
+              <polyline points="8 6 2 12 8 18"/>
+            </svg>
+            JSON
+          </button>
+        </div>
+      </section>
+    </main>
+
+    <!-- Footer -->
+    <footer class="app-footer">
+      <span>100% On-Device Privacy • No Data Leaves Your Machine</span>
+    </footer>
+  </div>
+
+  <script type="module" src="popup.js"></script>
+</body>
+</html>
