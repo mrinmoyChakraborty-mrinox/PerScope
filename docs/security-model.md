@@ -29,17 +29,19 @@
 
 Every known sensitive value is replaced with `[REDACTED:TYPE]` in any generated caption/description **before** it reaches UI or the evidence object. Covers a related but not identical failure mode to output re-scan.
 
-### 3. Output-level self-audit (OPEN DECISION)
+### 3. Output-level self-audit (OPEN DECISION — see root README §7.6)
 
-v3 self-audit (re-run Tier0+Tier1 on the *output* payload, fail-closed) has **not** been re-implemented on the fusion pipeline. Decide explicitly whether caption scrubbing suffices or output re-scan returns. Do not leave silent.
+v3 self-audit (re-run Tier0+Tier1 on the *output* payload, fail-closed) has **not** been re-implemented on the fusion pipeline. Decide explicitly whether caption scrubbing suffices or output re-scan returns. Do not leave silent. Deferred items also tracked in README §7.6 (DOM overlay Phase 2, Native Messaging hardening, `FASTVLM_FOR_DOM` opt-in).
 
 ### 4. Never send/store raw image (TESTED locally; boundary wiring PLANNED)
 
 Evidence object holds findings, bboxes, scrubbed caption, timings, device info. Dashboard stores redacted-only entries with PNG/JSON export + (planned) `Clear All`. Nothing in the tested build transmits anything to any server.
 
-### 5. Uniform validator — same gate for every caller (PLANNED)
+### 5. Uniform validator — same gate for every caller (PLANNED, locked in root README §7.2)
 
-`isDestructive({tool, params, element})` runs on **every** `click`/`type`/`submit`/`select_option` before `content.js` touches DOM. Same function for PerScope Reasoning Server (no "our model is trusted" shortcut), real MCP agent, Playground, and **hidden prompt-injection text on the page** (evaluates what the *action* would do, not where the instruction came from). Destructive → `{status:"blocked", reason, pending_id}` → side-panel Approve/Deny (60s timeout → `timeout`) → `{type:"action_update", ...}`. `scroll` / `read_page` / `list_interactive_elements` never gated. `content.js` re-resolves `element_id` against live DOM (`stale_element` on mismatch).
+`isDestructive({tool, params, element})` lives in the **extension**, immediately in front of `content.js`, and runs on **every** `click`/`type`/`submit`/`select_option` before DOM is touched. The bridge is zero-logic and cannot bypass it. Same function whether the caller is a real MCP agent, the Playground Local/Manual/Cloud backend, or **hidden prompt-injection text on the page** (evaluates what the *action* would do, not where the instruction came from). Confirm flow is a **blocking tool call**: destructive → side-panel Approve/Deny holds the call open → `ok` / `denied` / `timeout` (60s). `scroll` / `read_page` / `capture_tab` / `list_interactive_elements` never gated. `content.js` re-resolves `element_id` against live DOM (`stale_element` on mismatch).
+
+Extension ↔ Bridge transport is `ws://127.0.0.1:<port>`, origin-checked, with a one-time shared-secret pairing (code shown in bridge dashboard, entered once in extension options; all further messages signed/checked).
 
 ### 6. Clean vs. ambiguous vs. blocked (TESTED in pipeline, PLANNED in UI)
 

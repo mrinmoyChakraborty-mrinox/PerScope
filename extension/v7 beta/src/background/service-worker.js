@@ -66,5 +66,72 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  // -- Bridge control plane --------------------------------------------------
+  // The WS connection itself lives in the offscreen document (MV3 service
+  // workers suspend and kill sockets; offscreen stays alive). The worker
+  // only relays dashboard/popup callers and owns the action badge, so a
+  // missing/dead bridge never affects Human Mode flows above.
+
+  if (message.action === "BRIDGE_STATUS_UPDATE") {
+    updateBridgeBadge(message.status).catch(() => {});
+    return false;
+  }
+
+  if (message.action === "BRIDGE_STATUS") {
+    (async () => {
+      try {
+        await ensureOffscreenDocument();
+        const res = await chrome.runtime.sendMessage({ target: "offscreen", action: "BRIDGE_STATUS" });
+        if (res?.bridge) updateBridgeBadge(res.bridge).catch(() => {});
+        sendResponse({ status: "SUCCESS", bridge: res?.bridge || { connected: false, paired: false } });
+      } catch (err) {
+        sendResponse({ status: "SUCCESS", bridge: { connected: false, paired: false, error: err.message } });
+      }
+    })();
+    return true;
+  }
+
+  if (message.action === "BRIDGE_PAIR") {
+    (async () => {
+      try {
+        await ensureOffscreenDocument();
+        const res = await chrome.runtime.sendMessage({ target: "offscreen", action: "BRIDGE_PAIR", code: message.code });
+        if (res?.ok) {
+          updateBridgeBadge({ connected: true, paired: true }).catch(() => {});
+          sendResponse({ status: "SUCCESS", ok: true });
+        } else {
+          sendResponse({ status: "SUCCESS", ok: false, reason: res?.reason || res?.error || "pair-failed" });
+        }
+      } catch (err) {
+        sendResponse({ status: "SUCCESS", ok: false, reason: err.message });
+      }
+    })();
+    return true;
+  }
+
   return false;
 });
+
+/**
+ * Persistent bridge signal: green = connected+paired, orange = connected
+ * but unpaired, grey = bridge not running. Badge only; never blocks.
+ */
+async function updateBridgeBadge(s) {
+  const paired = !!(s && s.connected && s.paired);
+  const connected = !!(s && s.connected);
+  try {
+    await chrome.action.setBadgeText({ text: paired || connected ? "●" : "" });
+    await chrome.action.setBadgeBackgroundColor({
+      color: paired ? "#22c55e" : connected ? "#f59e0b" : "#6b7280",
+    });
+    await chrome.action.setTitle({
+      title: paired
+        ? "PerScope: bridge connected + paired"
+        : connected
+          ? "PerScope: bridge reachable, not paired"
+          : "PerScope: bridge not running",
+    });
+  } catch {
+    // Badge is best-effort telemetry, never fatal.
+  }
+}

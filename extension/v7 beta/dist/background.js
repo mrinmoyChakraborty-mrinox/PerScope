@@ -51,8 +51,59 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     ensureOffscreenDocument().then(() => sendResponse({ status: "SUCCESS" })).catch((err) => sendResponse({ status: "ERROR", error: err.message }));
     return true;
   }
+  if (message.action === "BRIDGE_STATUS_UPDATE") {
+    updateBridgeBadge(message.status).catch(() => {
+    });
+    return false;
+  }
+  if (message.action === "BRIDGE_STATUS") {
+    (async () => {
+      try {
+        await ensureOffscreenDocument();
+        const res = await chrome.runtime.sendMessage({ target: "offscreen", action: "BRIDGE_STATUS" });
+        if (res?.bridge) updateBridgeBadge(res.bridge).catch(() => {
+        });
+        sendResponse({ status: "SUCCESS", bridge: res?.bridge || { connected: false, paired: false } });
+      } catch (err) {
+        sendResponse({ status: "SUCCESS", bridge: { connected: false, paired: false, error: err.message } });
+      }
+    })();
+    return true;
+  }
+  if (message.action === "BRIDGE_PAIR") {
+    (async () => {
+      try {
+        await ensureOffscreenDocument();
+        const res = await chrome.runtime.sendMessage({ target: "offscreen", action: "BRIDGE_PAIR", code: message.code });
+        if (res?.ok) {
+          updateBridgeBadge({ connected: true, paired: true }).catch(() => {
+          });
+          sendResponse({ status: "SUCCESS", ok: true });
+        } else {
+          sendResponse({ status: "SUCCESS", ok: false, reason: res?.reason || res?.error || "pair-failed" });
+        }
+      } catch (err) {
+        sendResponse({ status: "SUCCESS", ok: false, reason: err.message });
+      }
+    })();
+    return true;
+  }
   return false;
 });
+async function updateBridgeBadge(s) {
+  const paired = !!(s && s.connected && s.paired);
+  const connected = !!(s && s.connected);
+  try {
+    await chrome.action.setBadgeText({ text: paired || connected ? "\u25CF" : "" });
+    await chrome.action.setBadgeBackgroundColor({
+      color: paired ? "#22c55e" : connected ? "#f59e0b" : "#6b7280"
+    });
+    await chrome.action.setTitle({
+      title: paired ? "PerScope: bridge connected + paired" : connected ? "PerScope: bridge reachable, not paired" : "PerScope: bridge not running"
+    });
+  } catch {
+  }
+}
 export {
   ensureOffscreenDocument
 };

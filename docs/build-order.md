@@ -1,4 +1,6 @@
-# PerScope — Build Order (v3, time-boxed)
+# PerScope — Build Order
+
+> **Superseded by root README §7.7 (Who Builds What).** Steps 1–10 below are the stale v3 time-boxed plan (tiered escalation, Qwen, Florence) retained for record. Build against README §7 instead: Bridge dev → `@perscope/bridge` (WS + pairing, MCP stdio + HTTP, proxy-to-daemon, blocking confirm flow); Extension dev → `background.js` WS client + pairing UI + `isDestructive()` + `content.js` (net-new); PII/pipeline dev → Ettin + `pii-detector.js` DOM fusion; Playground dev → Local / Cloud / Manual backends.
 
 > Sorted by **Build Step**, not Task ID. Tracker grew from single-VLM to three extractors + three-tier redaction + required server — MVP is re-cut below.
 

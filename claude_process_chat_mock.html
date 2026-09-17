@@ -68,16 +68,19 @@
   .live:before{content:"";width:6px;height:6px;border-radius:50%;background:#8fc58f;box-shadow:0 0 10px #8fc58f}
   .tree{position:relative;padding-left:12px}
   .tree:before{content:"";position:absolute;left:10px;top:13px;bottom:14px;width:1px;background:#45413b}
-  .node{position:relative;margin:0 0 9px 0;padding-left:23px;opacity:0;transform:translateY(6px);animation:nodeIn .5s forwards}
-  .node:nth-child(1){animation-delay:.1s}.node:nth-child(2){animation-delay:.35s}.node:nth-child(3){animation-delay:.6s}.node:nth-child(4){animation-delay:.85s}.node:nth-child(5){animation-delay:1.1s}
-  @keyframes nodeIn{to{opacity:1;transform:none}}
+  .node{position:relative;margin:0 0 9px 0;padding-left:23px;opacity:0;transform:translateY(8px);max-height:0;overflow:hidden;transition:opacity .45s ease,transform .45s ease,max-height .55s ease}
+  .node.revealed{opacity:1;transform:none;max-height:320px}
+  .node.current .nodeHeader{box-shadow:0 0 0 1px rgba(214,163,106,.22),0 0 18px rgba(214,163,106,.08)}
+  .node.current .nodeDot{animation:nodePulse 1.15s ease-in-out infinite}
+  @keyframes nodePulse{0%,100%{box-shadow:0 0 0 4px #201f1c,0 0 0 rgba(214,163,106,0)}50%{box-shadow:0 0 0 4px #201f1c,0 0 12px rgba(214,163,106,.35)}}
   .node:before{content:"";position:absolute;left:4px;top:11px;width:13px;height:1px;background:#45413b}
   .nodeDot{position:absolute;left:-1px;top:7px;width:10px;height:10px;border-radius:50%;background:#2c2924;border:2px solid #a9845e;box-shadow:0 0 0 4px #201f1c}
   .node.done .nodeDot{background:#9fc89a;border-color:#9fc89a;box-shadow:0 0 14px rgba(159,200,154,.25),0 0 0 4px #201f1c}
   .nodeHeader{display:flex;justify-content:space-between;gap:10px;align-items:center;padding:8px 10px;border-radius:10px;background:#272521}
   .nodeLabel{font-size:13px;font-weight:650}.nodeMeta{font-size:11px;color:#79756e}
   .nodeBody{padding:7px 10px 3px;color:#8f8a82;font-size:11px}
-  .branch{margin-left:20px;margin-top:5px;padding-left:15px;border-left:1px dashed #403c35}
+  .branch{margin-left:20px;margin-top:5px;padding-left:15px;border-left:1px dashed #403c35;opacity:0;transform:translateY(5px);transition:opacity .35s ease .18s,transform .35s ease .18s}
+  .node.revealed .branch{opacity:1;transform:none}
   .branch div{font-size:11px;color:#7e7971;padding:3px 0}
   .composer{border-top:1px solid #2d2b27;padding:15px 18px 18px;background:linear-gradient(180deg,rgba(26,25,23,.65),#191816)}
   .composerInner{width:min(860px,calc(100vw - 350px));margin:0 auto;border:1px solid #464139;border-radius:15px;background:#211f1c;padding:10px;box-shadow:0 8px 30px rgba(0,0,0,.22)}
@@ -200,11 +203,22 @@
       if(id !== runId) return;
       thinkingCard.style.display='none';
       process.classList.add('show');
-      status.textContent='Perception → Redacting → Reasoning → Acting → Done';
+      const nodes = Array.from(process.querySelectorAll('.node'));
+      nodes.forEach(n => n.classList.remove('revealed','current'));
+      status.textContent='Perception';
       scrollBottom();
-      setTimeout(()=>{
-        if(id === runId) status.textContent='Complete · local process simulation';
-      }, 4800);
+
+      const stepMs = fast ? 1050 : 1750;
+      nodes.forEach((node, index) => {
+        setTimeout(()=>{
+          if(id !== runId) return;
+          node.classList.add('revealed','current');
+          nodes.slice(0,index).forEach(n=>n.classList.remove('current'));
+          const label = node.querySelector('.nodeLabel')?.textContent || 'Processing';
+          status.textContent = label === 'Done' ? 'Complete · local process simulation' : label;
+          scrollBottom();
+        }, index * stepMs);
+      });
     }, thinkingMs);
   }
 

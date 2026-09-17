@@ -44,25 +44,25 @@
     "link": "/docs/tasks/05-server-bridge-playground"
   },
   {
-    "id": "capture-review",
-    "title": "Popup Capture Review (Visual + Context)",
+    "id": "extension-ui-rebuild",
+    "title": "Extension: Human Mode UI rebuild on beta + automation (Shritama)",
     "owner": "Person 4 (Shritama)",
-    "status": "must-do",
-    "priority": "P1",
-    "due": "2026-09-08",
+    "status": "urgent",
+    "priority": "P0",
+    "due": "2026-09-18",
     "area": "Extension",
-    "description": "States clean/ambiguous/blocked, Send vs Send & Submit, chat adapters + clipboard fallback.",
-    "link": "/docs/tasks/04-extension-automation"
+    "description": "Supersedes capture-review. Build on v7 beta wiring (RUN_PIPELINE/progress/viewer/overlay/export kept; model-jargon UI replaced): manifest+promote, popup Capture Review (Visual+Context, Clean/Ambiguous/Blocked, Send vs Send&Submit, destination picker), background WS+keepalive+routing, isDestructive+pending+confirm (w/ Person 1), content.js+chat-adapters, sidepanel Approve/Deny, dashboard Privacy+Security logs. Never touch pipeline. Full guide: docs/tasks/PERSON4_HANDOVER_Shritama.md.",
+    "link": "/docs/tasks/PERSON4_HANDOVER_Shritama"
   },
   {
-    "id": "face-firefox-decision",
-    "title": "Face + Firefox decisions — document honestly",
-    "owner": "Person 6 + 3 + 4",
+    "id": "firefox-decision",
+    "title": "Firefox decision — document honestly (face CLOSED)",
+    "owner": "Person 6 + 4",
     "status": "urgent",
     "priority": "P0",
     "due": "2026-09-06",
     "area": "Limitations",
-    "description": "PS says faces + Firefox — decide add vs known limitation, update pitch.",
+    "description": "Face half CLOSED (BlazeFace tested, feeds redaction pipeline). Remaining: Firefox — build browser_specific_settings.gecko or document Chrome-first in docs/limitations.md + README + pitch. See docs/tasks/PERSON4_HANDOVER_Shritama.md §Task 1.",
     "link": "/docs/limitations"
   },
   {

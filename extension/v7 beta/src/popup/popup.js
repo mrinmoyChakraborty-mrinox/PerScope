@@ -389,3 +389,16 @@ UI.btnDownloadEvidence.addEventListener("click", () => {
 
 // Startup
 initDeviceStatus();
+refreshBridgeLabel();
+
+async function refreshBridgeLabel() {
+  const el = document.getElementById("bridgeStatusLabel");
+  if (!el) return;
+  try {
+    const res = await chrome.runtime.sendMessage({ target: "background", action: "BRIDGE_STATUS" });
+    const b = res?.bridge;
+    el.textContent = b?.paired ? "connected + paired" : b?.connected ? "reachable, not paired" : "not running";
+  } catch {
+    el.textContent = "not running";
+  }
+}

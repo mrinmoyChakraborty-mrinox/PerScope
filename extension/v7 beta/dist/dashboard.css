@@ -367,3 +367,7 @@ body {
 .btn-full { width: 100%; }
 
 .hidden { display: none !important; }
+
+/* Bridge Connection card */
+.bridge-status { font-size: 13px; margin: 0 0 8px; }
+.bridge-msg { font-size: 12px; min-height: 16px; margin: 8px 0 0; opacity: 0.85; }
