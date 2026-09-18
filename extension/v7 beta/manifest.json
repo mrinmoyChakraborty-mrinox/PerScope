@@ -3,8 +3,16 @@
   "name": "PerScope Privacy Redactor",
   "version": "1.0.1",
   "description": "Local GPU-accelerated PII detection and image redaction. Uses dedicated GPU (NVIDIA RTX 4050) with integrated/CPU fallback.",
-  "permissions": ["offscreen", "storage", "activeTab"],
+  "permissions": ["offscreen", "storage", "activeTab", "scripting"],
   "host_permissions": ["<all_urls>"],
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["dom-capture-entry.js"],
+      "all_frames": true,
+      "run_at": "document_idle"
+    }
+  ],
   "action": {
     "default_popup": "popup.html",
     "default_title": "PerScope Privacy Redactor"

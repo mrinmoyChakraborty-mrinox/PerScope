@@ -17,6 +17,7 @@ const requiredFiles = [
   "background.js",
   "offscreen.html",
   "offscreen.js",
+  "dom-capture-entry.js",
   "dashboard.html",
   "dashboard.css",
   "dashboard.js",
@@ -35,7 +36,11 @@ for (const req of requiredFiles) {
 }
 
 // Check for actual active forbidden Node imports
-const jsFiles = ["popup.js", "background.js", "offscreen.js", "dashboard.js"];
+// dom-capture-entry.js is the browser-only DOM snapshot content script: it
+// must stay free of node:-only imports exactly like the other dist/ bundles
+// (document/window do not exist in Node, and Node builtins do not exist in
+// the content-script context).
+const jsFiles = ["popup.js", "background.js", "offscreen.js", "dashboard.js", "dom-capture-entry.js"];
 const forbiddenPatterns = [
   { re: /from\s+["']node:fs["']|import\(["']node:fs/, name: "node:fs" },
   { re: /from\s+["']node:path["']|import\(["']node:path/, name: "node:path" },

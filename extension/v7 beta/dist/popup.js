@@ -22,6 +22,15 @@ var UI = {
   fileInput: document.getElementById("fileInput"),
   btnBrowse: document.getElementById("btnBrowse"),
   btnCaptureTab: document.getElementById("btnCaptureTab"),
+  btnCaptureDomText: document.getElementById("btnCaptureDomText"),
+  domResultsSection: document.getElementById("domResultsSection"),
+  domRedactedText: document.getElementById("domRedactedText"),
+  statDomFindings: document.getElementById("statDomFindings"),
+  statDomSegments: document.getElementById("statDomSegments"),
+  statDomSkipped: document.getElementById("statDomSkipped"),
+  domFindingsList: document.getElementById("domFindingsList"),
+  btnDomBack: document.getElementById("btnDomBack"),
+  btnDownloadDomEvidence: document.getElementById("btnDownloadDomEvidence"),
   processingSection: document.getElementById("processingSection"),
   currentStageTitle: document.getElementById("currentStageTitle"),
   currentStageDetail: document.getElementById("currentStageDetail"),
@@ -273,9 +282,99 @@ function setViewMode(mode) {
 UI.btnViewRedacted.addEventListener("click", () => setViewMode("redacted"));
 UI.btnViewOriginal.addEventListener("click", () => setViewMode("original"));
 UI.btnViewOverlay.addEventListener("click", () => setViewMode("overlay"));
+var currentDomCapture = null;
+if (UI.btnCaptureDomText) {
+  UI.btnCaptureDomText.addEventListener("click", async () => {
+    try {
+      UI.inputSection.classList.add("hidden");
+      UI.resultsSection.classList.add("hidden");
+      if (UI.domResultsSection) UI.domResultsSection.classList.add("hidden");
+      UI.processingSection.classList.remove("hidden");
+      UI.currentStageTitle.textContent = "Capturing Page Text...";
+      UI.currentStageDetail.textContent = "Walking DOM segments and running Tier0 redaction";
+      resetStepper();
+      const res = await chrome.runtime.sendMessage({
+        target: "background",
+        action: "REQUEST_DOM_CAPTURE"
+      });
+      if (res?.status === "SUCCESS" && res.capture) {
+        onDomCaptureComplete(res.capture);
+      } else {
+        throw new Error(res?.error || "DOM capture failed");
+      }
+    } catch (err) {
+      alert("DOM capture failed: " + err.message);
+      resetToInput();
+    }
+  });
+}
+function onDomCaptureComplete(capture) {
+  currentDomCapture = capture;
+  UI.processingSection.classList.add("hidden");
+  UI.resultsSection.classList.add("hidden");
+  UI.inputSection.classList.add("hidden");
+  if (UI.domResultsSection) UI.domResultsSection.classList.remove("hidden");
+  if (UI.domRedactedText) {
+    UI.domRedactedText.textContent = capture.redactedDocument || "(no visible text captured)";
+  }
+  if (UI.statDomFindings) UI.statDomFindings.textContent = capture.findings?.length ?? 0;
+  if (UI.statDomSegments) UI.statDomSegments.textContent = capture.segmentCount ?? 0;
+  const skippedCount = (capture.skipped?.shadowRootsClosed ?? 0) + (capture.skipped?.iframesCrossOriginUnreachable ?? 0);
+  if (UI.statDomSkipped) UI.statDomSkipped.textContent = skippedCount;
+  renderDomFindings(capture.findings || []);
+}
+function renderDomFindings(findings) {
+  if (!UI.domFindingsList) return;
+  UI.domFindingsList.innerHTML = "";
+  if (!findings.length) {
+    const li = document.createElement("li");
+    li.className = "dom-finding-empty";
+    li.textContent = "No PII findings \u2014 page text is clean.";
+    UI.domFindingsList.appendChild(li);
+    return;
+  }
+  for (const f of findings) {
+    const li = document.createElement("li");
+    li.className = "dom-finding-item";
+    const tag = document.createElement("span");
+    tag.className = "bbox-tag";
+    tag.textContent = f.type || "PII";
+    li.appendChild(tag);
+    const meta = document.createElement("span");
+    meta.className = "dom-finding-meta";
+    const bits = [`source: ${f.source || "dom"}`, `confidence: ${Number(f.confidence ?? 0).toFixed(2)}`];
+    if (f.forceRedacted) bits.push("always-redact");
+    if (f.structuralHint?.labelText) bits.push(`label: ${f.structuralHint.labelText}`);
+    else if (f.structuralHint?.fieldName) bits.push(`field: ${f.structuralHint.fieldName}`);
+    if (f.structuralHint?.tableHeader) bits.push(`column: ${f.structuralHint.tableHeader}`);
+    meta.textContent = bits.join(" \u2022 ");
+    li.appendChild(meta);
+    UI.domFindingsList.appendChild(li);
+  }
+}
+if (UI.btnDomBack) {
+  UI.btnDomBack.addEventListener("click", () => {
+    if (UI.domResultsSection) UI.domResultsSection.classList.add("hidden");
+    resetToInput();
+  });
+}
+if (UI.btnDownloadDomEvidence) {
+  UI.btnDownloadDomEvidence.addEventListener("click", () => {
+    if (!currentDomCapture) return;
+    const str = JSON.stringify(currentDomCapture, null, 2);
+    const blob = new Blob([str], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `perscope_dom_evidence_${Date.now()}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  });
+}
 function resetToInput() {
   UI.processingSection.classList.add("hidden");
   UI.resultsSection.classList.add("hidden");
+  if (UI.domResultsSection) UI.domResultsSection.classList.add("hidden");
   UI.inputSection.classList.remove("hidden");
   UI.fileInput.value = "";
 }

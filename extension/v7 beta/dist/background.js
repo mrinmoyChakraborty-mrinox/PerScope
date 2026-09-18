@@ -47,6 +47,26 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     });
     return true;
   }
+  if (message.action === "REQUEST_DOM_CAPTURE") {
+    (async () => {
+      try {
+        const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+        const tabId = tabs && tabs[0] && tabs[0].id;
+        if (tabId === void 0 || tabId === null) {
+          throw new Error("No active tab for DOM capture");
+        }
+        const res = await chrome.tabs.sendMessage(tabId, { type: "CAPTURE_DOM_TEXT" });
+        if (res?.status === "SUCCESS") {
+          sendResponse({ status: "SUCCESS", capture: res.capture });
+        } else {
+          sendResponse({ status: "ERROR", error: res?.error || "DOM capture failed" });
+        }
+      } catch (err) {
+        sendResponse({ status: "ERROR", error: err.message });
+      }
+    })();
+    return true;
+  }
   if (message.action === "ENSURE_OFFSCREEN") {
     ensureOffscreenDocument().then(() => sendResponse({ status: "SUCCESS" })).catch((err) => sendResponse({ status: "ERROR", error: err.message }));
     return true;

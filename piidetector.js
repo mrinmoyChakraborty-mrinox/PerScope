@@ -590,6 +590,14 @@ function validateMatch(type, value) {
 /**
  * Detect all supported PII in a text string.
  *
+ * NOTE (DOM snapshot pipeline contract): `src/pipeline/dom-capture.js` calls
+ * NOTE: this once per SEGMENT (segment.text), never on a joined page blob.
+ * NOTE: Per-detection `confidence` is passed through untouched into findings
+ * NOTE: as `{ type, source: "dom", confidence, structuralHint?, segmentId,
+ * NOTE: forceRedacted }`; structural context is a sibling field, never a
+ * NOTE: replacement for this score. Findings must never carry raw `value`,
+ * NOTE: offsets, or domPath (redact before logging).
+ *
  * Returns:
  *
  * {
@@ -879,6 +887,22 @@ function shouldIgnoreElement(element) {
 /**
  * Extract visible-ish text from the DOM.
  *
+ * NOTE (DOM snapshot pipeline contract): the v7-extension pipeline no longer
+ * NOTE: calls this stub for page capture. The real implementation lives in
+ * NOTE: `extension/v7 beta/src/pipeline/dom-capture.js`, which walks the DOM
+ * NOTE: (main document + same-origin iframes + open shadow roots) and produces
+ * NOTE: ordered SEGMENTS of the form:
+ * NOTE:   { id, kind: "text"|"attribute"|"form_value", tag, attr?, text,
+ * NOTE:     blockRole, forceRedact, structuralHint?, domPath }.
+ * NOTE: Each non-forced segment's `text` is passed to `detectPII` individually
+ * NOTE: (never one joined blob), and each resulting finding is tagged
+ * NOTE: `source: "dom"` with her `confidence` untouched plus a sibling
+ * NOTE: `structuralHint` ({ labelText, autocompleteType, fieldName,
+ * NOTE: tableHeader }) from `dom-heuristics.js`. Password/hidden fields are
+ * NOTE: pre-classified as forceRedact and skip `detectPII` entirely.
+ * NOTE: This function is still exported as-is for any other caller/test that
+ * NOTE: depends on it — do not remove it.
+ *
  * This is intentionally conservative.
  *
  * A production-grade system should additionally consider:
@@ -928,6 +952,14 @@ function extractDOMText(root = document.body) {
 
 /**
  * Extract potentially sensitive values from form controls.
+ *
+ * NOTE (DOM snapshot pipeline contract): superseded for the actual extension
+ * NOTE: pipeline by `extension/v7 beta/src/pipeline/dom-capture.js`, which
+ * NOTE: collects form values during the same TreeWalker pass as text/attribute
+ * NOTE: segments (so rejected hidden subtrees contribute nothing) and flags
+ * NOTE: `input[type=password]` / `input[type=hidden]` as always-redact
+ * NOTE: (forceRedact, bypassing pattern matching per the password-field
+ * NOTE: masking rule). Still exported as-is for other callers/tests.
  *
  * DOM text does NOT contain the value of:
  *
