@@ -1,8 +1,6 @@
 const demoState = {
     scenario: "normal",
 
-    goal: "Find a hotel in Mumbai",
-
     currentPage: {
         url: "",
         title: "",
@@ -22,12 +20,13 @@ const demoState = {
     latency: null
 };
 
-function addEvent(message, status = "info") {
+function addEvent(message, status = "info", source = "Playground") {
     demoState.events.push({
-        message,
-        status,
-        timestamp: new Date().toISOString()
-    });
+    timestamp: new Date().toISOString(),
+    message,
+    status,
+    source
+});
 }
 
 function updatePage(page) {

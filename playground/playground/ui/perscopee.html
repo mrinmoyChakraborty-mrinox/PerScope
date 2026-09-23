@@ -41,108 +41,7 @@
         </div>
 
 
-        <!-- =================================================
-             LIVE PIPELINE
-        ================================================== -->
-
-        <div class="pipeline">
-
-            <div
-                class="pipeline-step active"
-                id="step-perceive">
-
-                <div class="pipeline-icon">
-                    ◉
-                </div>
-
-                <div>
-                    <strong>1 Perceive</strong>
-
-                    <small>
-                        Understand screen locally
-                    </small>
-                </div>
-
-            </div>
-
-
-            <div
-                class="pipeline-step"
-                id="step-protect">
-
-                <div class="pipeline-icon">
-                    ♢
-                </div>
-
-                <div>
-                    <strong>2 Protect</strong>
-
-                    <small>
-                        Detect & sanitize sensitive data
-                    </small>
-                </div>
-
-            </div>
-
-
-            <div
-                class="pipeline-step"
-                id="step-reason">
-
-                <div class="pipeline-icon">
-                    ✦
-                </div>
-
-                <div>
-                    <strong>3 Reason</strong>
-
-                    <small>
-                        Agent reasoning
-                    </small>
-                </div>
-
-            </div>
-
-
-            <div
-                class="pipeline-step"
-                id="step-act">
-
-                <div class="pipeline-icon">
-                    ➤
-                </div>
-
-                <div>
-                    <strong>4 Act</strong>
-
-                    <small>
-                        Execute with validation
-                    </small>
-                </div>
-
-            </div>
-
-
-            <div
-                class="pipeline-step"
-                id="step-repeat">
-
-                <div class="pipeline-icon">
-                    ↻
-                </div>
-
-                <div>
-                    <strong>5 Repeat</strong>
-
-                    <small>
-                        New screen, continue task
-                    </small>
-                </div>
-
-            </div>
-
-        </div>
-
+       
 
         <!-- =================================================
              CONNECTION STATUS + THEME
@@ -168,7 +67,7 @@
 
                 <div>
                     <small>Server</small>
-                    <strong>Connected</strong>
+                    <strong>Disconnected</strong>
                 </div>
 
             </div>
@@ -216,18 +115,6 @@
 
                 </button>
 
-
-                <button
-                    class="nav-item"
-                    data-section="live-view">
-
-                    <span>◉</span>
-
-                    Live View
-
-                </button>
-
-
                 <button
                     class="nav-item"
                     data-section="screen-state">
@@ -245,8 +132,7 @@
 
                     <span>▤</span>
 
-                    Agent Input
-
+                    Agent State
                 </button>
 
 
@@ -259,18 +145,6 @@
                     Action Logs
 
                 </button>
-
-
-                <button
-                    class="nav-item"
-                    data-section="scenarios">
-
-                    <span>⚙</span>
-
-                    Scenarios
-
-                </button>
-
 
                 <button
                     class="nav-item"
@@ -295,67 +169,74 @@
                     Session Controls
                 </h3>
 
+<!-- =================================================
+WEBSOCKET CONNECTION
+================================================== -->
 
-                <label for="scenario-select">
-                    Scenario
-                </label>
+<div class="ws-controls">
 
+    <label for="ws-url">
+        WebSocket Server
+    </label>
 
-                <select id="scenario-select">
+    <input
+        id="ws-url"
+        type="text"
+        value="ws://localhost:8080"
+        autocomplete="off">
 
-                    <option value="normal">
-                        Find a hotel in Mumbai
-                    </option>
+    <div class="ws-buttons">
 
-                    <option value="destructive">
-                        Destructive Action
-                    </option>
+        <button
+            id="ws-connect"
+            class="primary-button"
+            type="button">
+            Start
+        </button>
 
-                    <option value="injection">
-                        Prompt Injection
-                    </option>
+        <button
+            id="ws-disconnect"
+            class="secondary-button"
+            type="button">
+            Stop
+        </button>
 
-                </select>
+    </div>
+    <div class="progress-speed-control">
 
+    <label>
+        <input
+            type="checkbox"
+            id="progress-fast-toggle">
+        Fast mode
+    </label>
 
-                <div
-                    id="scenario-description"
-                    class="scenario-description">
+    <small>
+        Fast ≈ 3s · Normal ≈ 6.5s
+    </small>
 
-                    Open a travel website,
-                    enter Mumbai as destination
-                    and search for hotels.
+</div>
+    <div class="ws-status-row">
 
-                </div>
+        <span
+            id="ws-status"
+            class="ws-status-dot">
+        </span>
 
+        <span>
+            Disconnected
+        </span>
 
-                <button
-                    id="start-demo"
-                    class="primary-button">
+    </div>
 
-                    ▶ Start Demo
+    <small class="ws-hint">
+        Start Node server first —
+        browser cannot spawn it.
+    </small>
 
-                </button>
-
-
-                <button
-                    id="reset-demo"
-                    class="secondary-button">
-
-                    ↻ Reset
-
-                </button>
-
-
-                <button
-                    id="pause-demo"
-                    class="secondary-button">
-
-                    ◉ Pause
-
-                </button>
-
-            </section>
+</div>
+              
+ </section>
 
 
             <!-- =================================================
@@ -454,190 +335,103 @@
             ================================================== -->
 
             <section class="workspace-grid">
+ <!-- =================================================
+     CHAT PLAYGROUND
+================================================== -->
 
+<section
+    id="chat-panel"
+    class="panel chat-panel">
 
-                <!-- =================================================
-                     LIVE BROWSER
-                ================================================== -->
+    <!-- CHAT HEADER -->
 
-                <section
-                    id="live-view"
-                    class="panel browser-panel">
+    <div class="panel-header chat-header">
 
-                    <div class="panel-header">
+    <div>
 
-                        <div>
-                            <h2>
-                                Live Browser View
-                            </h2>
+        <h2>
+            PerScope Chat
+        </h2>
 
-                            <span class="view-mode">
-                                Simulated Browser
-                            </span>
-                        </div>
+        <span>
+            Ask the browser agent to perform a task
+        </span>
 
+    </div>
 
-                        <span class="live-badge">
-                            ● Demo
-                        </span>
+    <div class="chat-header-right">
 
-                    </div>
+        <span
+            id="privacy-chip"
+            class="privacy-chip">
+            🔒 sanitized-only
+        </span>
 
+        <span
+            id="chat-status"
+            class="chat-status">
+            Ready
+        </span>
 
-                    <!-- BROWSER -->
+    </div>
 
-                    <div class="browser-window">
+</div>
 
 
-                        <!-- Browser toolbar -->
+    <!-- CHAT CONTENT -->
 
-                        <div class="browser-toolbar">
+    <div id="chatWrap">
 
-                            <div class="browser-dots">
-                                ● ● ●
-                            </div>
+        <div id="chat">
 
-                            <div class="browser-tab">
-                                ◉ TravelEase - Hotels
-                            </div>
+            <!-- Messages will be inserted here -->
 
-                            <span>+</span>
+        </div>
 
-                        </div>
+    <!-- =================================================
+         CHAT COMPOSER
+    ================================================== -->
 
+    <div class="chat-composer">
 
-                        <!-- Address -->
+        <textarea
+            id="chat-input"
+            rows="1"
+            placeholder="Ask PerScope to perform a task..."
+            aria-label="Chat input"></textarea>
 
-                        <div class="browser-address">
 
-                            🔒
-                            https://www.travelease.com
+        <button
+            id="chat-send"
+            class="chat-send-button"
+            type="button">
 
-                        </div>
+            <span>
+                Send
+            </span>
 
+            <span>
+                ↑
+            </span>
 
-                        <!-- Website -->
+        </button>
 
-                        <div class="mock-browser-content">
+    </div>
 
 
-                            <!-- Website navigation -->
+    <div class="chat-hint">
 
-                            <div class="mock-browser-nav">
+        <span>
+            Enter to send
+        </span>
 
-                                <strong>
-                                    TravelEase
-                                </strong>
+        <span>
+            Shift + Enter for a new line
+        </span>
 
-                                <span>
-                                    Flights
-                                </span>
+    </div>
 
-                                <span class="selected">
-                                    Hotels
-                                </span>
-
-                                <span>
-                                    My Trips
-                                </span>
-
-                                <span>
-                                    Support
-                                </span>
-
-                            </div>
-
-
-                            <!-- Hero -->
-
-                            <div class="hero-content">
-
-                                <h1>
-                                    Find Your Perfect Stay
-                                </h1>
-
-                                <p>
-                                    Hotels, homes and more,
-                                    all in one place
-                                </p>
-
-                            </div>
-
-
-                            <!-- Search form -->
-
-                            <div class="search-box">
-
-
-                                <label>
-
-                                    Destination
-
-                                    <input
-                                        id="mock-destination"
-                                        type="text"
-                                        value="Mumbai">
-
-                                </label>
-
-
-                                <label>
-
-                                    Check-in
-
-                                    <input
-                                        type="text"
-                                        value="12/06/2025">
-
-                                </label>
-
-
-                                <label>
-
-                                    Check-out
-
-                                    <input
-                                        type="text"
-                                        value="14/06/2025">
-
-                                </label>
-
-
-                                <label>
-
-                                    Guests
-
-                                    <select id="mock-guests">
-
-                                        <option>
-                                            2 Adults
-                                        </option>
-
-                                        <option>
-                                            3 Adults
-                                        </option>
-
-                                    </select>
-
-                                </label>
-
-
-                                <button
-                                    id="mock-search-button">
-
-                                    Search Hotels
-
-                                </button>
-
-                            </div>
-
-                        </div>
-
-                    </div>
-
-                </section>
-
-
+</section>
                 <!-- =================================================
                      SCREEN STATE
                 ================================================== -->
@@ -661,6 +455,7 @@
 
                         </div>
 
+                         <div class="screen-header-right">
 
                         <button
                             id="raw-json-toggle"
@@ -669,10 +464,15 @@
                             View Raw JSON
 
                         </button>
+                        <span
+            id="latency-value"
+            class="latency-value">
+            Latency: —
+        </span>
 
-                    </div>
+    </div>
 
-
+</div>
                     <!-- STRUCTURED VIEW -->
 
                     <div
@@ -690,7 +490,7 @@
                                 </small>
 
                                 <strong>
-                                    TravelEase - Hotels
+                                    Browser Page
                                 </strong>
 
                             </div>
@@ -703,7 +503,7 @@
                                 </small>
 
                                 <strong>
-                                    Hotel search form
+                                    Current browser page
                                 </strong>
 
                             </div>
@@ -716,7 +516,7 @@
                                 </small>
 
                                 <strong>
-                                    7
+                                    1
                                 </strong>
 
                             </div>
@@ -737,117 +537,59 @@
 
                         </div>
 
+                        <details
+    id="privacy-details"
+    class="privacy-details">
 
+    <summary>
+        🔒 Privacy Details
+    </summary>
+
+    <div class="privacy-detail-content">
+
+        <strong>
+            Sanitized payload
+        </strong>
+
+        <p>
+           Privacy findings will appear here
+    when the sanitized payload is available.
+        </p>
+
+    </div>
+
+</details>
                         <!-- Elements table -->
+<div class="elements-table">
 
-                        <div class="elements-table">
+    <div class="table-header">
 
+        <span>ID</span>
+        <span>Type</span>
+        <span>Label / Text</span>
+        <span>Value</span>
+        <span>BBox</span>
 
-                            <div class="table-header">
-
-                                <span>ID</span>
-                                <span>Type</span>
-                                <span>Label / Text</span>
-                                <span>Value</span>
-                                <span>BBox</span>
-
-                            </div>
+    </div>
 
 
-                            <div class="table-row">
+    <div class="table-row">
 
-                                <span>el_1</span>
-                                <span>input</span>
-                                <span>Destination</span>
-                                <span>Mumbai</span>
-                                <span>
-                                    [120,220,300,40]
-                                </span>
+        <span>el_8</span>
 
-                            </div>
+        <span>button</span>
 
+        <span>Delete Account</span>
 
-                            <div class="table-row">
+        <span>—</span>
 
-                                <span>el_2</span>
-                                <span>input</span>
-                                <span>Check-in</span>
-                                <span>12/06/2025</span>
-                                <span>
-                                    [120,280,200,40]
-                                </span>
+        <span>
+            [620,350,180,48]
+        </span>
 
-                            </div>
+    </div>
 
-
-                            <div class="table-row">
-
-                                <span>el_3</span>
-                                <span>input</span>
-                                <span>Check-out</span>
-                                <span>14/06/2025</span>
-                                <span>
-                                    [340,280,200,40]
-                                </span>
-
-                            </div>
-
-
-                            <div class="table-row">
-
-                                <span>el_4</span>
-                                <span>select</span>
-                                <span>Guests</span>
-                                <span>2 Adults</span>
-                                <span>
-                                    [560,280,150,40]
-                                </span>
-
-                            </div>
-
-
-                            <div class="table-row">
-
-                                <span>el_5</span>
-                                <span>button</span>
-                                <span>Search Hotels</span>
-                                <span>—</span>
-                                <span>
-                                    [120,350,320,48]
-                                </span>
-
-                            </div>
-
-
-                            <div class="table-row">
-
-                                <span>el_6</span>
-                                <span>link</span>
-                                <span>My Trips</span>
-                                <span>—</span>
-                                <span>
-                                    [420,80,80,24]
-                                </span>
-
-                            </div>
-
-
-                            <div class="table-row">
-
-                                <span>el_7</span>
-                                <span>link</span>
-                                <span>Support</span>
-                                <span>—</span>
-                                <span>
-                                    [520,80,80,24]
-                                </span>
-
-                            </div>
-
-                        </div>
-
-                    </div>
-
+</div>
 
                     <!-- RAW JSON -->
 
@@ -881,134 +623,186 @@
 
                         </div>
 
-
+                         
                         <span class="running-badge">
-                            ● Running
+                            ● Idle
                         </span>
 
                     </div>
+ <!-- MOVED THINKING CARD -->
+
+    <div
+        id="thinkingCard"
+        class="thinking-card hidden">
+
+        <div class="thinking-header">
+
+            <span class="thinking-icon">
+                ✦
+            </span>
+
+            <div>
+
+                <strong>
+                    Agent thinking
+                </strong>
+
+                <small>
+                    Processing your request
+                </small>
+
+            </div>
+
+        </div>
 
 
-                    <!-- Screen perception -->
+        <div
+            id="process"
+            class="process">
 
-                    <div
-                        class="agent-step completed"
-                        id="agent-perception">
+            <div class="tree">
 
-                        <span>✓</span>
+                <div
+                    class="process-node"
+                    data-step="perception">
 
-                        <div>
+                    <span class="process-icon">
+                        ○
+                    </span>
 
-                            <strong>
-                                Screen Perception
-                            </strong>
-
-                            <small>
-                                Page understood
-                            </small>
-
-                        </div>
-
-                    </div>
-
-
-                    <!-- Privacy -->
-
-                    <div
-                        class="agent-step completed"
-                        id="agent-protection">
-
-                        <span>✓</span>
-
-                        <div>
-
-                            <strong>
-                                Privacy Protection
-                            </strong>
-
-                            <small>
-                                Sensitive data detected & filtered
-                            </small>
-
-                        </div>
-
-                    </div>
-
-
-                    <!-- Sanitization -->
-
-                    <div
-                        class="agent-step completed"
-                        id="agent-sanitization">
-
-                        <span>✓</span>
-
-                        <div>
-
-                            <strong>
-                                Sanitization
-                            </strong>
-
-                            <small>
-                                Sanitized context ready
-                            </small>
-
-                        </div>
-
-                    </div>
-
-
-                    <!-- Reasoning -->
-
-                    <div
-                        class="agent-step completed"
-                        id="agent-reasoning-step">
-
-                        <span>✓</span>
-
-                        <div>
-
-                            <strong>
-                                Agent Reasoning
-                            </strong>
-
-                            <small>
-                                Task reasoning completed
-                            </small>
-
-                        </div>
-
-                    </div>
-
-
-                    <!-- Next action -->
-
-                    <div class="next-action">
-
+                    <div>
                         <strong>
-                            → Next Action
+                            Perception
                         </strong>
 
-                        <h3>
-                            Click on
-                            "Search Hotels" button
-                        </h3>
+                        <small>
+                            Understand the screen locally
+                        </small>
+                    </div>
+
+                </div>
 
 
-                        <div class="action-tags">
+                <div
+                    class="process-node"
+                    data-step="redacting">
 
-                            <span>
-                                Tool: click
-                            </span>
+                    <span class="process-icon">
+                        ○
+                    </span>
 
-                            <span>
-                                Element: el_5
-                            </span>
+                    <div>
+                        <strong>
+                            Redacting
+                        </strong>
 
+                        <small>
+                            Detect and sanitize sensitive data
+                        </small>
+                    </div>
+
+                </div>
+
+
+                <div
+                    class="process-node"
+                    data-step="reasoning">
+
+                    <span class="process-icon">
+                        ○
+                    </span>
+
+                    <div>
+                        <strong>
+                            Reasoning
+                        </strong>
+
+                        <small>
+                            Determine the next action
+                        </small>
+                    </div>
+
+                </div>
+
+
+                <div
+                    class="process-node"
+                    data-step="acting">
+
+                    <span class="process-icon">
+                        ○
+                    </span>
+
+                    <div class="process-content">
+
+                        <strong>
+                            Acting upon
+                        </strong>
+
+                        <small>
+                            Execute only after validation
+                        </small>
+
+                        <div
+                            class="action-confirmation"
+                            hidden>
                         </div>
 
                     </div>
 
+                </div>
+
+
+                <div
+                    class="process-node"
+                    data-step="done">
+
+                    <span class="process-icon">
+                        ○
+                    </span>
+
+                    <div>
+                        <strong>
+                            Done
+                        </strong>
+
+                        <small>
+                            Task completed
+                        </small>
+                    </div>
+
+                </div>
+
+            </div>
+
+        </div>
+
+    </div>
+
+ <!-- Next action -->
+ <div class="next-action">
+
+    <strong>
+        → Next Action
+    </strong>
+
+    <h3>
+        Waiting for agent...
+    </h3>
+
+    <div class="action-tags">
+
+        <span>
+            Tool: —
+        </span>
+
+        <span>
+            Element: —
+        </span>
+
+    </div>
+
+</div>
 
                     <!-- Validator -->
 
@@ -1028,180 +822,10 @@
 
                     </div>
 
-
-                    <button
-                        id="execute-action"
-                        class="execute-button">
-
-                        Execute Action
-
-                    </button>
-
                 </section>
 
 
-                <!-- =================================================
-                     PRIVACY SUMMARY
-                ================================================== -->
-
-                <section
-                    id="privacy-summary"
-                    class="panel privacy-summary-panel">
-
-
-                    <div class="panel-header">
-
-                        <div>
-
-                            <h2>
-                                Privacy Summary
-                            </h2>
-
-                            <span>
-                                Local privacy protection
-                            </span>
-
-                        </div>
-
-
-                        <button
-                            id="privacy-details-toggle"
-                            class="outline-button">
-
-                            View Details
-
-                        </button>
-
-                    </div>
-
-
-                    <!-- Compact summary -->
-
-                    <div class="summary-grid">
-
-
-                        <div>
-
-                            <strong id="pii-count">
-                                3
-                            </strong>
-
-                            <span>
-                                PII Detected
-                            </span>
-
-                        </div>
-
-
-                        <div>
-
-                            <strong id="sanitized-count">
-                                3
-                            </strong>
-
-                            <span>
-                                Sanitized
-                            </span>
-
-                        </div>
-
-
-                        <div>
-
-                            <strong id="audit-status">
-                                PASS
-                            </strong>
-
-                            <span>
-                                Self-Audit
-                            </span>
-
-                        </div>
-
-                    </div>
-
-
-                    <div class="cloud-status">
-
-                        🔒
-
-                        Cloud receives
-                        sanitized state only.
-
-                    </div>
-
-
-                    <!-- Privacy details -->
-
-                    <div
-                        id="privacy-details"
-                        class="privacy-details hidden">
-
-
-                        <div class="privacy-detail-section">
-
-                            <h3>
-                                PII Detection
-                            </h3>
-
-                            <ul>
-
-                                <li>
-                                    Email — REDACTED ✓
-                                </li>
-
-                                <li>
-                                    Phone — REDACTED ✓
-                                </li>
-
-                                <li>
-                                    Card — REDACTED ✓
-                                </li>
-
-                            </ul>
-
-                        </div>
-
-
-                        <div class="privacy-detail-section">
-
-                            <h3>
-                                Privacy Pipeline
-                            </h3>
-
-                            <ol>
-
-                                <li>
-                                    Capture ✓
-                                </li>
-
-                                <li>
-                                    Perception ✓
-                                </li>
-
-                                <li>
-                                    PII Detection ✓
-                                </li>
-
-                                <li>
-                                    Redaction ✓
-                                </li>
-
-                                <li>
-                                    Privacy Audit ✓
-                                </li>
-
-                            </ol>
-
-                        </div>
-
-                    </div>
-
-                </section>
-
-            </section>
-
-
+         
             <!-- =================================================
                  EVENT LOG + TOOL INSPECTOR
             ================================================== -->
@@ -1323,32 +947,13 @@
 
                     <!-- TOOL REQUEST -->
 
-                    <pre
-                        id="tool-request"
-                        class="inspector-content">
-
-{
-    "id": "req_001",
-    "tool": "read_page",
-    "params": {}
-}
-
-                    </pre>
-
-
+                  <pre
+                      id="tool-request"
+                      class="inspector-content">Waiting for tool request...</pre>
                     <!-- TOOL RESPONSE -->
-
                     <pre
-                        id="tool-response"
-                        class="inspector-content hidden">
-
-{
-    "id": "req_001",
-    "status": "ok",
-    "result": {}
-}
-
-                    </pre>
+                      id="tool-response"
+                      class="inspector-content hidden">Waiting for tool response...</pre>
 
 
                     <!-- AGENT REASONING -->
@@ -1362,9 +967,8 @@
                         </h3>
 
                         <p>
-                            The agent identified
-                            the Search Hotels button
-                            as the next required action.
+                            Waiting for the agent to determine
+                            the next action.
                         </p>
 
                     </div>
@@ -1372,146 +976,6 @@
                 </section>
 
             </section>
-
-
-            <!-- =================================================
-                 AGENT INPUT / REQUEST
-            ================================================== -->
-
-            <section
-                id="agent-input-panel"
-                class="panel agent-request-panel">
-
-
-                <div class="panel-header">
-
-                    <div>
-
-                        <h2>
-                            Agent Input
-                        </h2>
-
-                        <span>
-                            Task provided to the agent
-                        </span>
-
-                    </div>
-
-                </div>
-
-
-                <div class="agent-request-content">
-
-                    <div class="goal-card">
-
-                        <small>
-                            GOAL
-                        </small>
-
-                        <strong>
-                            Find a hotel in Mumbai
-                        </strong>
-
-                    </div>
-
-
-                    <div class="request-card">
-
-                        <small>
-                            CURRENT REQUEST
-                        </small>
-
-                        <p>
-                            Open a travel website,
-                            enter Mumbai as the
-                            destination and search
-                            for hotels.
-                        </p>
-
-                    </div>
-
-                </div>
-
-            </section>
-
-
-            <!-- =================================================
-                 SCENARIO WORKSPACE
-            ================================================== -->
-
-            <section
-                id="scenarios"
-                class="panel workspace-section hidden">
-
-
-                <div class="panel-header">
-
-                    <div>
-
-                        <h2>
-                            Scenarios
-                        </h2>
-
-                        <span>
-                            Select a demonstration scenario
-                        </span>
-
-                    </div>
-
-                </div>
-
-
-                <div class="scenario-cards">
-
-
-                    <button
-                        class="scenario-card active"
-                        data-scenario="normal">
-
-                        <strong>
-                            Normal Workflow
-                        </strong>
-
-                        <small>
-                            Safe browser interaction
-                        </small>
-
-                    </button>
-
-
-                    <button
-                        class="scenario-card"
-                        data-scenario="destructive">
-
-                        <strong>
-                            Destructive Action
-                        </strong>
-
-                        <small>
-                            Test local action validation
-                        </small>
-
-                    </button>
-
-
-                    <button
-                        class="scenario-card"
-                        data-scenario="injection">
-
-                        <strong>
-                            Prompt Injection
-                        </strong>
-
-                        <small>
-                            Test untrusted page content
-                        </small>
-
-                    </button>
-
-                </div>
-
-            </section>
-
 
             <!-- =================================================
                  SETTINGS WORKSPACE
@@ -1558,14 +1022,7 @@
                         </div>
 
 
-                        <button
-                            id="settings-theme-toggle"
-                            class="outline-button">
-
-                            Toggle Theme
-
-                        </button>
-
+                      
                     </div>
 
 
@@ -1603,10 +1060,10 @@
          PLAYGROUND JAVASCRIPT
     ====================================================== -->
 
-    <script
+     <script
         type="module"
         src="perscopee.js">
-    </script>
+    </script> 
 
 </body>
 

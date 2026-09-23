@@ -17,13 +17,12 @@ import {
    CONFIGURATION
 ========================================================= */
 
-const SERVER_URL = "ws://localhost:8080";
-
 let socket = null;
+let serverUrl = "ws://localhost:8080";
 let requestCounter = 0;
 let requestStartTime = 0;
-let paused = false;
-
+let heartbeatTimer = null;
+let heartbeatTimeout = null;
 
 /* =========================================================
    DOM HELPERS
@@ -40,8 +39,7 @@ const rawJsonToggle = $("raw-json-toggle");
 const rawJson = $("raw-json");
 const structuredState = $("structured-screen-state");
 
-const privacyDetailsToggle =
-    $("privacy-details-toggle");
+
 
 const privacyDetails =
     $("privacy-details");
@@ -49,29 +47,9 @@ const privacyDetails =
 const eventLog =
     $("event-log");
 
-const scenarioSelect =
-    $("scenario-select");
-
-const scenarioDescription =
-    $("scenario-description");
-
-const startDemoButton =
-    $("start-demo");
-
-const resetDemoButton =
-    $("reset-demo");
-
-const pauseDemoButton =
-    $("pause-demo");
 
 const themeToggle =
     $("theme-toggle");
-
-const settingsThemeToggle =
-    $("settings-theme-toggle");
-
-const executeAction =
-    $("execute-action");
 
 const toolRequest =
     $("tool-request");
@@ -82,79 +60,245 @@ const toolResponse =
 const agentReasoning =
     $("agent-reasoning");
 
-
 /* =========================================================
-   SCENARIO DATA
-========================================================= */
+   CHAT PLAYGROUND
+   ========================================================= */
 
-const scenarios = {
+const chat = $("chat");
 
-    normal: {
-        name: "Normal Workflow",
+const chatInput =
+    $("chat-input");
 
-        description:
-            "Open a travel website, enter Mumbai as destination and search for hotels.",
+const chatSend =
+    $("chat-send");
 
-        goal:
-            "Find a hotel in Mumbai"
-    },
+const chatStatus =
+    $("chat-status");
 
-    destructive: {
-        name: "Destructive Action",
+const thinkingCard =
+    $("thinkingCard");
 
-        description:
-            "Test how the local action validator blocks a dangerous action.",
 
-        goal:
-            "Attempt a destructive browser action"
-    },
+const wsUrl =
+    $("ws-url");
 
-    injection: {
-        name: "Prompt Injection",
+const wsConnect =
+    $("ws-connect");
 
-        description:
-            "Test how untrusted page content is prevented from controlling the agent.",
+const wsDisconnect =
+    $("ws-disconnect");
 
-        goal:
-            "Handle untrusted instructions safely"
+const wsStatus =
+    $("ws-status");
+const progressFastToggle =
+    $("progress-fast-toggle");
+ //Create a startHeartbeat() function
+   function startHeartbeat() {
+    stopHeartbeat();
+
+    heartbeatTimer = setInterval(() => {
+        if (!socket || socket.readyState !== WebSocket.OPEN) {
+            return;
+        }
+
+        try {
+            socket.send(JSON.stringify({
+                type: "ping"
+            }));
+
+            console.log("[UI → SERVER] ping");
+
+            heartbeatTimeout = setTimeout(() => {
+                console.warn("[UI] Heartbeat timeout");
+
+                addEvent(
+                    "WebSocket heartbeat timeout",
+                    "error",
+                    "Playground"
+                );
+
+                socket?.close();
+            }, 5000);
+
+        } catch (error) {
+            console.error("[UI] Heartbeat failed:", error);
+        }
+
+    }, 20000);
+}
+//stopHeartbeat()
+function stopHeartbeat() {
+    if (heartbeatTimer) {
+        clearInterval(heartbeatTimer);
+        heartbeatTimer = null;
     }
 
-};
-
-
+    if (heartbeatTimeout) {
+        clearTimeout(heartbeatTimeout);
+        heartbeatTimeout = null;
+    }
+}
 /* =========================================================
    WEBSOCKET CONNECTION
 ========================================================= */
 
 function connectToServer() {
 
-    console.log(
-        `[UI] Connecting to ${SERVER_URL}...`
-    );
+    if (socket) {
 
-    socket = new WebSocket(SERVER_URL);
+        if (
+            socket.readyState ===
+            WebSocket.OPEN
+        ) {
+            return;
+        }
+
+        if (
+            socket.readyState ===
+            WebSocket.CONNECTING
+        ) {
+            return;
+        }
+
+    }
 
 
-    socket.onopen = () => {
+    const url =
+        wsUrl?.value.trim();
 
-        console.log("[UI] Connected to server");
+    if (!url) {
 
-        updateServerStatus(true);
-
-        addEvent(
-            "Connected to WebSocket server",
-            "success",
-            "Playground"
+        console.error(
+            "[UI] WebSocket URL is empty"
         );
 
-    };
+        return;
+    }
 
+
+    serverUrl = url;
+
+
+    console.log(
+        `[UI] Connecting to ${serverUrl}...`
+    );
+
+
+    updateServerStatus(
+        false,
+        "Connecting..."
+    );
+
+
+    try {
+
+        socket =
+            new WebSocket(
+                serverUrl
+            );
+
+    } catch (error) {
+
+        console.error(
+            "[UI] WebSocket connection failed:",
+            error
+        );
+
+        updateServerStatus(
+            false,
+            "Disconnected"
+        );
+
+        return;
+    }
+
+
+   socket.onopen = () => {
+
+    console.log(
+        "[UI] Connected to server"
+    );
+
+    updateServerStatus(
+        true,
+        "Connected"
+    );
+    startHeartbeat();
+    addEvent(
+        "Connected to WebSocket server",
+        "success",
+        "Playground"
+    );
+
+    socket.addEventListener(
+        "message",
+        (event) => {
+
+            try {
+
+                const response =
+                    JSON.parse(event.data);
+               {
+
+              // =====================================
+            // HEARTBEAT PONG
+            // =====================================
+
+            if (response.type === "pong") {
+
+                if (heartbeatTimeout) {
+
+                    clearTimeout(
+                        heartbeatTimeout
+                    );
+
+                    heartbeatTimeout = null;
+                }
+
+                console.log(
+                    "[UI] pong received"
+                );
+
+                return;
+            }
+}
+                if (
+                    response.type ===
+                    "action_update"
+                ) {
+
+                    handleActionUpdate(
+                        response
+                    );
+
+                }
+
+            } catch (error) {
+
+                console.error(
+                    "[UI] Invalid WebSocket message:",
+                    error
+                );
+
+            }
+
+        }
+    );
+
+};
 
     socket.onclose = () => {
+        stopHeartbeat();
+        console.log(
+            "[UI] Server disconnected"
+        );
 
-        console.log("[UI] Server disconnected");
 
-        updateServerStatus(false);
+        updateServerStatus(
+            false,
+            "Disconnected"
+        );
+
 
         addEvent(
             "WebSocket connection closed",
@@ -162,32 +306,132 @@ function connectToServer() {
             "Playground"
         );
 
+
+        socket = null;
+
     };
 
 
-    socket.onerror = () => {
+   socket.onerror = (error) => {
 
-        console.error(
-            "[UI] WebSocket error"
+    const reason =
+        error?.message ||
+        error?.type ||
+        "connection_error";
+
+    console.error(
+        "[UI] WebSocket error:",
+        reason
+    );
+
+    addUIEvent(
+        "WebSocket error: " + reason,
+        "error",
+        "Playground"
+    );
+
+    updateServerStatus(
+        false,
+        "Connection Error"
+    );
+};
+}
+//closeWebSocket()
+function closeWebSocket() {
+
+    if (!socket) {
+
+        updateServerStatus(
+            false,
+            "Disconnected"
         );
 
-        updateServerStatus(false);
+        return;
+    }
 
-    };
+
+    console.log(
+        "[UI] Closing WebSocket..."
+    );
+
+    stopHeartbeat();
+    socket.close();
+
+
+    socket = null;
+
+
+    updateServerStatus(
+        false,
+        "Disconnected"
+    );
 
 }
-
-
 /* =========================================================
    SERVER STATUS
 ========================================================= */
 
-function updateServerStatus(connected) {
+function updateServerStatus(
+    connected,
+    label = null
+) {
+
+    /*
+     * -----------------------------------------
+     * NEW WS STATUS CONTROL
+     * -----------------------------------------
+     */
+
+    if (wsStatus) {
+
+        wsStatus.classList.toggle(
+            "connected",
+            connected
+        );
+
+    }
+
+
+    if (wsStatus) {
+
+        const statusRow =
+            wsStatus.parentElement;
+
+        if (statusRow) {
+
+            const text =
+                statusRow.querySelector(
+                    "span:last-child"
+                );
+
+            if (text) {
+
+                text.textContent =
+                    label ||
+                    (
+                        connected
+                            ? "Connected"
+                            : "Disconnected"
+                    );
+
+            }
+
+        }
+
+    }
+
+
+    /*
+     * -----------------------------------------
+     * EXISTING HEADER STATUS
+     * -----------------------------------------
+     */
 
     const statusCards =
         document.querySelectorAll(
             ".status-card"
         );
+
 
     if (statusCards.length < 2) {
         return;
@@ -197,11 +441,17 @@ function updateServerStatus(connected) {
     const serverCard =
         statusCards[1];
 
+
     const statusText =
-        serverCard.querySelector("strong");
+        serverCard.querySelector(
+            "strong"
+        );
+
 
     const dot =
-        serverCard.querySelector(".status-dot");
+        serverCard.querySelector(
+            ".status-dot"
+        );
 
 
     if (connected) {
@@ -212,7 +462,9 @@ function updateServerStatus(connected) {
         statusText.style.color =
             "var(--green)";
 
-        dot.classList.add("green");
+        dot.classList.add(
+            "green"
+        );
 
     } else {
 
@@ -222,7 +474,9 @@ function updateServerStatus(connected) {
         statusText.style.color =
             "var(--red)";
 
-        dot.classList.remove("green");
+        dot.classList.remove(
+            "green"
+        );
 
     }
 
@@ -243,11 +497,18 @@ function sendRequest(tool, params = {}) {
                 socket.readyState !== WebSocket.OPEN
             ) {
 
-                reject(
-                    new Error(
-                        "WebSocket server is not connected."
-                    )
-                );
+              const message =
+    "WebSocket server is not connected.";
+
+addUIEvent(
+    message,
+    "error",
+    "Playground"
+);
+
+reject(
+    new Error(message)
+);
 
                 return;
             }
@@ -269,7 +530,7 @@ function sendRequest(tool, params = {}) {
 
             requestStartTime =
                 performance.now();
-
+            let requestTimeout;
 
             /* Show request */
 
@@ -293,47 +554,145 @@ function sendRequest(tool, params = {}) {
                     try {
 
                         const response =
-                            JSON.parse(event.data);
+    JSON.parse(event.data);
 
 
-                        if (
-                            response.id !==
-                            request.id
-                        ) {
-                            return;
-                        }
+/* -----------------------------------------
+   IGNORE RESPONSE FOR OTHER REQUESTS
+----------------------------------------- */
+
+if (
+    response.id !==
+    request.id
+) {
+    return;
+}
 
 
-                        socket.removeEventListener(
-                            "message",
-                            handleResponse
-                        );
+/* -----------------------------------------
+   RESPONSE RECEIVED
+----------------------------------------- */
+
+socket.removeEventListener(
+    "message",
+    handleResponse
+);
+clearTimeout(requestTimeout);
+
+const latency =
+    Math.round(
+        performance.now() -
+        requestStartTime
+    );
 
 
-                        const latency =
-                            Math.round(
-                                performance.now() -
-                                requestStartTime
-                            );
+setLatency(latency);
+
+showLatency(latency);
+
+showToolResponse(response);
+
+/* -----------------------------------------
+   TOOL ERROR
+----------------------------------------- */
+
+if (response.status === "error") {
+
+    addEvent(
+        `Tool error: ${response.reason || "unknown_error"}`,
+        "error",
+        "WebSocket"
+    );
+
+    reject(
+        new Error(
+            response.reason || "Tool request failed"
+        )
+    );
+
+    return;
+}
+
+/* -----------------------------------------
+   ACTION BLOCKED
+----------------------------------------- */
+
+if (response.status === "blocked") {
+
+    console.warn(
+        "[ACTION BLOCKED]",
+        response
+    );
 
 
-                        setLatency(latency);
+    addUIEvent(
+        "Validator: action blocked",
+        "blocked",
+        "Local Action Guard"
+    );
+    const validator =
+        document.querySelector(
+            ".validator > strong"
+        );
 
 
-                        showLatency(latency);
+    if (validator) {
 
-                        showToolResponse(response);
+        validator.textContent =
+            "BLOCKED";
+
+        validator.style.color =
+            "var(--red)";
+    }
 
 
-                        resolve(response);
+    if (response.pending_id) {
+
+        showApprovalRequest(
+            response.pending_id,
+            request.tool === "click"
+                ? `Click on element ${request.params.element_id}`
+                : `Execute ${request.tool}`
+        );
+
+    }
 
 
-                    } catch (error) {
+    if (chatStatus) {
 
-                        reject(error);
+        chatStatus.textContent =
+            "Waiting for approval...";
 
-                    }
+    }
 
+
+    resolve(response);
+
+    return;
+}
+
+
+/* -----------------------------------------
+   NORMAL RESPONSE
+----------------------------------------- */
+
+resolve(response);
+
+} catch (error) {
+
+    addEvent(
+        "Invalid JSON received from WebSocket server",
+        "error",
+        "WebSocket"
+    );
+
+    reject(
+        new Error(
+            "Invalid JSON received from WebSocket server"
+        )
+    );
+
+}
                 };
 
 
@@ -341,13 +700,269 @@ function sendRequest(tool, params = {}) {
                 "message",
                 handleResponse
             );
+            requestTimeout = setTimeout(() => {
+
+    socket.removeEventListener(
+        "message",
+        handleResponse
+    );
+
+    addUIEvent(
+        `Request timeout: ${request.tool}`,
+        "error",
+        "WebSocket"
+    );
+
+    reject(
+        new Error(
+            `Request timed out after 5 seconds: ${request.tool}`
+        )
+    );
+
+}, 5000);
+        }
+    );
+
+}
+/* =========================================================
+   ACTION APPROVAL
+   ========================================================= */
+function handleActionUpdate(response) {
+
+    console.log(
+        "[ACTION UPDATE]",
+        response
+    );
+
+
+    if (response.type !== "action_update") {
+        return;
+    }
+
+
+    /* -----------------------------------------
+       ACTION APPROVED / COMPLETED
+    ----------------------------------------- */
+
+   if (response.status === "ok") {
+
+    updateValidatorUI(
+        "SAFE",
+        "Action approved and executed"
+    );
+    setChatStep(
+        "acting",
+        "done"
+    );
+
+    setChatStep(
+        "done",
+        "done"
+    );
+     
+
+    addUIEvent(
+        "Action approved and executed",
+        "success",
+        "Action Guard"
+    );
+     if (chatStatus) {
+
+            chatStatus.textContent =
+                "Action completed";
+
+        }
+
+
+        addChatMessage(
+            "The approved action was successfully executed.",
+            "agent"
+        );
+
+        return;
+    }
+
+
+    /* -----------------------------------------
+       ACTION DENIED / BLOCKED
+    ----------------------------------------- */
+
+    else if (
+        response.status === "denied" ||
+        response.status === "blocked"
+    ) {
+    updateValidatorUI(
+    "BLOCKED",
+    "The action was denied and not executed"
+        );
+         /* Acting was stopped */
+
+        setChatStep(
+            "acting",
+            "blocked"
+        );
+
+        addUIEvent(
+            "Action denied by user",
+            "blocked",
+            "Action Guard"
+        );
+
+
+        if (chatStatus) {
+
+            chatStatus.textContent =
+                "Action denied";
+        }
+
+
+        addChatMessage(
+            "The action was not executed.",
+            "agent"
+        );
+        return;
+    }
+
+}
+function sendActionDecision(pendingId, decision) {
+
+    if (
+        !socket ||
+        socket.readyState !== WebSocket.OPEN
+    ) {
+        console.error(
+            "[ACTION] WebSocket not connected"
+        );
+
+        return;
+    }
+
+    const message = {
+        type: "action_decision",
+        pending_id: pendingId,
+        decision: decision
+    };
+
+    console.log(
+        "[ACTION DECISION]",
+        message
+    );
+
+    socket.send(
+        JSON.stringify(message)
+    );
+}
+/* =========================================================
+   APPROVAL UI
+   ========================================================= */
+
+function showApprovalRequest(
+    pendingId,
+    actionLabel
+) {
+
+    const chatWrap =
+        $("chatWrap");
+
+    if (!chatWrap) {
+        return;
+    }
+
+    const card =
+        document.createElement("div");
+
+    card.className =
+        "approval-card";
+
+    card.innerHTML = `
+        <div class="approval-title">
+            ⚠ Action requires approval
+        </div>
+
+        <div class="approval-action">
+            ${actionLabel}
+        </div>
+
+        <div class="approval-buttons">
+
+            <button
+                class="approval-approve"
+                type="button"
+            >
+                Approve
+            </button>
+
+            <button
+                class="approval-deny"
+                type="button"
+            >
+                Deny
+            </button>
+
+        </div>
+    `;
+
+    chatWrap.appendChild(card);
+
+    chatWrap.scrollTop =
+        chatWrap.scrollHeight;
+
+
+    const approveButton =
+        card.querySelector(
+            ".approval-approve"
+        );
+
+    const denyButton =
+        card.querySelector(
+            ".approval-deny"
+        );
+
+
+    approveButton.addEventListener(
+        "click",
+        () => {
+
+            approveButton.disabled =
+                true;
+
+            denyButton.disabled =
+                true;
+
+            approveButton.textContent =
+                "Approving...";
+
+            sendActionDecision(
+                pendingId,
+                "approve"
+            );
+
+        }
+    );
+
+
+    denyButton.addEventListener(
+        "click",
+        () => {
+
+            approveButton.disabled =
+                true;
+
+            denyButton.disabled =
+                true;
+
+            denyButton.textContent =
+                "Denying...";
+
+            sendActionDecision(
+                pendingId,
+                "deny"
+            );
 
         }
     );
 
 }
-
-
 /* =========================================================
    TOOL REQUEST DISPLAY
 ========================================================= */
@@ -378,80 +993,689 @@ function showToolResponse(response) {
         );
 
 }
+ /* =========================================================
+   CHAT MESSAGES
+   ========================================================= */
+
+function addChatMessage(
+    message,
+    type = "agent"
+) {
+
+    if (!chat) {
+        return;
+    }
+
+    const messageElement =
+        document.createElement("div");
+
+    messageElement.className =
+        `chat-message ${type}`;
+
+    messageElement.textContent =
+        message;
+
+    chat.appendChild(
+        messageElement
+    );
+
+    const chatWrap =
+        $("chatWrap");
+
+    if (chatWrap) {
+
+        chatWrap.scrollTop =
+            chatWrap.scrollHeight;
+
+    }
+
+}
+
+/* =========================================================
+   CHAT PROCESS TRACE
+   ========================================================= */
+
+function setChatStep(step, state = "active") {
+
+    const node =
+        document.querySelector(
+            `.process-node[data-step="${step}"]`
+        );
+
+    if (!node) {
+        return;
+    }
+
+    node.classList.remove(
+        "active",
+        "done",
+        "error",
+        "blocked"
+    );
+
+    node.classList.add(state);
+}
+function resetChatProcess() {
+
+    const nodes =
+        document.querySelectorAll(
+            ".process-node"
+        );
+
+    nodes.forEach(
+        (node) => {
+
+            node.classList.remove(
+                "active",
+                "done",
+                "error",
+                "blocked"
+            );
+
+        }
+    );
+
+}
+function showThinkingCard() {
+
+    if (!thinkingCard) {
+        return;
+    }
+
+    thinkingCard.classList.remove(
+        "hidden"
+    );
+
+}
 
 
+function hideThinkingCard() {
+
+    if (!thinkingCard) {
+        return;
+    }
+
+    thinkingCard.classList.add(
+        "hidden"
+    );
+
+}
+function progressDelay() {
+
+    if (
+        progressFastToggle &&
+        progressFastToggle.checked
+    ) {
+        return 700;
+    }
+
+    return 1600;
+}
+function handleToolResponseError(
+    tool,
+    response
+) {
+
+    if (!response) {
+
+        addUIEvent(
+            `${tool} no_response`,
+            "error",
+            "Server"
+        );
+
+        throw new Error(
+            `${tool} no_response`
+        );
+    }
+
+    if (response.status !== "ok") {
+
+        const reason =
+            response.reason ||
+            response.status ||
+            "unknown_error";
+
+        addUIEvent(
+            `${tool} ${reason}`,
+            "error",
+            "Server"
+        );
+
+        if (chatStatus) {
+            chatStatus.textContent =
+                "Error";
+        }
+
+        const activeNode =
+            document.querySelector(
+                ".process-node.active"
+            );
+
+        if (activeNode) {
+            activeNode.classList.remove(
+                "active"
+            );
+
+            activeNode.classList.add(
+                "error"
+            );
+        }
+
+        throw new Error(
+            `${tool}: ${reason}`
+        );
+    }
+
+    return response;
+}
+/* =========================================================
+   CHAT TASK
+   ========================================================= */
+
+async function runChatTask(task) {
+
+    if (!task.trim()) {
+        return;
+    }
+
+    if (
+        !socket ||
+        socket.readyState !== WebSocket.OPEN
+    ) {
+
+        addChatMessage(
+            "WebSocket server is not connected.",
+            "agent"
+        );
+
+        return;
+    }
+
+
+    /* -----------------------------------------
+       USER MESSAGE
+    ----------------------------------------- */
+
+    addChatMessage(
+        task,
+        "user"
+    );
+
+
+    /* -----------------------------------------
+       PREPARE UI
+    ----------------------------------------- */
+
+    chatInput.value = "";
+
+    chatSend.disabled = true;
+if (chatStatus) {
+
+    chatStatus.textContent =
+        "Thinking...";
+
+}
+
+    resetChatProcess();
+    setNextAction(
+    "Waiting for agent..."
+);
+
+updateNextActionUI(
+    "-",
+    "-"
+);
+    showThinkingCard();
+
+
+    /* -----------------------------------------
+       PERCEPTION
+    ----------------------------------------- */
+
+    setChatStep(
+        "perception",
+        "active"
+    );
+if (chatStatus) {
+
+    chatStatus.textContent =
+        "Perception...";
+
+}
+
+  const normalizedTask =
+    task.toLowerCase();
+
+const isDeleteAccountTask =
+    normalizedTask.includes("delete my account") ||
+    normalizedTask.includes("delete account") ||
+    normalizedTask.includes("remove my account");
+
+addUIEvent(
+    "Chat task received",
+    "success",
+    "User"
+);
+
+const reasoningText =
+    isDeleteAccountTask
+        ? "The agent identified a Delete Account action and is checking whether confirmation is required."
+        : "The agent is analyzing the request and determining the appropriate next action.";
+
+if (agentReasoning) {
+    agentReasoning.textContent =
+        reasoningText;
+}
+const reasoningElement =
+    document.querySelector("#agent-reasoning");
+
+if (reasoningElement) {
+    reasoningElement.textContent =
+        reasoningText;
+}
+
+await delay(progressDelay());
+
+
+    /* -----------------------------------------
+       READ PAGE
+    ----------------------------------------- */
+
+    try {
+
+        addUIEvent(
+            "Calling tool: read_page",
+            "success",
+            "Agent"
+        );
+
+
+const pageResponse =
+    await sendRequest("read_page");
+
+handleToolResponseError(
+    "read_page",
+    pageResponse
+);
+
+updatePage(
+    pageResponse.result
+);
+
+updateToolUI(
+    "read_page",
+    {},
+    pageResponse
+);
+
+renderScreenState();
+
+setChatStep(
+    "perception",
+    "done"
+);
+
+
+        /* -------------------------------------
+           PROTECT
+        ------------------------------------- */
+
+        setChatStep(
+            "redacting",
+            "active"
+        );
+if (chatStatus) {
+
+    chatStatus.textContent =
+        "Redacting...";
+
+}
+
+        await delay(progressDelay());
+
+
+        addUIEvent(
+            "Local sanitization complete",
+            "success",
+            "Local Extension"
+        );
+
+
+        setChatStep(
+            "redacting",
+            "done"
+        );
+/* -------------------------------------
+   READ INTERACTIVE ELEMENTS
+------------------------------------- */
+
+addUIEvent(
+    "Calling tool: list_interactive_elements",
+    "success",
+    "Agent"
+);
+
+const elementsResponse =
+    await sendRequest(
+        "list_interactive_elements"
+    );
+
+handleToolResponseError(
+    "list_interactive_elements",
+    elementsResponse
+);
+updateToolUI(
+    "list_interactive_elements",
+    {},
+    elementsResponse
+);
+
+renderScreenState();
+const interactiveElements =
+    elementsResponse.result?.elements || [];
+
+const screenSummary =
+    document.querySelectorAll(
+        ".state-summary strong"
+    );
+
+if (screenSummary.length >= 3) {
+    screenSummary[2].textContent =
+        interactiveElements.length;
+}
+
+        /* -------------------------------------
+           REASON
+        ------------------------------------- */
+
+        setChatStep(
+            "reasoning",
+            "active"
+        );
+if (chatStatus) {
+
+    chatStatus.textContent =
+        "Reasoning...";
+
+}
+
+        await delay(progressDelay());
+
+
+        addUIEvent(
+            "Agent reasoning complete",
+            "success",
+            "Agent"
+        );
+
+
+        setChatStep(
+            "reasoning",
+            "done"
+        );
+
+
+ /* -------------------------------------
+   ACT
+------------------------------------- */
+
+setChatStep(
+    "acting",
+    "active"
+);
+if (chatStatus) {
+
+    chatStatus.textContent =
+        "Acting...";
+
+}
+if (isDeleteAccountTask) {
+
+    addUIEvent(
+        "Agent selected Delete Account",
+        "warning",
+        "Agent"
+    );
+    setNextAction(
+    "Click Delete Account"
+);
+
+updateNextActionUI(
+    "click",
+    "el_8"
+);
+   await delay(progressDelay());
+
+  const actionResponse =
+        await sendRequest(
+            "click",
+            {
+                element_id: "el_8"
+            }
+        );
+    if (
+        actionResponse.status ===
+        "blocked"
+    ) {
+
+        setChatStep(
+            "acting",
+            "blocked"
+        );
+          updateValidatorUI(
+            "BLOCKED",
+            "This action requires user approval"
+        );
+        addUIEvent(
+            "Validator blocked destructive action",
+            "blocked",
+            "Action Guard"
+        );
+
+        if (
+            chatStatus
+        ) {chatStatus.textContent
+             =
+                "Waiting for approval...";
+        }
+
+        return;
+    }
+
+    if (
+        actionResponse.status !==
+        "ok"
+    ) {
+        throw new Error(
+            actionResponse.reason ||
+            "Action failed"
+        );
+    }
+
+    setChatStep(
+        "acting",
+        "done"
+    );
+
+} else {
+
+    addUIEvent(
+        "No browser action required",
+        "success",
+        "Agent"
+    );
+
+await delay(300);
+
+    setChatStep(
+        "acting",
+        "done"
+    );
+}
+        /* -------------------------------------
+           DONE
+        ------------------------------------- */
+
+        setChatStep(
+            "done",
+            "done"
+        );
+
+
+        addChatMessage(
+            `I understood your task: "${task}". ` +
+            `The current page was successfully perceived ` +
+            `through the local WebSocket tool.`,
+            "agent"
+        );
+
+
+        if (chatStatus) {
+
+            chatStatus.textContent =
+               "Complete";
+
+        }
+
+
+    } catch (error) {
+
+        console.error(
+            "[CHAT] Task failed:",
+            error
+        );
+
+
+        addChatMessage(
+            `Task failed: ${error.message}`,
+            "agent"
+        );
+
+
+        const activeNode =
+            document.querySelector(
+                ".process-node.active"
+            );
+
+
+        if (activeNode) {
+
+            activeNode.classList.remove(
+                "active"
+            );
+
+            activeNode.classList.add(
+                "error"
+            );
+
+        }
+
+
+        if (chatStatus) {
+
+            chatStatus.textContent =
+                "Error";
+
+        }
+
+    } finally {
+
+        chatSend.disabled =
+            false;
+
+    }
+
+}
+/* =========================================================
+   CHAT CONTROLS
+   ========================================================= */
+
+function setupChat() {
+
+    if (!chatInput || !chatSend) {
+        console.warn(
+            "[CHAT] Chat elements not found."
+        );
+
+        return;
+    }
+
+
+    chatSend.addEventListener(
+        "click",
+        () => {
+
+            runChatTask(
+                chatInput.value
+            );
+
+        }
+    );
+
+
+    chatInput.addEventListener(
+        "keydown",
+        (event) => {
+
+            /*
+             * Enter = send
+             * Shift + Enter = new line
+             */
+
+            if (
+                event.key === "Enter" &&
+                !event.shiftKey
+            ) {
+
+                event.preventDefault();
+
+                runChatTask(
+                    chatInput.value
+                );
+
+            }
+
+        }
+    );
+
+}
 /* =========================================================
    LATENCY
 ========================================================= */
 
 function showLatency(ms) {
 
-    let latencyElement =
+    const latencyElement =
         document.getElementById(
             "latency-value"
         );
 
-
     if (!latencyElement) {
-
-        latencyElement =
-            document.createElement("span");
-
-        latencyElement.id =
-            "latency-value";
-
-        latencyElement.style.marginLeft =
-            "10px";
-
-        latencyElement.style.color =
-            "var(--green)";
-
-        latencyElement.style.fontSize =
-            "10px";
-
-
-        const screenHeader =
-            document.querySelector(
-                ".screen-state-panel .panel-header"
-            );
-
-
-        if (screenHeader) {
-
-            screenHeader.appendChild(
-                latencyElement
-            );
-
-        }
-
+        return;
     }
-
 
     latencyElement.textContent =
         `Latency: ${ms} ms`;
 
 }
-
-
 /* =========================================================
    EVENT LOG
 ========================================================= */
 
-function addUIEvent(
-    message,
-    status = "success",
-    source = "Agent"
-) {
 
+   function addUIEvent(
+    message,
+    status = "info",
+    source = "Playground"
+) {
     addEvent(
         message,
         status,
         source
     );
 
-
     renderEventLog();
-
 }
 
 
@@ -697,18 +1921,23 @@ function updateRawJSON() {
    NEXT ACTION
 ========================================================= */
 
-function updateNextActionUI() {
+function updateNextActionUI(
+    tool = "-",
+    elementId = "-"
+) {
 
     if (!demoState.nextAction) {
         return;
     }
 
+    // -----------------------------
+    // Action title
+    // -----------------------------
 
     const actionTitle =
         document.querySelector(
             ".next-action h3"
         );
-
 
     if (actionTitle) {
 
@@ -717,21 +1946,89 @@ function updateNextActionUI() {
 
     }
 
+
+    // -----------------------------
+    // Tool + Element information
+    // -----------------------------
+
+    const actionTags =
+        document.querySelectorAll(
+            ".next-action .action-tags span"
+        );
+
+    if (actionTags.length >= 2) {
+
+        actionTags[0].textContent =
+            `Tool: ${tool}`;
+
+        actionTags[1].textContent =
+            `Element: ${elementId}`;    
+
+    }
+
 }
 
+/* =========================================================
+   VALIDATOR UI
+========================================================= */
+
+function updateValidatorUI(
+    status,
+    message
+) {
+
+    const validator =
+        document.querySelector(
+            ".validator > strong"
+        );
+
+    const validatorMessage =
+        document.querySelector(
+            ".validator > small"
+        );
+
+
+    if (validator) {
+
+        validator.textContent =
+            status;
+
+
+        if (status === "BLOCKED") {
+
+            validator.style.color =
+                "var(--red)";
+
+        } else if (status === "SAFE") {
+
+            validator.style.color =
+                "var(--green)";
+
+        }
+
+    }
+
+
+    if (validatorMessage) {
+
+        validatorMessage.textContent =
+            message;
+
+    }
+
+}
 
 /* =========================================================
-   PRIVACY SUMMARY
+   PRIVACY DETAILS
 ========================================================= */
 
 function updatePrivacySummary() {
 
-    $("pii-count").textContent = "3";
+    if (!privacyDetails) {
+        return;
+    }
 
-    $("sanitized-count").textContent = "3";
-
-    $("audit-status").textContent =
-        "PASS";
+    privacyDetails.open = false;
 
 }
 
@@ -778,715 +2075,34 @@ function updateToolUI(
                     );
 
 
-                if (status) {
+               if (status) {
 
-                    status.textContent =
-                        "Active";
-
-                    status.className =
-                        "tool-status read";
-
-                }
-
-            }
-
-        }
-    );
-
-}
-
-
-/* =========================================================
-   NORMAL DEMO
-========================================================= */
-
-async function runNormalDemo() {
-
-    if (paused) {
-        return;
-    }
-
-
-    resetVisualState();
-
-
-    /* -----------------------------------------
-       PERCEIVE
-    ----------------------------------------- */
-
-    setPipelineStep("perceive");
-
-    addUIEvent(
-        "Calling tool: read_page",
-        "success",
-        "Agent"
-    );
-
-
-    const pageResponse =
-        await sendRequest(
-            "read_page"
-        );
-
-
-    if (
-        pageResponse.status !== "ok"
-    ) {
-
-        addUIEvent(
-            "read_page failed",
-            "error",
-            "Server"
-        );
-
-        return;
-    }
-
-
-    updatePage(
-        pageResponse.result
-    );
-
-
-    updateToolUI(
-        "read_page",
-        {},
-        pageResponse
-    );
-
-
-    renderScreenState();
-
-
-    addUIEvent(
-        "Page state received",
-        "success",
-        "Extension"
-    );
-
-
-    await delay(700);
-
-
-    /* -----------------------------------------
-       PROTECT
-    ----------------------------------------- */
-
-    setPipelineStep("protect");
-
-
-    addUIEvent(
-        "PII detection complete",
-        "success",
-        "Local Extension"
-    );
-
-
-    addUIEvent(
-        "Sanitization complete",
-        "success",
-        "Local Extension"
-    );
-
-
-    updatePrivacySummary();
-
-
-    await delay(700);
-
-
-    /* -----------------------------------------
-       READ ELEMENTS
-    ----------------------------------------- */
-
-    addUIEvent(
-        "Calling tool: list_interactive_elements",
-        "success",
-        "Agent"
-    );
-
-
-    const elementsResponse =
-        await sendRequest(
-            "list_interactive_elements"
-        );
-
-
-    updateToolUI(
-        "list_interactive_elements",
-        {},
-        elementsResponse
-    );
-
-
-    if (
-        elementsResponse.result?.elements
-    ) {
-
-        const count =
-            elementsResponse.result.elements.length;
-
-
-        const summary =
-            document.querySelectorAll(
-                ".state-summary strong"
-            );
-
-
-        if (summary.length >= 3) {
-
-            summary[2].textContent =
-                `${count} interactive`;
-
-        }
-
-    }
-
-
-    renderScreenState();
-
-
-    await delay(700);
-
-
-    /* -----------------------------------------
-       REASON
-    ----------------------------------------- */
-
-    setPipelineStep("reason");
-
-
-    setNextAction(
-        'Click on "Search Hotels" button'
-    );
-
-
-    updateNextActionUI();
-
-
-    agentReasoning.innerHTML = `
-
-        <h3>
-            Agent Decision
-        </h3>
-
-        <p>
-            The agent identified the
-            Search Hotels button as the
-            next required action.
-        </p>
-
-        <p>
-            The action will be sent to the
-            local validator before execution.
-        </p>
-
-    `;
-
-
-    addUIEvent(
-        "Agent selected next action: click(el_5)",
-        "success",
-        "Agent"
-    );
-
-
-    await delay(700);
-
-
-    /* -----------------------------------------
-       ACT
-    ----------------------------------------- */
-
-    setPipelineStep("act");
-
-
-    addUIEvent(
-        "Calling tool: click",
-        "success",
-        "Agent"
-    );
-
-
-    const clickResponse =
-        await sendRequest(
-            "click",
-            {
-                element_id: "el_5"
-            }
-        );
-
-
-    updateToolUI(
+    const gatedTools = [
         "click",
-        {
-            element_id: "el_5"
-        },
-        clickResponse
-    );
-
-
-    addUIEvent(
-        "Validator: action allowed",
-        "success",
-        "Local Extension"
-    );
-
-
-    addUIEvent(
-        'Clicked "Search Hotels"',
-        "success",
-        "Extension"
-    );
-
-
-    await delay(700);
-
-
-    /* -----------------------------------------
-       TYPE
-    ----------------------------------------- */
-
-    addUIEvent(
-        "Calling tool: type",
-        "success",
-        "Agent"
-    );
-
-
-    const typeResponse =
-        await sendRequest(
-            "type",
-            {
-                element_id: "el_1",
-                text: "Mumbai"
-            }
-        );
-
-
-    updateToolUI(
         "type",
-        {
-            element_id: "el_1",
-            text: "Mumbai"
-        },
-        typeResponse
-    );
-
-
-    addUIEvent(
-        "Destination updated",
-        "success",
-        "Extension"
-    );
-
-
-    await delay(500);
-
-
-    /* -----------------------------------------
-       SELECT OPTION
-    ----------------------------------------- */
-
-    addUIEvent(
-        "Calling tool: select_option",
-        "success",
-        "Agent"
-    );
-
-
-    const selectResponse =
-        await sendRequest(
-            "select_option",
-            {
-                element_id: "el_4",
-                option: "3 Adults"
-            }
-        );
-
-
-    updateToolUI(
-        "select_option",
-        {
-            element_id: "el_4",
-            option: "3 Adults"
-        },
-        selectResponse
-    );
-
-
-    addUIEvent(
-        "Guest option selected",
-        "success",
-        "Extension"
-    );
-
-
-    await delay(500);
-
-
-    /* -----------------------------------------
-       SUBMIT
-    ----------------------------------------- */
-
-    addUIEvent(
-        "Calling tool: submit",
-        "success",
-        "Agent"
-    );
-
-
-    const submitResponse =
-        await sendRequest(
-            "submit"
-        );
-
-
-    updateToolUI(
         "submit",
-        {},
-        submitResponse
-    );
-
-
-    addUIEvent(
-        "Form submitted",
-        "success",
-        "Extension"
-    );
-
-
-    await delay(500);
-
-
-    /* -----------------------------------------
-       SCROLL
-    ----------------------------------------- */
-
-    addUIEvent(
-        "Calling tool: scroll",
-        "success",
-        "Agent"
-    );
-
-
-    const scrollResponse =
-        await sendRequest(
-            "scroll",
-            {
-                direction: "down",
-                amount: 1
-            }
-        );
-
-
-    updateToolUI(
-        "scroll",
-        {
-            direction: "down",
-            amount: 1
-        },
-        scrollResponse
-    );
-
-
-    addUIEvent(
-        "Page scrolled down",
-        "success",
-        "Extension"
-    );
-
-
-    /* -----------------------------------------
-       REPEAT
-    ----------------------------------------- */
-
-    setPipelineStep("repeat");
-
-
-    addUIEvent(
-        "New screen detected",
-        "success",
-        "Extension"
-    );
-
-
-    console.log(
-        "NORMAL DEMO COMPLETE"
-    );
-
-}
-
-
-/* =========================================================
-   DESTRUCTIVE SCENARIO
-========================================================= */
-
-async function runDestructiveScenario() {
-
-    resetVisualState();
-
-    setPipelineStep("perceive");
-
-
-    addUIEvent(
-        "Destructive scenario started",
-        "success",
-        "Playground"
-    );
-
-
-    await delay(500);
-
-
-    setPipelineStep("protect");
-
-
-    addUIEvent(
-        "Page state sanitized",
-        "success",
-        "Local Extension"
-    );
-
-
-    await delay(500);
-
-
-    setPipelineStep("reason");
-
-
-    setNextAction(
-        "Attempt destructive action"
-    );
-
-
-    updateNextActionUI();
-
-
-    agentReasoning.innerHTML = `
-
-        <h3>
-            Agent Decision
-        </h3>
-
-        <p>
-            The simulated agent is requesting
-            a potentially destructive action.
-        </p>
-
-        <p>
-            The local Action Guard must
-            validate the request.
-        </p>
-
-    `;
-
-
-    await delay(700);
-
-
-    setPipelineStep("act");
-
-
-    addUIEvent(
-        "Destructive action requested",
-        "warning",
-        "Agent"
-    );
-
-
-    addUIEvent(
-        "Validator: action blocked",
-        "blocked",
-        "Local Extension"
-    );
-
-
-    const validator =
-        document.querySelector(
-            ".validator > strong"
-        );
-
-
-    if (validator) {
-
-        validator.textContent =
-            "BLOCKED";
-
-        validator.style.color =
-            "var(--red)";
-
-    }
-
-
-    addUIEvent(
-        "User confirmation required",
-        "blocked",
-        "Action Guard"
-    );
-
-
-}
-
-
-/* =========================================================
-   PROMPT INJECTION SCENARIO
-========================================================= */
-
-async function runInjectionScenario() {
-
-    resetVisualState();
-
-    setPipelineStep("perceive");
-
-
-    addUIEvent(
-        "Prompt injection scenario started",
-        "success",
-        "Playground"
-    );
-
-
-    await delay(500);
-
-
-    setPipelineStep("protect");
-
-
-    addUIEvent(
-        "Untrusted page content detected",
-        "warning",
-        "Local Extension"
-    );
-
-
-    addUIEvent(
-        "Page instructions treated as untrusted",
-        "success",
-        "Privacy Firewall"
-    );
-
-
-    await delay(600);
-
-
-    setPipelineStep("reason");
-
-
-    setNextAction(
-        "Ignore untrusted page instruction"
-    );
-
-
-    updateNextActionUI();
-
-
-    agentReasoning.innerHTML = `
-
-        <h3>
-            Agent Decision
-        </h3>
-
-        <p>
-            The page contains an instruction
-            attempting to influence agent behavior.
-        </p>
-
-        <p>
-            The instruction is treated as
-            untrusted web content.
-        </p>
-
-    `;
-
-
-    await delay(700);
-
-
-    setPipelineStep("act");
-
-
-    addUIEvent(
-        "Potentially unsafe action prevented",
-        "blocked",
-        "Action Guard"
-    );
-
-
-    const validator =
-        document.querySelector(
-            ".validator > strong"
-        );
-
-
-    if (validator) {
-
-        validator.textContent =
-            "BLOCKED";
-
-        validator.style.color =
-            "var(--red)";
-
-    }
-
-}
-
-
-/* =========================================================
-   PIPELINE CONTROL
-========================================================= */
-
-function setPipelineStep(step) {
-
-    const steps = [
-        "perceive",
-        "protect",
-        "reason",
-        "act",
-        "repeat"
+        "select_option"
     ];
 
+    if (gatedTools.includes(tool)) {
 
-    const currentIndex =
-        steps.indexOf(step);
+        status.textContent =
+            "Gated";
 
+        status.className =
+            "tool-status gated";
 
-    steps.forEach(
-        (name, index) => {
+    } else {
 
-            const element =
-                $(`step-${name}`);
+        status.textContent =
+            "Active";
 
+        status.className =
+            "tool-status read";
 
-            if (!element) {
-                return;
-            }
+    }
 
-
-            element.classList.remove(
-                "active",
-                "completed"
-            );
-
-
-            if (
-                index < currentIndex
-            ) {
-
-                element.classList.add(
-                    "completed"
-                );
-
-            }
-
-
-            if (
-                index === currentIndex
-            ) {
-
-                element.classList.add(
-                    "active"
-                );
+}
 
             }
 
@@ -1494,7 +2110,6 @@ function setPipelineStep(step) {
     );
 
 }
-
 
 /* =========================================================
    RESET VISUAL STATE
@@ -1502,26 +2117,21 @@ function setPipelineStep(step) {
 
 function resetVisualState() {
 
-    setPipelineStep("perceive");
+    updateValidatorUI(
+        "SAFE",
+        "This action is allowed"
+    );
+    const latencyElement =
+    document.getElementById(
+        "latency-value"
+    );
 
+if (latencyElement) {
 
-    const validator =
-        document.querySelector(
-            ".validator > strong"
-        );
+    latencyElement.textContent =
+        "Latency: —";
 
-
-    if (validator) {
-
-        validator.textContent =
-            "SAFE";
-
-        validator.style.color =
-            "var(--green)";
-
-    }
-
-
+}
     demoState.events = [];
 
 
@@ -1535,228 +2145,6 @@ function resetVisualState() {
     renderEventLog();
 
 }
-
-
-/* =========================================================
-   SCENARIO SELECTION
-========================================================= */
-
-function updateScenario() {
-
-    const selected =
-        scenarioSelect.value;
-
-
-    const scenario =
-        scenarios[selected];
-
-
-    if (!scenario) {
-        return;
-    }
-
-
-    scenarioDescription.textContent =
-        scenario.description;
-
-
-    const cards =
-        document.querySelectorAll(
-            ".scenario-card"
-        );
-
-
-    cards.forEach(
-        (card) => {
-
-            card.classList.toggle(
-                "active",
-                card.dataset.scenario ===
-                selected
-            );
-
-        }
-    );
-
-
-    addUIEvent(
-        `Scenario selected: ${scenario.name}`,
-        "success",
-        "Playground"
-    );
-
-}
-
-
-/* =========================================================
-   START DEMO
-========================================================= */
-
-async function startDemo() {
-
-    if (paused) {
-
-        paused = false;
-
-        pauseDemoButton.textContent =
-            "◉ Pause";
-
-    }
-
-
-    const scenario =
-        scenarioSelect.value;
-
-
-    if (scenario === "normal") {
-
-        await runNormalDemo();
-
-    } else if (
-        scenario === "destructive"
-    ) {
-
-        await runDestructiveScenario();
-
-    } else if (
-        scenario === "injection"
-    ) {
-
-        await runInjectionScenario();
-
-    }
-
-}
-
-
-/* =========================================================
-   RESET
-========================================================= */
-
-function resetDemo() {
-
-    paused = false;
-
-
-    pauseDemoButton.textContent =
-        "◉ Pause";
-
-
-    demoState.events = [];
-
-    demoState.lastTool = null;
-
-    demoState.lastRequest = null;
-
-    demoState.lastResponse = null;
-
-    demoState.nextAction = null;
-
-    demoState.latency = null;
-
-
-    addEvent(
-        "Session reset",
-        "success",
-        "Playground"
-    );
-
-
-    renderEventLog();
-
-
-    setPipelineStep(
-        "perceive"
-    );
-
-
-    updatePrivacySummary();
-
-
-    rawJson.classList.add(
-        "hidden"
-    );
-
-    structuredState.classList.remove(
-        "hidden"
-    );
-
-
-    privacyDetails.classList.add(
-        "hidden"
-    );
-
-
-    const validator =
-        document.querySelector(
-            ".validator > strong"
-        );
-
-
-    if (validator) {
-
-        validator.textContent =
-            "SAFE";
-
-        validator.style.color =
-            "var(--green)";
-
-    }
-
-
-    showToolRequest({
-        id: "req_001",
-        tool: "read_page",
-        params: {}
-    });
-
-
-    showToolResponse({
-        id: "req_001",
-        status: "ok",
-        result: {}
-    });
-
-}
-
-
-/* =========================================================
-   PAUSE
-========================================================= */
-
-function togglePause() {
-
-    paused = !paused;
-
-
-    if (paused) {
-
-        pauseDemoButton.textContent =
-            "▶ Resume";
-
-
-        addUIEvent(
-            "Demo paused",
-            "warning",
-            "Playground"
-        );
-
-    } else {
-
-        pauseDemoButton.textContent =
-            "◉ Pause";
-
-
-        addUIEvent(
-            "Demo resumed",
-            "success",
-            "Playground"
-        );
-
-    }
-
-}
-
 
 /* =========================================================
    RAW JSON BUTTON
@@ -1802,42 +2190,6 @@ function toggleRawJSON() {
 
 }
 
-
-/* =========================================================
-   PRIVACY DETAILS BUTTON
-========================================================= */
-
-function togglePrivacyDetails() {
-
-    const showing =
-        !privacyDetails.classList.contains(
-            "hidden"
-        );
-
-
-    if (showing) {
-
-        privacyDetails.classList.add(
-            "hidden"
-        );
-
-        privacyDetailsToggle.textContent =
-            "View Details";
-
-    } else {
-
-        privacyDetails.classList.remove(
-            "hidden"
-        );
-
-        privacyDetailsToggle.textContent =
-            "Hide Details";
-
-    }
-
-}
-
-
 /* =========================================================
    THEME
 ========================================================= */
@@ -1857,16 +2209,6 @@ function toggleTheme() {
 
     themeToggle.textContent =
         light ? "☀" : "☾";
-
-
-    if (settingsThemeToggle) {
-
-        settingsThemeToggle.textContent =
-            light
-                ? "Switch to Dark"
-                : "Switch to Light";
-
-    }
 
 }
 
@@ -2003,31 +2345,8 @@ function setupNavigation() {
 ========================================================= */
 
 function navigateToSection(section) {
-
-    /* Hide special workspaces */
-
-    const scenariosPanel =
-        $("scenarios");
-
     const settingsPanel =
         $("settings");
-
-    const agentInputPanel =
-        $("agent-input-panel");
-
-
-    scenariosPanel.classList.add(
-        "hidden"
-    );
-
-    settingsPanel.classList.add(
-        "hidden"
-    );
-
-
-    agentInputPanel.style.display =
-        "none";
-
 
     /* Main dashboard sections */
 
@@ -2043,21 +2362,6 @@ function navigateToSection(section) {
         return;
 
     }
-
-
-    if (
-        section === "live-view"
-    ) {
-
-        scrollToElement(
-            $("live-view")
-        );
-
-        return;
-
-    }
-
-
     if (
         section === "screen-state"
     ) {
@@ -2082,40 +2386,6 @@ function navigateToSection(section) {
         return;
 
     }
-
-
-    if (
-        section === "agent-input"
-    ) {
-
-        agentInputPanel.style.display =
-            "block";
-
-        scrollToElement(
-            agentInputPanel
-        );
-
-        return;
-
-    }
-
-
-    if (
-        section === "scenarios"
-    ) {
-
-        scenariosPanel.classList.remove(
-            "hidden"
-        );
-
-        scrollToElement(
-            scenariosPanel
-        );
-
-        return;
-
-    }
-
 
     if (
         section === "settings"
@@ -2153,101 +2423,6 @@ function scrollToElement(element) {
     });
 
 }
-
-
-/* =========================================================
-   SCENARIO CARDS
-========================================================= */
-
-function setupScenarioCards() {
-
-    const cards =
-        document.querySelectorAll(
-            ".scenario-card"
-        );
-
-
-    cards.forEach(
-        (card) => {
-
-            card.addEventListener(
-                "click",
-                () => {
-
-                    const scenario =
-                        card.dataset.scenario;
-
-
-                    scenarioSelect.value =
-                        scenario;
-
-
-                    updateScenario();
-
-
-                    startDemo();
-
-                }
-            );
-
-        }
-    );
-
-}
-
-
-/* =========================================================
-   MOCK BROWSER INTERACTION
-========================================================= */
-
-function setupMockBrowser() {
-
-    const searchButton =
-        $("mock-search-button");
-
-
-    if (searchButton) {
-
-        searchButton.addEventListener(
-            "click",
-            () => {
-
-                addUIEvent(
-                    "Search Hotels clicked in simulated browser",
-                    "success",
-                    "Browser"
-                );
-
-            }
-        );
-
-    }
-
-
-    const guests =
-        $("mock-guests");
-
-
-    if (guests) {
-
-        guests.addEventListener(
-            "change",
-            () => {
-
-                addUIEvent(
-                    `Guest selection changed to ${guests.value}`,
-                    "success",
-                    "Browser"
-                );
-
-            }
-        );
-
-    }
-
-}
-
-
 /* =========================================================
    BUTTON EVENTS
 ========================================================= */
@@ -2260,68 +2435,24 @@ function setupButtons() {
     );
 
 
-    privacyDetailsToggle.addEventListener(
-        "click",
-        togglePrivacyDetails
-    );
-
-
+    
     themeToggle.addEventListener(
         "click",
         toggleTheme
     );
 
-
-    if (settingsThemeToggle) {
-
-        settingsThemeToggle.addEventListener(
-            "click",
-            toggleTheme
-        );
-
-    }
+  wsConnect.addEventListener(
+    "click",
+    connectToServer
+);
 
 
-    startDemoButton.addEventListener(
-        "click",
-        startDemo
-    );
+wsDisconnect.addEventListener(
+    "click",
+    closeWebSocket
+);
 
-
-    resetDemoButton.addEventListener(
-        "click",
-        resetDemo
-    );
-
-
-    pauseDemoButton.addEventListener(
-        "click",
-        togglePause
-    );
-
-
-    scenarioSelect.addEventListener(
-        "change",
-        updateScenario
-    );
-
-
-    if (executeAction) {
-
-        executeAction.addEventListener(
-            "click",
-            () => {
-
-                addUIEvent(
-                    "Execute Action clicked",
-                    "success",
-                    "Playground"
-                );
-
-            }
-        );
-
-    }
+    
 
 }
 
@@ -2363,28 +2494,24 @@ function initialize() {
 
     setupNavigation();
 
-    setupScenarioCards();
-
-    setupMockBrowser();
-
     setupButtons();
+    setupChat();  
+    if (toolRequest) {
+    toolRequest.textContent =
+        "Waiting for tool request...";
+}
 
-
+if (toolResponse) {
+    toolResponse.textContent =
+        "Waiting for tool response...";
+}
     updatePrivacySummary();
 
     renderEventLog();
-
-    setPipelineStep(
-        "perceive"
-    );
-
-
-    updateScenario();
-
-
-    connectToServer();
+updateServerStatus(
+    false,
+    "Disconnected"
+);
 
 }
-
-
 initialize();
