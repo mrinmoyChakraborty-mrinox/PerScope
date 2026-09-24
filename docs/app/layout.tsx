@@ -42,7 +42,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               </span>
               <span className="font-black tracking-tight text-[15px] hidden sm:inline">PerScope</span>
               <span className="text-[11px] px-2.5 py-1 rounded-full border border-[var(--border)] bg-[var(--card-soft)] text-[var(--faint)] hidden lg:inline-flex items-center gap-1.5">
-                <span className="w-1.5 h-1.5 rounded-full bg-[#00b894] dark:bg-[#00e5a0] animate-pulse" /> SIH26171 · Cosmic Crux · v3
+                <span className="w-1.5 h-1.5 rounded-full bg-[#00b894] dark:bg-[#00e5a0] animate-pulse" /> SIH26171 · Cosmic Crux · v4 tested
               </span>
             </Link>
 

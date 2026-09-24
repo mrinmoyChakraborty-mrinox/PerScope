@@ -15,6 +15,22 @@
 
 ---
 
+## 2026-09-16 — README + locked next-phase plan — Cosmic Crux
+
+- **Change:** Replaced root `README.md` with the working-test-prototype doc (image pipeline + locked Section 7: bridge singleton daemon, blocking confirm flow, DOM Phase-1 text-only, Playground Local/Manual/Cloud, owner split). Synced architecture §4–5, tool-schema (`capture_tab`, blocking-call resolution), security-model (validator boundary + pairing), limitations (prototype limits + §7.6 deferrals), build-order (superseded by README §7.7).
+- **Why:** README is now the single source of truth for tested-vs-planned; docs site was still on the stale v3 tiered/Qwen/Florence plan and undecided confirm-flow gap.
+- **Impact:** `README.md`, `docs/architecture.md`, `docs/tool-schema.md`, `docs/security-model.md`, `docs/limitations.md`, `docs/build-order.md`.
+- **Follow-up:** Flip README §7 status lines per PR as pieces land; fix legacy `models/FastVLM-0.5B-ONNX` check path noted in README §6.
+
+---
+
+## 2026-09-14 — Architecture v4 (tested prototype) — Cosmic Crux
+
+- **Change:** Published architecture v4 from the real, tested end-to-end prototype (Chrome MV3 + Node reference in 1:1 parity). Perception is BlazeFace (face) + PaddleOCR PP-OCRv6-small; detection is parallel fusion of Ettin-68M NER + deterministic heuristics + FastVLM-0.5B adjudication with safety gates + `fusion_fallback` (never blind trust); redaction is value-only geometry → canvas, plus caption scrubbing to `[REDACTED:TYPE]`. Face redaction (open gap in every earlier draft) is now solved and tested. Qwen dropped entirely (on-device and server-side); Florence-2-base and DOM extraction retired/superseded — `v3.mjs` / `qwen_redaction_pure.mjs` / `QWEN_REDACTION_PIPELINE_PLAN.md` kept for record only. Server-side reasoning model now genuinely TBD (non-Qwen); action validator, confirm flow, MCP bridge, Playground, and Send-to-Chat reclassified as planned-not-built.
+- **Why:** The working build diverged from the v3 plan (tiered escalation regex→Ettin→Qwen2B over DOM+screenshot) — docs now describe what was actually verified instead of what was planned.
+- **Impact:** `README.md`, `docs/architecture.md` (v4), `docs/security-model.md` (gates + fallback + scrubbing tested, validator planned), docs-site mermaid rendering (`docs/components/Mermaid.tsx`, `Markdown.tsx`, `mermaid@11`) + dark-mode h1 fix.
+- **Follow-up:** Choose server-side model; build action layer (`background.js` WS client, `content.js`, `isDestructive()`); decide DOM-vs-image story and whether output self-audit returns on top of caption scrubbing; benchmark real latency/RAM on the tested stack.
+
 ## 2026-09-04 — Architecture v3 — Cosmic Crux
 
 - **Change:** Locked architecture v3 published — perception is 3 parallel extractors (DOM+PaddleOCR+Florence-2), redaction is 3-tier (regex→Ettin-68M→Qwen2B→deterministic→self-audit), Reasoning Server (Qwen3 via vLLM/Ollama) is required not optional. Added `select_option` + `scroll` to tool schema (7 tools).

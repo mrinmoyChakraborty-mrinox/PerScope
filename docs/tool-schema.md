@@ -1,5 +1,6 @@
 ﻿# PerScope — Tool Schema Reference
-### Used identically by the WebSocket Playground/Reasoning Server path and the MCP bridge path
+### Used identically by the WebSocket Bridge path and the MCP bridge path (locked plan: root README §7.2)
+> **Locked update:** confirm flow is a **blocking tool call** (flagged `click`/`type`/`submit` does not return until approved/denied/60s-timeout). No polling tool, no push dependency. The old `action_update`-push / `check_pending_action` discussion below is retained for record but **superseded**. Agent setup: `claude mcp add perscope -- npx -y @perscope/bridge mcp` (stdio proxy → singleton daemon); remote agents use the streamable-HTTP/SSE transport with identical handlers.
 
 Both paths expose the **same seven tools**. For every tool below, **Input** and **Output** are shown as two separate blocks — not combined — so it's unambiguous which side is which.
 
@@ -29,8 +30,28 @@ or, if an error:
 
 ---
 
+### `capture_tab`
+Triggers the tested image pipeline (BlazeFace + PaddleOCR per-box + Ettin NER + heuristics + FastVLM adjudication → fusion → safety gates → value-only geometry → canvas redaction). **Gated by validator: No (read-only).**
+
+**Input:**
+```json
+{ "id": "req_000", "tool": "capture_tab", "params": {} }
+```
+
+**Output:**
+```json
+{ "id": "req_000", "status": "ok", "result": {
+    "redacted_image": "<base64 PNG>",
+    "findings": [ { "candidate_id": "cand_1", "type": "EMAIL", "confidence": 0.94 } ],
+    "caption": "ID card with [REDACTED:EMAIL] visible...",
+    "timings": { "ocr_ms": 1200, "ner_ms": 800 }
+} }
+```
+
+---
+
 ### `read_page`
-Cheap. No perception pipeline triggered. **Gated by validator: No.**
+Cheap in DOM Phase 1: `content.js` extraction + Ettin NER + `pii-detector.js` regex/validators → char-offset fusion → text-level placeholders (DOM untouched). No FastVLM by default (`FASTVLM_FOR_DOM` opt-in). **Gated by validator: No.**
 
 **Input:**
 ```json
@@ -51,7 +72,7 @@ Cheap. No perception pipeline triggered. **Gated by validator: No.**
 ---
 
 ### `list_interactive_elements`
-Triggers the full local pipeline: content.js → three parallel extractors (DOM Extractor, PaddleOCR, Florence-2-base) → tiered detection (regex/checksum → Ettin-68M NER → Qwen 2B) → Sanitization Plan → deterministic redaction → self-audit → response. **Gated by validator: No (read-only).**
+Triggers the full local pipeline: content.js → extractors (DOM text + image-path BlazeFace/PaddleOCR where applicable) → detection (Ettin-68M NER + deterministic heuristics + FastVLM adjudication for image mode) → fusion → safety gates → value-only geometry → text/canvas redaction → response. **Gated by validator: No (read-only).**
 
 **Input:**
 ```json
@@ -359,9 +380,11 @@ The bridge registers these seven tools with the MCP host using standard MCP `too
 
 ---
 
-### How a blocked/pending result surfaces to an MCP agent — known gap
+### How a blocked/pending result surfaces to an MCP agent — RESOLVED (blocking call)
 
-MCP's `tools/call` is request/response only — it has no concept of an unsolicited server push. The confirm-flow's `action_update` (Section 1) is exactly that: outbound-only, no matching request `id`. This means:
+**Locked decision (root README §7.2):** the bridge holds the MCP `tools/call` open until the extension resolves the confirm flow. The agent receives exactly one terminal response: `{status:"ok"}` (approved/cleared), `{status:"denied"}`, or `{status:"timeout"}` (60s). No polling tool, no push dependency. The `action_update`-push gap described below is retained for record only.
+
+> Historical gap (superseded): MCP's `tools/call` is request/response only — it has no concept of an unsolicited server push. The confirm-flow's `action_update` (Section 1) is exactly that: outbound-only, no matching request `id`. This means:
 
 - **Input:** the agent calls `click` as normal.
 - **Output the agent actually receives, if blocked:** just `{ "status": "blocked", "reason": "destructive_action_unconfirmed", "pending_id": "pend_88" }` — that's the entire result of the call. MCP can't hold the call open waiting on a human side-panel action.

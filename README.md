@@ -1,238 +1,421 @@
-# PerScope — See everything. Leak nothing.
+# PerScope — Local PII Detection & Image Redaction (Working Test Prototype)
 
-> **SIH26171 — On-device Visual Perception for Light-weight Browser Agents**
-> Organization: ISRO / Department of Space · Category: Software · Theme: Smart Automation
+Chrome MV3 extension + Node reference pipeline that detects personally identifying
+information in screenshots/photos and redacts it **fully on-device** (WebGPU / WASM,
+no cloud calls). This repo is a working test prototype: the extension in `dist/`
+runs the complete pipeline locally, and `v7.mjs` is the Node reference implementation
+the browser code maintains 1:1 algorithmic parity with.
 
-> This document reflects the **Final Architecture Overview (Team Cosmic Crux)** and supersedes all earlier drafts (Moondream/SmolVLM, OpenRedaction-only, agent-only framing).
+Status: prototype under active testing. OCR, NER, face detection, fusion, safety gates,
+and canvas redaction all run end-to-end; the FastVLM adjudication step is functional
+with deterministic fallbacks when the model output fails validation.
 
-## Core Principle
+**The image pipeline above is the tested foundation.** The bridge, DOM-native redaction,
+and Playground described below are the locked next-phase plan built on top of it —
+see **Section 7** for the full spec, current status of each piece, and what each
+contributor should build next.
 
-> **We change content, not structure — structure, semantics, and relationships remain intact. Only sensitive values are replaced.**
+## 1. Overview
 
-Everything else in this document is a consequence of that one sentence.
+Given an input image (file upload or visible-tab capture), PerScope:
 
-## Overview
+1. Detects faces (BlazeFace) and OCR text regions (PaddleOCR PP-OCRv6-small).
+2. Extracts PII signals three ways: Ettin NER (transformer token classification),
+   deterministic label/regex heuristics, and FastVLM-0.5B multimodal adjudication.
+3. Fuses the signals into redaction candidates with confidence scores and sources.
+4. Resolves each candidate to a **value-only** bounding box (never whole label+value lines).
+5. Renders the redacted image (blur or black-box) on canvas and returns it plus a
+   machine-readable evidence object (findings, bboxes, caption, timings, device info).
 
-PerScope is a **local, zero-trust perception and redaction layer** that sits between any webpage and any AI — agent or human. It is not an agent and not a browser automation script. It is a **tool-server**, reachable four different ways, that guarantees nothing sensitive leaves the device unredacted and nothing destructive executes without passing a local validator — regardless of who or what is asking.
+Privacy design: raw model text is never trusted. Captions are deterministically
+scrubbed of every known sensitive value before reaching evidence or UI, and geometry
+resolution rejects any box that is not value-specific.
 
-The local pipeline (perception → tiered detection → Qwen3.5-2B reasoning → deterministic redaction) decides what is sensitive and removes it — that is the only thing PerScope constrains. Once sanitized context crosses the trust boundary, the server-side agent (open-weight Qwen2.5-Instruct) reasons over it **completely freely**. When the server decides an action is needed (click, type, submit, scroll, etc.), it calls back into the extension to perform it — the extension is the only component with permission to touch the real DOM. The only check after the server decides is whether that specific action is destructive, evaluated locally.
+## 2. Tech Stack
 
-### Four Consumption Modes
+### 2.1 Runtime & libraries
 
-All four speak the identical `{id, tool, params}` schema into the identical local validator. The extension cannot tell them apart — that is the point.
+| Component | Technology |
+|---|---|
+| Extension shell | Chrome MV3: popup, background service worker, offscreen document, dashboard/options page |
+| Bundler | esbuild (browser ESM, `build.mjs`); MV3 CSP patched to load ORT WASM from `chrome.runtime.getURL("ort/")` instead of CDN |
+| ONNX inference (browser) | `onnxruntime-web` + `@huggingface/transformers` v4 (WebGPU EP pinned per model; single-thread WASM fallback) |
+| ONNX inference (Node) | `onnxruntime-node` path via transformers.js with `auto`/`webgpu`/`cpu`/`wasm`/`dml`/`cuda` device selection (Windows DirectML supported) |
+| OCR engine | `ppu-paddle-ocr` v6 (PP-OCRv6-small detector + recognizer) |
+| Image ops (Node) | `sharp` (resize, test output); browser uses `OffscreenCanvas` / `createImageBitmap` |
+| Checks | `tests/run-checks.mjs` (`npm run check`): dist structure, no Node-only imports in bundles, MV3 manifest validation |
 
-| Mode | Who is calling | Status |
+### 2.2 Models (all local, all ONNX)
+
+| # | Model | HF repo / source | Role | Variant in use | Approx. size | Execution |
+|---|---|---|---|---|---|---|
+| 1 | PaddleOCR PP-OCRv6-small | `snowfluke/ppu-paddle-ocr-models` (see `models/model-manifest.json` for URLs + sha256) | Text detection + recognition. Recognition runs **per-box** (`strategy: "per-box"`, `minimumConfidence: 0.5`) — more robust than per-line when detection boxes shift between canvas backends | `PP-OCRv6_small_det.ort` + `PP-OCRv6_small_rec.ort` + dict | det ~10 MB, rec ~21 MB | Browser: WASM EP. Bundled at `dist/models/paddleocr/` |
+| 2 | Ettin 68M Nemotron PII | `rulesentry-io/ettin-68m-nemotron-pii-onnx` | NER token classification over OCR text (BIO labels → entity spans → OCR-region mapping). fp32, `model_file_name: "model"`, 512 max tokens, min score 0.3 | `model.onnx` (+ `model_q4.onnx` present in repo copy) | ~274 MB (+274 MB q4 copy) | WebGPU EP pinned; single-thread WASM (`intra/interOp: 1`) CPU fallback. The int64-encoder-input crash on threaded WASM is why the EP is pinned, not left to auto |
+| 3 | FastVLM-0.5B | `onnx-community/FastVLM-0.5B-ONNX` | Multimodal adjudicator: sees screenshot + OCR/fused evidence, returns JSON `{ caption, redactions, additional_redactions, rejected_candidates }`. Greedy decode, `max_new_tokens: 512`, `repetition_penalty: 1.15`, `no_repeat_ngram_size: 3` | `embed_tokens_fp16` + `vision_encoder_q4f16` + `decoder_model_merged_q4f16` (~780 MB total). Switchable to plain `q4` via `VARIANT=q4` download script (vision q4 is ~482 MB — barely smaller than fp32) | ~780 MB | WebGPU EP pinned; WASM CPU retry. Images resized to max 672 px before inference |
+| 4 | BlazeFace | `garavv/blazeface-onnx` (`blaze.onnx`) | Face detection → 128×128 planar NCHW RGB input, NMS (IoU 0.3, max 25, min conf 0.6) | `blaze.onnx` | ~0.5 MB | WASM EP by default (fast and stable); WebGPU optional |
+
+Retired/superseded entries still present in `models/` and `model-manifest.json`
+(Florence-2-base, Qwen3.5-2B) are **not** in the active pipeline — FastVLM-0.5B
+replaced both the old visual-perception and text-adjudication models.
+
+### 2.3 Model sourcing
+
+- Browser (slim): small models bundled; Ettin + FastVLM download on first run from
+  HuggingFace and are cached by the browser (`env.useBrowserCache`, `env.allowLocalModels`,
+  `env.localModelPath = chrome.runtime.getURL("models/")`).
+- Browser (full-offline): `INCLUDE_BIG_MODELS=1 npm run build` bundles Ettin
+  (`models/ettin-68m-nemotron-pii-onnx`) and FastVLM
+  (`node_modules/@huggingface/transformers/.cache/onnx-community/FastVLM-0.5B-ONNX`
+  → `dist/models/onnx-community/FastVLM-0.5B-ONNX`). The extension probes the local
+  path first (`resolveNERModelPath` HEAD-check pattern; transformers.js
+  `localModelPath + modelId` probing for FastVLM).
+- `scripts/download-fastvlm-q4f16.mjs` fetches exactly the needed FastVLM file set
+  (3 weight files + 10 config/tokenizer files, byte-size verified, resume-safe skips).
+  `VARIANT=q4 node scripts/download-fastvlm-q4f16.mjs` fetches the plain-q4 pair instead.
+  Must match `FASTVLM_DTYPE` in `v7.mjs` / `src/pipeline/v7-extension.js`.
+
+## 3. Architecture
+
+### 3.1 Extension contexts
+
+```text
+popup.html / dashboard.html (UI: upload, capture tab, device tier, style toggles,
+                             progress steps, original/redacted/bbox-overlay views,
+                             caption + evidence + prompt inspectors, PNG/JSON export)
+        |  chrome.runtime messages (imageBytes as number array; progress events)
+        v
+background/service-worker.js (offscreen-document lifecycle, CAPTURE_VISIBLE_TAB)
+        |
+        v
+offscreen.html + offscreen.js (owns WebGPU adapter, ORT, pipeline; idle pre-warm
+        |  of NER + FastVLM; returns redacted PNG as base64 to avoid JSON
+        v  serialisation blow-up)
+src/pipeline/v7-extension.js  <-- main pipeline (browser port of v7.mjs)
+  gpu.js              device tiers: dedicated GPU -> integrated GPU -> CPU/WASM
+  face.js             BlazeFace session + NMS
+  heuristics.js       reading order, OCR global spans, deterministic candidates,
+                      fusion, value sub-bbox estimation, geometry validation
+  ner-utils.js        BIO decode, softmax, token->char offset mapping
+  prompts.js          FastVLM evidence builder + redaction prompt
+  safety.js           JSON extraction/validation, safety gates,
+                      adjudicateOrFallback, redactChunks, sanitizeCaption
+  canvas-redactor.js  blur / black-box rendering on OffscreenCanvas
+```
+
+### 3.2 Pipeline stages (`runExtensionPipeline`, mirrored in `v7.mjs`)
+
+```text
+INIT -> DEVICE (resolveComputeDevice, configureOrtEnvironment)
+  -> IMAGE_DECODE -> FACE (BlazeFace, optional)
+  -> OCR (PaddleOCR per-box, conf >= 0.5)
+  -> NER (Ettin over OCR text, placeholder filtering)
+  -> HEURISTICS (deterministic label dictionaries: DOB, phone, email,
+                 IDs, account/UPI/IFSC/IBAN... + fuseRedactionCandidates +
+                 buildUIStructure + FastVLM evidence assembly)
+  -> FASTVLM (prompt + image -> JSON adjudication; strict validation,
+              fusion_fallback on parse/validation failure)
+  -> ADJUDICATION (safety gates -> finalTextFindings + faceFindings)
+  -> REDACT (canvas blur/black-box with padding; redacted OCR text)
+  -> evidence output { input_mode, compute_device, image, global_description,
+     florence{description}, findings, redacted text, timings }
+```
+
+### 3.3 Key algorithms (prototype detail)
+
+- **Reading order & span mapping**: OCR items are clustered into rows by y-center,
+  sorted top-to-bottom / left-to-right; each region is mapped to global char offsets
+  with cursor-based sequential matching so duplicate labels resolve correctly.
+- **Fusion**: deterministic and NER candidates merge on overlapping OCR ids/text;
+  each fused candidate keeps `candidate_types`, `sources`, `confidence`, `ocr_ids`.
+- **Value-only geometry** (`resolveSensitiveValueBBox`): exact text match → full OCR
+  box; substring match → proportional character-based sub-box with whole-line guards
+  (`isLikelyValueOnlyBBox`); otherwise reject. Fused bboxes are only trusted when proven
+  value-specific. This is the single chokepoint for all redaction geometry.
+- **Safety gates** (`applySafetyGates`, `adjudicateOrFallback`): FastVLM-proposed
+  redactions must reference real fused `candidate_id`s / OCR ids and pass type
+  allowlists; failures degrade to `fusion_fallback`, never to blind trust.
+- **Caption scrubbing** (`sanitizeCaption`): every known sensitive value (including
+  digit-compact variants like spaced vs unspaced number runs) is replaced with
+  `[REDACTED:TYPE]`; issuer/layout words (country, org, gender) are allowlisted so
+  descriptions stay useful; repetition loops are deduped and output is capped at a
+  clean sentence boundary. The caption prompt additionally forbids values, category
+  lists, policy talk, and refusals.
+- **Transfer protocol**: popup→offscreen sends bytes as `Array<number>` (structured
+  clone safety); offscreen→UI returns base64 PNG (~4× smaller / ~10× faster than a
+  JSON number array).
+
+## 4. Build Variants & Testing
+
+```bash
+npm install
+npm run build                          # slim: paddleocr + blazeface bundled (~150 MB zip).
+                                       # Ettin + FastVLM download on first run.
+INCLUDE_BIG_MODELS=1 npm run build     # full-offline: everything bundled (~1.2 GB zip).
+npm run check                          # verify dist (structure, no node: imports, MV3 manifest)
+node scripts/download-fastvlm-q4f16.mjs            # fetch q4f16 FastVLM set into HF cache
+VARIANT=q4 node scripts/download-fastvlm-q4f16.mjs  # fetch plain-q4 set instead
+```
+
+Load testing: `chrome://extensions` → Developer mode → Load unpacked → `dist/`
+(or unzip a build). Test images in repo root: `s4.png` (ID-card style document),
+`s5.jpg` (person photo). Useful console markers: `[OCR-DEBUG]`, `[NER]`,
+`[HEURISTICS]`, `[FASTVLM-DEBUG] sessions:` (should list `embed_tokens`,
+`vision_encoder`, `decoder_model_merged` — a missing `vision_encoder` means blind
+text-only inference), `[ADJUDICATION]`, `[FASTVLM] JSON parse failed`.
+
+Node reference: `node v7.mjs` (same test image). FastVLM knobs via env:
+`FASTVLM_ENABLED / ENABLE_FASTVLM`, `FASTVLM_MODEL`, `FASTVLM_DEVICE`
+(`auto|webgpu|cpu|wasm|dml|cuda|gpu`), `FASTVLM_MAX_NEW_TOKENS` (default 512),
+`FASTVLM_REQUIRED`, `FASTVLM_TIMEOUT_MS`, `FASTVLM_MAX_IMAGE_SIZE` (default 672),
+`FASTVLM_RESIZE_ENABLED`, `DML_DEVICE_ID` (Windows hybrid-GPU selector).
+Node persists the raw model output to `fastvlm_output.txt` and the rendered prompt
+to `fastvlm_redaction_prompt.txt`; `perception_evidence.json` holds sample evidence.
+
+Current artifacts: `perscope-extension-slim.zip` (~153 MB),
+`perscope-extension-full.zip` (~1.18 GB). `session-*.md` files are dev session logs,
+not documentation. `patches/` holds `patch-package` fixes (`ppu-ocv` runtime-init,
+`ppu-paddle-ocr` engine handling) applied on install.
+
+## 5. Repo Layout
+
+```text
+v7.mjs                      Node reference pipeline (~5000 lines, 1:1 with extension)
+src/pipeline/               v7-extension.js (browser pipeline), gpu.js, face.js,
+                            heuristics.js, ner-utils.js, prompts.js, safety.js,
+                            canvas-redactor.js
+src/offscreen/              offscreen.html + offscreen.js (ML host)
+src/background/             service-worker.js (offscreen lifecycle, tab capture)
+src/popup/                  popup UI (upload/capture, progress, results, export)
+src/app/                    dashboard (device telemetry, caption/evidence/prompt panes)
+models/                     paddleocr, blazeface, ettin-*-onnx, manifest files
+                            (florence-2-base, qwen3.5-2b present but inactive)
+scripts/                    download-fastvlm-q4f16.mjs, check-scope.mjs,
+                            create-pipeline-modules.mjs
+tests/                      run-checks.mjs (npm run check), pipeline.test.mjs
+patches/                    patch-package patches for ppu-ocv, ppu-paddle-ocr
+build.mjs / manifest.json / package.json
+s4.png / s5.jpg             test images (document, person photo)
+```
+
+## 6. Known Limitations (prototype)
+
+- FastVLM-0.5B is small: captions/adjudication can be bland or miss JSON schema;
+  the pipeline is designed to survive that (validation → fusion fallback → still
+  redacts via OCR/NER/heuristics), but output richness is bounded by model capacity.
+- Deterministic heuristics can over-redact (e.g. a number row inheriting a nearby
+  "DOB" label context) — safe direction, fusion/validators narrow it where possible.
+- WASM fallback is single-threaded by necessity (int64 inputs crash the threaded
+  WASM build); CPU inference of the big models is slow.
+- `tests/run-checks.mjs` still references a legacy `models/FastVLM-0.5B-ONNX` check
+  path; the real full-offline path is `models/onnx-community/FastVLM-0.5B-ONNX`.
+
+## 7. Next Phase (Locked Plan): Bridge, DOM Redaction, Playground
+
+**Status: planned, not yet built.** Everything in this section is the locked design
+for the next three pieces of work, built on top of the tested image pipeline above.
+Nothing here should be presented as working until it actually is — mark PRs against
+the relevant subsection as they land, and update the status lines below in the same
+commit.
+
+### 7.1 Tech Stack (new components)
+
+| Layer | Technology | Notes |
 |---|---|---|
-| **PerScope Reasoning Server** | Self-hosted open-weight LLM (Qwen2.5-Instruct 7B) operated by PerScope | **Required** — PS deliverable |
-| **Real MCP Agent** | Claude Code / Codex via auto-launched, zero-logic MCP bridge | Bonus — proves protocol compatibility |
-| **Demo Playground** | Manual simulated agent (same WebSocket schema) | Demo / observability console |
-| **Manual query / Send to Chat** | The user directly, no agent — sanitized description to paste or auto-send into any chatbot | Differentiator — works with zero agent installed |
+| Bridge process | Node.js, single long-running local process | Started by the user (or auto-started by an install script); not Chrome-spawned |
+| Extension ↔ Bridge transport | WebSocket, `ws://127.0.0.1:<port>` | Origin-checked; one-time shared-secret pairing on first connect (secret shown in the dashboard, entered once) |
+| Bridge ↔ Agent transport | MCP server, **dual transport**: stdio (for locally-spawned agents like Claude Code/OpenCode) and streamable-HTTP/SSE (for remote or browser-based agents) | Same tool-handler code behind both transports |
+| MCP SDK | `@modelcontextprotocol/sdk` (Node) | Official SDK — tool schema, resource, transport plumbing |
+| stdio entrypoint pattern | Thin proxy, not the bridge itself | The `npx @perscope/bridge mcp` command finds-or-spawns a detached singleton daemon (the actual WS server + extension pairing state), then proxies its own stdio JSON-RPC to that daemon. Prevents each agent client from spawning a conflicting extension-facing server, and keeps the daemon alive across agent sessions |
+| Confirm-flow pattern | **Blocking tool call** — `click`/`type`/`submit` on a flagged element does not return until approved/denied/60s-timeout | No polling tool, no push/notification dependency |
+| DOM extraction | `content.js`, `TreeWalker` over visible text nodes + form-control values (already sketched in the pasted `pii-detector.js`) | Injected on-demand, not persistently running |
+| DOM PII detection | Ettin-68M NER (same ONNX model/session already used for OCR text) **+** the pasted regex/validator module as Signal 2 | Same fusion pattern as the image pipeline — parallel, not sequential |
+| DOM redaction rendering | **Phase 1: text-level only** (`<EMAIL_ID>`-style placeholders in extracted text, DOM untouched) | Phase 2 (optional stretch): `Range.getClientRects()` overlay masks on a scoped demo page, `MutationObserver`-tracked |
+| Playground reasoning backends | 3 interchangeable providers behind one interface — Local, Manual, Cloud | Detailed in §7.4 |
+| Local reasoning model | TBD from: Llama-3.2-Vision-11B, Moondream2, PaliGemma-2 (VLM) *or* Llama-3.2-3B/Gemma-2 (LLM), served via Ollama or vLLM | Decision gated on §7.4.1 payload choice |
+| Cloud reasoning backend | Same open-weight model as Local, hosted remotely (Together.ai / Fireworks / rented GPU + vLLM) | Not a different proprietary model — see §7.4.3 for why |
 
-## Two Products, One Pipeline
+### 7.2 The Bridge
 
-One local pipeline, two front doors. Both terminate in the same sanitization pipeline and the same trust boundary.
+**Status: not started.**
 
-| Product | How it works |
+**What it is:** one Node process with two faces. It is **zero-logic** by design — it
+relays and formats messages, it never decides anything and never executes anything on
+a page.
+
+```text
+                    ┌─────────────────────────┐
+                    │        BRIDGE            │
+                    │      (Node process)      │
+   Extension  <───► │  WS server :port          │ ◄───►  MCP Client
+  (background.js)   │  (extension-facing)       │       (Claude Code /
+                    │                           │        OpenCode / Playground /
+                    │  MCP server (stdio + HTTP)│        any MCP agent)
+                    │  (agent-facing)           │
+                    └─────────────────────────┘
+```
+
+**Extension ↔ Bridge (WebSocket)**
+- Extension's `background.js` opens `ws://127.0.0.1:<port>` on startup.
+- First connection: bridge shows a pairing code in its own local dashboard; user
+  enters it once in the extension options page. Bridge stores the extension's secret;
+  all further messages are signed/checked with it. This stops any other local process
+  or malicious page from talking to the bridge.
+- Same `{id, tool, params}` schema flows both directions — outbound capture events and
+  evidence from the extension, inbound tool commands from the bridge.
+
+**Bridge ↔ Agent (MCP) — tool schema:**
+
+| Tool | Purpose |
 |---|---|
-| **Human Mode** | Person, no agent installed, uses the extension directly to safely show a page to whatever AI chat they already have open. Primary surface most users will touch. |
-| **Agent Mode** | Autonomous reasoning system (PerScope's own server or a real MCP agent) drives the extension programmatically via the tool schema. |
+| `capture_tab` | Trigger the existing image pipeline (OCR/NER/heuristics/FastVLM/redaction) on a tab, return evidence + redacted image |
+| `read_page` | Trigger DOM extraction + text-redaction pipeline (§7.3), return sanitized structured content |
+| `list_interactive_elements` | Enumerate clickable/typeable elements with stable references |
+| `click` / `type` / `select_option` / `submit` / `scroll` | Execute an action via `content.js`, gated by `isDestructive()` |
 
-### Human Mode — Popup UI and Capture Flow
+Both stdio and HTTP transports are wired to the same handler functions — no divergent
+logic between "a locally spawned agent" and "a remote/browser agent."
 
-The popup's primary job is the **Capture** action.
+**The validator boundary:** `isDestructive()` lives in the **extension**, immediately
+in front of `content.js`. The bridge cannot bypass it, and it does not care whether the
+calling `{id, tool, params}` came from a real MCP agent, the Playground's local model,
+the Playground's manual mode, or a cloud model — same check, same code path, every
+time. This is the load-bearing security property; everything else is designed so it
+stays true without exceptions.
 
-**Popup, default state:**
-- **Tab selector** — pick which open tab to capture (defaults to current tab).
-- Single **Capture** button — not "Analyze/Scan/Redact".
-- **"Privacy protected ✓"** trust indicator, always visible.
-
-**On Capture — live progress** reusing the existing pipeline stages: page captured → text extracted → sensitive information detected → sanitizing, with persistent line *"Everything stays on this device."*
-
-**Capture Review screen (required, before anything is sent):** PerScope shows exactly what would be transmitted.
-
-- **Visual view** — screenshot-style representation with sensitive regions masked in place.
-- **Context view** — structured, semantic representation of what will actually be sent (e.g. `User: [PERSON]`, `Email: [EMAIL]`, `Status: Active`) — placeholders preserve semantics per the core principle.
-
-Outcome states (not always "success"):
-- **Clean** — "No sensitive information detected" (distinct from "0 items redacted").
-- **Ambiguous / low-confidence** — fail-closed; user reviews before continuing.
-- **Blocked** — region could not be safely sanitized; capture does not proceed until reviewed.
-
-Stats shown: count and type of items redacted.
-
-**Send to Chat — two distinct actions:**
-- **Send** — injects sanitized content into the destination chat's input box only. Safer default.
-- **Send & Submit** — injects and submits in one step; requires explicit opt-in (same principle as destructive-action confirmation).
-
-**Destination selection:** PerScope auto-detects open tabs that look like known AI chats (ChatGPT, Claude, Gemini, etc.) and offers the default target; user can pick any open tab manually. Injection executes through `content.js` — same DOM-execution boundary as every other action.
-
-**Wrapped, not dumped raw:** sanitized content is inserted inside a short explanatory wrapper (e.g. *"I captured the following webpage through PerScope. It was processed locally and sensitive information was redacted before being sent. Please analyze the sanitized content below."*) so the destination AI understands placeholders like `[PERSON]`/`[EMAIL]`.
-
-### Chat Destination & Injection Layer
-
-First-class component alongside the extension components: owns tab discovery (finding candidate AI-chat tabs), per-site adapters (input-box selectors for ChatGPT/Claude/Gemini, etc.), and the Send / Send & Submit distinction. Executes through `content.js`; does not introduce a second way to touch the live page. See Architecture → Extension-Side Components below.
-
-## Architecture
-
-### End-to-End Flow
-
-Every stage above the trust boundary runs 100% on-device. Only sanitized context crosses.
-
-1. **Inputs** — DOM snapshot + screenshot from the active tab.
-2. **Local Perception** — DOM Extractor (elements, attrs, ARIA, bboxes) + PaddleOCR (text, bboxes, confidence) + Florence-2-base (captions, region grounding) produce a unified text-and-layout representation.
-3. **Tiered PII Detection —** Tier 0 regex + checksum (auto-redacts high-confidence hits; OCR-sourced low-confidence or failed-checksum → escalates, never cleared) → Tier 1 Ettin-68M NER (runs only on residual text; output is candidates, NOT auto-redacted) → Tier 2 Qwen3.5-2B local (`Qwen/Qwen3.5-2B`, Apache 2.0 — adjudicates candidates using context, invoked only when ambiguous).
-4. **Sanitization Plan** — internal-only mapping of spans to replacement values; never transmitted.
-5. **Deterministic Redaction** — DOM redaction (values only) + image redaction (mask/blur via bbox, powered by Open Redaction Library patterns), non-model, structure 100% intact.
-6. **Self-Audit** — re-runs Tier 0 + Tier 1 on the *output* payload; fail-closed (block + log) if anything remains.
-7. **Sanitized Context crosses the trust boundary** — Sanitized DOM + optional Sanitized Image / Sanitized Visual Representation.
-8. **Server Reasoning** — Qwen2.5-Instruct (open-weight, self-hosted via vLLM/Ollama; same family as on-device Qwen3.5-2B), cloud-hosted only for SIH demo latency. Constrained to tool schema (`read_page`, `list_interactive_elements`, `click`, `type`, `submit`, `select_option`, `scroll`) via structured/function-calling output; multi-turn (can return action or request for more evidence like `scroll`).
-9. **Action Validator** — `isDestructive()` check gates every proposed action; same gate regardless of source (server, MCP agent, Playground, or hidden prompt-injection text on the page). This is the entire prompt-injection defense.
-10. **Local execution** — validated actions executed locally by `content.js` on the real DOM.
-11. **Continuous Action Loop** — perception → reasoning → validation → execution repeats until the task completes.
-
-> **Methodology (PDF § Technical Approach):** 1 Capture Evidence (DOM+OCR+Vision) → 2 Detect PII (NER flags emails/phones/names/addresses) → 3 Reason Locally (on-device LLM decides sensitivity) → 4 Redact & Verify (values masked, structure kept, self-audited) → 5 Send Sanitized Data (only cleaned context crosses trust boundary) → 6 Act on the Page (local agent executes safely, results loop back).
-
+**Confirm flow (blocking call):**
+```text
+Agent → Bridge → Extension: click(element_X)
+Extension: isDestructive(element_X)?
+  NO  → execute via content.js → return {status:"ok"}
+  YES → show Approve/Deny in side panel
+        → tool call blocks (up to 60s)
+        → human approves → execute → return {status:"ok"}
+        → human denies    → return {status:"denied"}
+        → 60s elapses     → return {status:"timeout"}
 ```
-Trust boundary:  Sanitized Context  ===  Server LLM/VLM
-Everything above === runs on-device; raw DOM/screenshot/PII never cross.
+No polling tool, no dependency on the MCP client supporting server push — works with
+any MCP client because it's just a normal (if slow) tool response.
+
+**Agent-side setup, once the bridge is published to npm:**
+```bash
+# Claude Code
+claude mcp add perscope -- npx -y @perscope/bridge mcp
+
+# OpenCode (opencode.json)
+{ "mcp": { "perscope": { "type": "local", "command": ["npx", "-y", "@perscope/bridge", "mcp"] } } }
 ```
 
-### Tiered Detection — Pyramid, Not Flat Pipeline
+### 7.3 DOM-Native Redaction (Phase 1)
 
-Detection escalates only as far as needed. Most PII resolves at the base, near-zero cost; the heaviest model runs only for genuinely ambiguous cases and can be skipped entirely on a clean page.
+**Status: not started.** Depends on `content.js` existing (currently absent from the
+tested prototype — see README §5 repo layout).
 
+```text
+content.js: extractDOMText() + extractFormValues()
+        |
+        v
+    DOM text (+ per-node context: aria-label, <label for>, placeholder, name)
+        │
+        ├──► Ettin-68M NER              (Signal 1, same model/session as image path)
+        └──► pii-detector.js regex+validator   (Signal 2 — Luhn/IBAN/IPv4 already built in)
+        │
+        v
+    Fusion — merge by character-offset overlap (image path merges by OCR-id;
+             this is the DOM equivalent of the same function)
+        │
+        v
+    Safety gates — same shape as image path, but no FastVLM proposal to
+                   validate by default (see below)
+        │
+        v
+    Text-level redaction — <EMAIL_ID>-style placeholders in the extracted
+                            text. Live DOM is NOT modified.
+        │
+        v
+    Sanitized structured output → feeds read_page (agent mode) and
+                                   Send-to-Chat (human mode)
 ```
-L1 · Local Perception         — DOM Extractor + PaddleOCR + Florence-2-base — runs on every page
-L2 · Tiered PII Detection     — Regex/Checksum first, Ettin-68M NER only on what's left
-L3 · Local Reasoning          — Qwen3.5-2B judges ambiguous cases only
-L4 · Deterministic Redaction  — executes the plan, structure stays intact
- ─ ─ ─ ─ ─ ─ TRUST BOUNDARY ─ ─ ─ ─ ─ ─
-L5 · Server Reasoning         — open-weight Qwen2.5-Instruct, sanitized input only
-L6 · Execution & Validation   — every action validated before it runs  →  loops to L1
+
+Why text-only, not a DOM overlay, for Phase 1: `read_page` (agent mode) and
+Send-to-Chat (human mode) both want sanitized **text**, not a visually altered page;
+editing live text nodes risks breaking React/Vue/Angular re-renders and controlled
+inputs (the pasted module's own comments already flag this); overlay-based visual
+masking is real engineering risk close to deadline and is scoped as an **optional
+Phase 2 stretch goal** on a small set of chosen demo pages only.
+
+Adjudication is **off by default** for DOM mode: `read_page` is called repeatedly
+inside an agent's task loop, so a model call on every read is the single biggest
+latency risk in the system. DOM-native context (`aria-label`, `<label for>`,
+`placeholder`, `name`) feeds `calculateConfidence()`'s existing context-word boost
+directly, at zero model cost. A `FASTVLM_FOR_DOM` flag stays in the codebase as an
+explicit, honest opt-in.
+
+### 7.4 The Playground
+
+**Status: not started.** This is the PS's required Reasoning Server, built with three
+swappable backends instead of one hardcoded model. All three implement the identical
+contract, so the extension and bridge never know or care which is active:
+
+```text
+input:  sanitized context (redacted image + evidence, and/or DOM text output)
+        + tool schema
+output: { tool, params }  |  { status: "final", message }
 ```
 
-Why Ettin flags are not auto-redacted: NER gives entity type, not sensitivity. Tier 1 output is a candidate list; only Qwen3.5-2B's context-adjudicated Sanitization Plan is executed, and only by the deterministic redactor — the model never gets the chance to hallucinate a redaction.
+**7.4.1 Payload:** redacted image + evidence object (not just a text summary) for
+image-mode tasks, sanitized structured text for DOM-mode tasks.
 
-Why regex is not DOM-only: it runs on DOM values (checksum trusted directly) *and* OCR text (checksum trusted only at high OCR confidence).
+**7.4.2 Local backend:** a small open-weight VLM served locally via Ollama or vLLM
+(candidate: Moondream2 or a Llama-3.2-Vision variant), reasoning directly over the
+redacted image + evidence.
 
-### Extension-Side Components
+**7.4.3 Cloud backend:** the same open-weight model, hosted remotely (Together.ai /
+Fireworks / rented GPU running the identical vLLM/Ollama setup) — not a different
+proprietary API. Matches the PS text: cloud hosting of an open-weight model is
+permitted as a hosting convenience, not a different model.
 
-| Component | Responsibility |
+**7.4.4 Manual mode:** a person is shown the same Capture Review screen (Visual view +
+Context view) a model would see, picks a tool from the schema, fills or free-types
+`{id, tool, params}`, and submits through the exact same bridge ingress a real agent or
+model uses. Doubles as the integration test harness and the demo fallback.
+
+### 7.5 End-to-End Workflows
+
+**A real user, with their own AI coding agent (Claude Code / OpenCode / any MCP
+client):** install extension → start bridge locally → pair once (§7.2) → point MCP
+client at the bridge (stdio for a locally-spawned agent, HTTP URL for a remote one) →
+agent calls `capture_tab` / `read_page` / `list_interactive_elements` as part of its
+own reasoning, never seeing raw sensitive data → any `click`/`type`/`submit` blocks on
+`isDestructive()` until auto-cleared or a human approves/denies in the side panel.
+
+**The full human workflow (no agent installed):** popup → pick tab → Capture → live
+progress (captured → extracted → detected → sanitizing) → Capture Review screen
+(Visual view + Context view, outcome state Clean / Ambiguous / Blocked) → pick
+destination tab → Send (inject only) or Send & Submit (inject + auto-submit, opt-in) →
+sanitized content wrapped in an explanatory preamble before it lands in the
+destination chat.
+
+**Our own demo, using the Playground:** presenter picks a backend from the provider
+selector (Local / Cloud / Manual) → runs an end-to-end task through
+`capture_tab`/`read_page` → redacted context → reasoning backend proposes a tool call →
+`isDestructive()` gate → side-panel approve if flagged → action executes. Switching
+backends mid-demo is just the dropdown — bridge, validator, and extension code paths
+are identical underneath, so Local vs Cloud can be re-run back-to-back to make the
+latency/accuracy tradeoff concrete.
+
+### 7.6 Explicitly Deferred / To State Honestly If Asked
+
+- DOM overlay visual masking (Phase 2) — stretch goal, scoped demo pages only.
+- Native Messaging for extension↔bridge — WebSocket ships first; Native Messaging is a
+  post-MVP hardening item.
+- Multimodal adjudication for DOM mode — toggle (`FASTVLM_FOR_DOM`), off by default.
+- Output-level self-audit re-scan vs. relying on caption scrubbing alone — still open.
+
+### 7.7 Who Builds What
+
+| Owner | Scope |
 |---|---|
-| `background.js` | WebSocket client (outbound only), 20s keepalive, message routing by `id`/`type`, action validator (`isDestructive()`), pending-action map for confirm flow |
-| `offscreen.js` | Hosts all on-device models (DOM/OCR/vision perception, Tier 0–2 detection, Qwen3.5-2B reasoning) via Transformers.js + ONNX Runtime Web, WebGPU with WASM fallback |
-| `content.js` | Only component with live DOM access — captures state, executes validated actions (`click`/`type`/`submit`/`select_option`/`scroll`), reports back |
-| Side panel | Live view during active tool-call sequence: bounding boxes, redaction happening, Approve/Deny prompt for blocked actions. Power-user inspection surface, one level below Dashboard history |
-| Dashboard | Privacy Log (every redaction: detected item, confidence, exact payload sent, per capture — source tab, count/type, destination) + Security Log (every blocked/flagged action + confirm-flow outcome), redacted-only storage, Clear All button |
-| Popup | Primary human-facing surface — tab selector + Capture button, live progress, Capture Review (Visual + Context views, states: clean/ambiguous/blocked), Send / Send & Submit |
-| Chat Destination & Injection Layer | Discovers candidate AI-chat tabs, holds per-site adapters for locating a chat's input box, executes injection/submission through `content.js` |
-
-Manifest requirement: `minimum_chrome_version: 116` — required for WebSocket-in-service-worker keepalive. **Chrome-only**; no Firefox claim without actual testing (offscreen-document and WebGPU support differ).
-
-### Action Validation & Confirm Flow
-
-```
-Caller (Server / Agent / Playground) -> {id, tool: "click", params} -> background.js -> isDestructive()
-  ├─ not destructive → content.js executes → {id, status: "ok"}
-  └─ destructive → {id, status:"blocked", reason, pending_id} + side panel Approve/Deny
-       ├─ approve → content.js executes → {type:"action_update", pending_id, status:"ok"}
-       ├─ deny    → {type:"action_update", pending_id, status:"denied"}
-       └─ 60s timeout → {type:"action_update", pending_id, status:"timeout"}
-  Security Log records blocked / pending confirm.
-```
-
-Same check runs whether the click was requested by the legitimate caller or surfaced from hidden white-on-white text on the page — validator evaluates what the action would do, not where the instruction came from.
-
-### Server-Side Reasoning — Requirement, Not Demo Convenience
-
-PS requires transmitting sanitized context to a centralized LLM/VLM and receiving actionable commands back using an open-source/open-weight model. Cloud-hosting is permitted only as hosting convenience.
-
-- **Model:** Qwen2.5-Instruct (server), same family as on-device Qwen3.5-2B (`Qwen/Qwen3.5-2B`, Apache 2.0).
-- **Offline path:** self-hosted via vLLM or Ollama — fully offline, self-hostable; cloud GPUs rented only for demo latency.
-- **During SIH:** same open weights on rented GPU for demo latency — stated explicitly, not required in production.
-- Validator applies identically to PerScope's own server — system defends against its own model proposing a bad action.
-
-## Tech Stack
-
-| Layer | Technology |
-|---|---|
-| Extension shell | WebExtensions (Manifest V3), Chrome 116+ (Chrome-only) — JS (ES6+) |
-| Perception | DOM Extractor (native), PaddleOCR, Florence-2-base |
-| Fast-path detection | Regex + checksum validation (Luhn, format patterns) — Open Redaction Library (`sam247/openredaction`) |
-| PII candidate detection | Ettin-68M NER (`kalyan-ks/ettin-68m-nemotron-pii`, 55 entity types, edge-optimized) |
-| Local reasoning / adjudication | Qwen3.5-2B (`Qwen/Qwen3.5-2B`, Apache 2.0 — adjudicates ambiguous cases only) |
-| Redaction execution | Deterministic (non-model) DOM + image redactor (mask/blur via bbox) |
-| On-device runtime | Transformers.js, ONNX Runtime Web, WebGPU, WASM (fallback) |
-| Transport | WebSocket (`background.js` keepalive — 20s), MCP Bridge (stdio ⇄ WebSocket, zero logic) |
-| Server-side reasoning | Qwen2.5-Instruct, vLLM / Ollama (self-hosted, open-weight) |
-| Real-agent compatibility | Model Context Protocol (`@modelcontextprotocol/sdk`) — `modelcontextprotocol.io/specification/2025-06-18/architecture` |
-
-## Feasibility Snapshot (per PDF)
-
-- **Technical:** Transformers.js + ONNX Runtime Web + WebGPU/WASM run PaddleOCR, Florence-2, Ettin-68M and Qwen3.5-2B inside a standard Chrome extension.
-- **Economical:** Open-weight Qwen models remove licensing cost; on-device inference cuts server compute.
-- **Social:** PII stays on-device; Send to Chat works with zero agent installed.
-- **Legal:** Raw DOM/screenshots/PII never leave device; offline self-hosted deployment satisfies data-sovereignty.
-- **Operational:** Manifest V3 install; side panel + dashboard Privacy/Security Logs + Approve/Deny confirm flow.
-- **Security:** Fail-closed self-audit + uniform `isDestructive()` validator (hostile pages and model mistakes).
-
-## Research and References
-
-- Transformers.js Chrome Extension — `huggingface.co/blog/transformersjs-chrome-extension` — offscreen documents + WebGPU pattern.
-- PaddleOCR.js — `github.com/PaddlePaddle/PaddleOCR/blob/main/docs/version3.x/inference_deployment/cross_platform/browser.en.md` — ONNX Runtime + WASM/WebGPU in-browser OCR.
-- Ettin-68M-Nemotron-PII — `huggingface.co/kalyan-ks/ettin-68m-nemotron-pii` — 55 entity types, edge-optimized.
-- safeclipper — `github.com/AFK-surf/safeclipper` — local OCR + bbox image redaction.
-- PrivacyLens — `github.com/shitijkarsolia/privacylens` — PII redaction with pre-send review.
-- MCP — `modelcontextprotocol.io/specification/2025-06-18/architecture` + `openredaction` — `github.com/sam247/openredaction`.
-- On-device model: Qwen3.5-2B — `huggingface.co/Qwen/Qwen3.5-2B` (Apache 2.0).
-
-## Repository Structure
-
-```
-/extension
-  /background        # background.js — owned by: Extension/Automation
-  /offscreen          # offscreen.js — owned by: Perception + Privacy/Redaction
-  /content             # content.js — owned by: Extension/Automation
-  /sidepanel
-  /dashboard
-  /popup               # Capture flow — owned by: Extension/Automation
-  manifest.json
-/server                # PerScope Reasoning Server — owned by: Server/Bridge/Playground
-/bridge                # MCP stdio<->WebSocket bridge — owned by: Server/Bridge/Playground
-/playground             # Demo WebSocket client/UI — owned by: Server/Bridge/Playground
-/docs
-  architecture.md      # do not generate content — placeholder only
-  tool-schema.md        # do not generate content — placeholder only
-README.md
-LICENSE
-.gitignore
-```
-
-## Team
-
-**Cosmic Crux — SIH26171**
-
-Component ownership by area:
-
-| Area | Ownership |
-|---|---|
-| Extension / Automation | Extension/Automation |
-| Perception | Perception |
-| Privacy / Redaction | Privacy/Redaction |
-| Server / Bridge / Playground | Server/Bridge/Playground |
-| Research / QA | Research/QA |
-
-> Member names and detailed task breakdowns are tracked under `/docs/tasks/<role>.md` (added separately per owner).
-
-## Status
-
-This is a research-grounded architecture at prototype-build stage. This README is the consolidated reference and supersedes earlier drafts. For full detail see:
-
-- [`/docs/architecture.md`](/docs/architecture.md)
-- [`/docs/tool-schema.md`](/docs/tool-schema.md)
-
-These files already exist / will be added separately — their content is not generated here.
-
-## License
-
-MIT — see [LICENSE](LICENSE).
+| Bridge dev | `@perscope/bridge` npm package: WS server + pairing, MCP server (stdio + HTTP, via SDK), stdio proxy-to-daemon entrypoint, tool schema handlers, blocking confirm-flow plumbing |
+| Extension dev | `background.js`: WS client to the bridge, pairing-code UI in options page, `{id, tool, params}` message handling on the extension side, wiring `isDestructive()` + side-panel Approve/Deny into the confirm flow; `content.js`: DOM extraction (`extractDOMText`/`extractFormValues`) and validated action execution (`click`/`type`/`submit`/`scroll`) — currently absent, net-new |
+| PII/pipeline dev | Wire Ettin NER + `pii-detector.js` into a DOM-mode fusion path (character-offset merge, mirroring `heuristics.js`'s OCR-id merge); DOM-native context signals for `calculateConfidence()` |
+| Playground dev | Provider-selector UI, Local backend (Ollama/vLLM + model), Cloud backend (same model, remote host), Manual mode UI reusing the Capture Review screen |

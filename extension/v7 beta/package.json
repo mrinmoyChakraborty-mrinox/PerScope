@@ -1,0 +1,24 @@
+{
+    "name": "perscope-privacy-extension",
+    "version": "1.0.1",
+    "description": "Local GPU-accelerated PII detection and image redaction - Chrome MV3",
+    "type": "module",
+    "scripts": {
+        "build": "node build.mjs",
+        "dev": "node build.mjs --watch",
+        "check": "node tests/run-checks.mjs",
+        "postinstall": "patch-package"
+    },
+    "dependencies": {
+        "@huggingface/transformers": "^4.2.0",
+        "onnxruntime-web": "^1.29.0",
+        "ppu-paddle-ocr": "^6.4.3"
+    },
+    "devDependencies": {
+        "esbuild": "^0.28.2",
+        "patch-package": "^8.0.1"
+    },
+    "overrides": {
+        "@techstark/opencv-js": "4.12.0-release.1"
+    }
+}

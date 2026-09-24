@@ -1,5 +1,5 @@
 node_modules/
-dist/
+ort
 .next/
 out/
 __pycache__/
@@ -11,3 +11,4 @@ s1.jpg
 docs/node_modules/
 docs/.next/
 docs/out/
+models
