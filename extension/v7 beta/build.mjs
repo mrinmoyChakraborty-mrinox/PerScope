@@ -16,6 +16,14 @@ const entries = [
   { in: resolve(src, "background/service-worker.js"), out: "background.js" },
   { in: resolve(src, "offscreen/offscreen.js"), out: "offscreen.js" },
   { in: resolve(src, "app/dashboard.js"), out: "dashboard.js" },
+  // DOM snapshot capture content script (runs in every frame via
+  // content_scripts all_frames). Bundled with the same browser-target
+  // pattern as offscreen.js. NOTE: it statically imports Koyel's
+  // piidetector.js Tier0 (detectPII/redactPII, unmodified); piidetector's
+  // Node CLI branch requires "readline", which is dead in this context
+  // (require.main is unset in the bundle, so the lazy __require call never
+  // fires) — hence "readline" is external rather than bundled.
+  { in: resolve(src, "content/dom-capture-entry.js"), out: "dom-capture-entry.js" },
 ];
 
 for (const { in: entryIn, out } of entries) {
@@ -37,7 +45,7 @@ for (const { in: entryIn, out } of entries) {
     minify: false,
     mainFields: ["module", "browser", "main"],
     conditions: ["browser", "module", "import"],
-    external: ["fs", "crypto", "path", "os", "module"],
+    external: ["fs", "crypto", "path", "os", "module", "readline"],
     loader: { ".wasm": "file" },
     define: {
       "process.env.NODE_ENV": '"production"',

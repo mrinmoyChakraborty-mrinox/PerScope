@@ -237,3 +237,40 @@ D.dashBtnDownloadJSON.addEventListener("click", () => {
   URL.revokeObjectURL(url);
 });
 initDashboardDevice();
+async function refreshBridgeStatus() {
+  const el = document.getElementById("dashBridgeStatus");
+  const msg = document.getElementById("dashBridgeMsg");
+  try {
+    const res = await chrome.runtime.sendMessage({ target: "background", action: "BRIDGE_STATUS" });
+    const b = res?.bridge;
+    if (el) el.textContent = b?.paired ? "Connected + paired" : b?.connected ? "Reachable, not paired" : "Bridge not running";
+    if (msg && !msg.dataset.sticky) msg.textContent = "";
+  } catch {
+    if (el) el.textContent = "Bridge not running";
+  }
+}
+async function submitBridgePair() {
+  const codeEl = document.getElementById("dashBridgeCode");
+  const msg = document.getElementById("dashBridgeMsg");
+  if (msg) {
+    msg.dataset.sticky = "1";
+    msg.textContent = "Pairing\uFFFD";
+  }
+  try {
+    const res = await chrome.runtime.sendMessage({ target: "background", action: "BRIDGE_PAIR", code: codeEl?.value || "" });
+    if (res?.ok) {
+      if (msg) msg.textContent = "Paired. Token stored for reconnects.";
+      if (codeEl) codeEl.value = "";
+    } else {
+      if (msg) msg.textContent = "Pair failed: " + (res?.reason || "unknown") + " \uFFFD retry.";
+    }
+  } catch (err) {
+    if (msg) msg.textContent = "Pair failed: " + err.message;
+  } finally {
+    if (msg) delete msg.dataset.sticky;
+    refreshBridgeStatus();
+  }
+}
+document.getElementById("dashBridgePair")?.addEventListener("click", submitBridgePair);
+refreshBridgeStatus();
+setInterval(refreshBridgeStatus, 5e3);

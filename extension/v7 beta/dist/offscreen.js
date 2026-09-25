@@ -48581,6 +48581,216 @@ var init_v7_extension = __esm({
 // src/offscreen/offscreen.js
 init_gpu();
 init_v7_extension();
+
+// src/offscreen/bridge-link.js
+var BRIDGE_WS_URL = "ws://127.0.0.1:7331";
+var TOKEN_KEY = "perscope.bridgeToken";
+var CLIENT_ID_KEY = "perscope.bridgeClientId";
+var RECONNECT_BASE_MS = 1e3;
+var RECONNECT_MAX_MS = 3e4;
+var HANDSHAKE_TIMEOUT_MS = 5e3;
+function sleep(ms3) {
+  return new Promise((resolve) => setTimeout(resolve, ms3));
+}
+async function loadStoredAuth() {
+  try {
+    const stored = await chrome.storage.local.get([TOKEN_KEY, CLIENT_ID_KEY]);
+    return { token: stored[TOKEN_KEY] || null, clientId: stored[CLIENT_ID_KEY] || null };
+  } catch {
+    return { token: null, clientId: null };
+  }
+}
+function startBridgeLink({ onToolRequest, onStatusChange } = {}) {
+  const state = {
+    ws: null,
+    connected: false,
+    paired: false,
+    token: null,
+    clientId: null,
+    stopped: false,
+    reconnectDelay: RECONNECT_BASE_MS,
+    pairingWaiters: /* @__PURE__ */ new Map()
+    // nonce -> {resolve, reject, timer}
+  };
+  const status = () => ({
+    connected: state.connected,
+    paired: state.paired,
+    bridgeReachable: state.connected
+  });
+  const emit = () => {
+    try {
+      onStatusChange?.(status());
+    } catch {
+    }
+  };
+  function send(obj) {
+    if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+      state.ws.send(JSON.stringify(obj));
+      return true;
+    }
+    return false;
+  }
+  async function helloOrUnpaired() {
+    const stored = await loadStoredAuth();
+    if (stored.token) {
+      const ok = await new Promise((resolve) => {
+        const timer = setTimeout(() => resolve(false), HANDSHAKE_TIMEOUT_MS);
+        const onMsg = (event) => {
+          let msg;
+          try {
+            msg = JSON.parse(String(event.data));
+          } catch {
+            return;
+          }
+          if (msg.type === "welcome") {
+            clearTimeout(timer);
+            state.ws?.removeEventListener("message", onMsg);
+            state.token = stored.token;
+            state.clientId = msg.clientId || stored.clientId;
+            resolve(true);
+          } else if (msg.status === "error") {
+            clearTimeout(timer);
+            state.ws?.removeEventListener("message", onMsg);
+            resolve(false);
+          }
+        };
+        state.ws.addEventListener("message", onMsg);
+        send({ type: "hello", auth: stored.token });
+      });
+      if (ok) {
+        state.paired = true;
+        emit();
+        return;
+      }
+      try {
+        await chrome.storage.local.remove([TOKEN_KEY, CLIENT_ID_KEY]);
+      } catch {
+      }
+    }
+    state.paired = false;
+    emit();
+  }
+  function onSocketMessage(event) {
+    let msg;
+    try {
+      msg = JSON.parse(String(event.data));
+    } catch {
+      return;
+    }
+    if (msg.type === "paired" || msg.type === "pair-error") {
+      const waiter = state.pairingWaiters.get("pair");
+      if (waiter) {
+        clearTimeout(waiter.timer);
+        state.pairingWaiters.delete("pair");
+        waiter.resolve(msg);
+      }
+      return;
+    }
+    if (msg && typeof msg.id === "string" && typeof msg.tool === "string") {
+      if (!state.paired) return;
+      const params = msg.params && typeof msg.params === "object" ? msg.params : {};
+      Promise.resolve().then(() => onToolRequest({ id: msg.id, tool: msg.tool, params })).then(
+        (result) => send({ id: msg.id, auth: state.token, ...result || { status: "error", reason: "empty-result" } }),
+        (err) => send({ id: msg.id, auth: state.token, status: "error", reason: err?.message || "handler-failed" })
+      );
+    }
+  }
+  async function connectLoop() {
+    while (!state.stopped) {
+      try {
+        await new Promise((resolve, reject) => {
+          let ws3;
+          try {
+            ws3 = new WebSocket(BRIDGE_WS_URL);
+          } catch (err) {
+            reject(err);
+            return;
+          }
+          const openTimer = setTimeout(() => {
+            try {
+              ws3.close();
+            } catch {
+            }
+            reject(new Error("connect-timeout"));
+          }, HANDSHAKE_TIMEOUT_MS);
+          ws3.addEventListener("open", () => {
+            clearTimeout(openTimer);
+            resolve(ws3);
+          });
+          ws3.addEventListener("error", () => {
+            clearTimeout(openTimer);
+            reject(new Error("connect-failed"));
+          });
+        }).then(async (ws3) => {
+          state.ws = ws3;
+          state.connected = true;
+          state.reconnectDelay = RECONNECT_BASE_MS;
+          ws3.addEventListener("message", onSocketMessage);
+          ws3.addEventListener("close", () => {
+            state.connected = false;
+            state.paired = false;
+            emit();
+          });
+          ws3.addEventListener("error", () => {
+          });
+          emit();
+          await helloOrUnpaired();
+          await new Promise((resolve) => {
+            ws3.addEventListener("close", resolve, { once: true });
+          });
+        });
+      } catch {
+      }
+      state.connected = false;
+      state.paired = false;
+      state.ws = null;
+      emit();
+      if (state.stopped) break;
+      const jitter = Math.floor(Math.random() * 500);
+      await sleep(state.reconnectDelay + jitter);
+      state.reconnectDelay = Math.min(state.reconnectDelay * 2, RECONNECT_MAX_MS);
+    }
+  }
+  function submitPairingCode(code) {
+    return new Promise((resolve) => {
+      if (!state.connected) {
+        resolve({ ok: false, reason: "no-connection" });
+        return;
+      }
+      const timer = setTimeout(() => {
+        state.pairingWaiters.delete("pair");
+        resolve({ ok: false, reason: "timeout" });
+      }, HANDSHAKE_TIMEOUT_MS);
+      state.pairingWaiters.set("pair", {
+        timer,
+        resolve: async (msg) => {
+          if (msg.type === "paired" && msg.token) {
+            state.token = msg.token;
+            state.clientId = msg.clientId || null;
+            state.paired = true;
+            try {
+              await chrome.storage.local.set({ [TOKEN_KEY]: msg.token, [CLIENT_ID_KEY]: state.clientId });
+            } catch {
+            }
+            emit();
+            resolve({ ok: true });
+          } else {
+            resolve({ ok: false, reason: msg.reason || "pair-failed" });
+          }
+        }
+      });
+      if (!send({ type: "pair", code: String(code).trim() })) {
+        clearTimeout(timer);
+        state.pairingWaiters.delete("pair");
+        resolve({ ok: false, reason: "no-connection" });
+      }
+    });
+  }
+  connectLoop();
+  return { getStatus: status, submitPairingCode };
+}
+
+// src/offscreen/offscreen.js
 console.log("[PerScope Offscreen] Initialized and listening for pipeline tasks.");
 function uint8ToBase64(bytes) {
   let binary = "";
@@ -48602,6 +48812,73 @@ function schedulePrewarm() {
   }
 }
 schedulePrewarm();
+async function runPipelineJob({ jobId, imageBytes, options, onProgress }) {
+  const t0 = performance.now();
+  const buffer = new Uint8Array(imageBytes).buffer;
+  const result = await runExtensionPipeline(buffer, options || {}, onProgress);
+  const outputArrayBuffer = await result.outputBlob.arrayBuffer();
+  const outputBase64 = uint8ToBase64(new Uint8Array(outputArrayBuffer));
+  return {
+    status: "SUCCESS",
+    jobId,
+    outputBase64,
+    evidence: result.evidence,
+    perceptionPrompt: result.perceptionPrompt,
+    computeDevice: result.computeDevice,
+    totalTimeMs: Math.round(performance.now() - t0)
+  };
+}
+var DOM_DEFERRED = /* @__PURE__ */ new Set([
+  "read_page",
+  "list_interactive_elements",
+  "click",
+  "type",
+  "select_option",
+  "submit",
+  "scroll"
+]);
+async function handleBridgeTool({ tool, params }) {
+  if (tool === "capture_tab") {
+    if (params && params.tabId !== void 0 && params.tabId !== null) {
+      return { status: "error", reason: "tab-targeting-requires-tabs-permission" };
+    }
+    try {
+      const cap = await chrome.runtime.sendMessage({ target: "background", action: "CAPTURE_VISIBLE_TAB" });
+      if (!cap?.dataUrl) {
+        return { status: "error", reason: cap?.error || "capture-failed" };
+      }
+      const blob = await (await fetch(cap.dataUrl)).blob();
+      const imageBytes = Array.from(new Uint8Array(await blob.arrayBuffer()));
+      const jobId = `bridge_${Date.now()}`;
+      const res = await runPipelineJob({ jobId, imageBytes, options: {}, onProgress: () => {
+      } });
+      return {
+        status: "ok",
+        redactedImage: res.outputBase64,
+        evidence: res.evidence,
+        totalTimeMs: res.totalTimeMs,
+        computeDevice: res.computeDevice
+      };
+    } catch (err) {
+      return { status: "error", reason: err?.message || "pipeline-failed" };
+    }
+  }
+  if (DOM_DEFERRED.has(tool)) {
+    return {
+      status: "error",
+      reason: "dom-not-implemented-in-beta",
+      detail: `${tool} needs content.js (Final scope). This beta serves capture_tab only.`
+    };
+  }
+  return { status: "error", reason: `unknown-tool:${tool}` };
+}
+var bridgeLink = startBridgeLink({
+  onToolRequest: handleBridgeTool,
+  onStatusChange: (s) => {
+    chrome.runtime.sendMessage({ target: "background", action: "BRIDGE_STATUS_UPDATE", status: s }).catch(() => {
+    });
+  }
+});
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.target !== "offscreen") return false;
   if (message.action === "GET_DEVICE_INFO") {
@@ -48610,7 +48887,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
   if (message.action === "RUN_PIPELINE") {
     const { jobId, imageBytes, options } = message;
-    const t0 = performance.now();
     const onProgress = (progress) => {
       chrome.runtime.sendMessage({
         target: "ui",
@@ -48622,20 +48898,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     (async () => {
       try {
         console.log(`[PerScope Offscreen] Starting pipeline job ${jobId}...`);
-        const buffer = new Uint8Array(imageBytes).buffer;
-        const result = await runExtensionPipeline(buffer, options || {}, onProgress);
-        const outputArrayBuffer = await result.outputBlob.arrayBuffer();
-        const outputBase64 = uint8ToBase64(new Uint8Array(outputArrayBuffer));
-        const response = {
-          status: "SUCCESS",
-          jobId,
-          outputBase64,
-          evidence: result.evidence,
-          perceptionPrompt: result.perceptionPrompt,
-          computeDevice: result.computeDevice,
-          totalTimeMs: Math.round(performance.now() - t0)
-        };
-        sendResponse(response);
+        sendResponse(await runPipelineJob({ jobId, imageBytes, options, onProgress }));
       } catch (error) {
         console.error(`[PerScope Offscreen] Pipeline error on job ${jobId}:`, error);
         sendResponse({
@@ -48646,6 +48909,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         });
       }
     })();
+    return true;
+  }
+  if (message.action === "BRIDGE_STATUS") {
+    sendResponse({ status: "SUCCESS", bridge: bridgeLink.getStatus() });
+    return false;
+  }
+  if (message.action === "BRIDGE_PAIR") {
+    bridgeLink.submitPairingCode(message.code).then((res) => sendResponse({ status: "SUCCESS", ...res })).catch((err) => sendResponse({ status: "ERROR", error: err?.message || String(err) }));
     return true;
   }
   return false;

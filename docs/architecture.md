@@ -92,17 +92,18 @@ Tested structure: `popup.html`/`dashboard.html` → `background/service-worker.j
 
 Manifest: `minimum_chrome_version: "116"` (for future WS keepalive). Tested MV3 manifest loads ORT WASM from `chrome.runtime.getURL("ort/")`, not CDN (MV3 CSP). Chrome-only; no Firefox claim without testing.
 
-## 4. Tool Schema & Security (planned action layer — contract locked)
+## 4. Tool Schema & Security (planned action layer — contract locked, see root README §7)
 
-See `tool-schema.md` for the seven tools (`read_page`, `list_interactive_elements`, `click`, `type`, `submit`, `select_option`, `scroll`). All callers use `{id, tool, params}` ↔ `{id, status:"ok"|"blocked"|"error"}` + unsolicited `{type:"action_update", pending_id, ...}` + `{type:"ping"}` ↔ `{type:"pong"}`. Validator identical for server/MCP/Playground/injected text. Never send/store raw screenshot. MCP `tools/call` cannot carry unsolicited push — gap tracked in `tool-schema.md` (polling `check_pending_action` vs held-open response, undecided).
+See `tool-schema.md` and root README §7.2 for the tool schema (`capture_tab`, `read_page`, `list_interactive_elements`, `click`, `type`, `submit`, `select_option`, `scroll`). All callers use `{id, tool, params}` ↔ `{id, status:"ok"|"blocked"|"denied"|"timeout"|"error"}`. Confirm flow is a **blocking tool call** (no polling tool, no push dependency) — decided, supersedes the old `action_update`-push / `check_pending_action` discussion. Validator identical for server/MCP/Playground/injected text. Never send/store raw screenshot. Extension ↔ Bridge pairing is a one-time shared secret over `ws://127.0.0.1:<port>` (origin-checked).
 
-## 5. Server, Bridge, Playground (planned — required, not built)
+## 5. Server, Bridge, Playground (planned — locked design in root README §7, not built)
 
 | Component | Path | Notes |
 |---|---|---|
-| **Playground** | `playground/` | Node WS client, scripted demo, "what agent sees" panel |
-| **MCP Bridge** | `bridge/` | Thin stdio⇄WebSocket translator, zero logic, auto-spawned |
-| **Reasoning Server** | `server/` | **Model TBD, explicitly not Qwen** — open-weight, self-hostable via vLLM/Ollama; rented GPU for SIH latency permitted and must be stated; constrained to 7-tool schema via function-calling; multi-turn (`scroll`-then-re-evaluate) |
+| **Playground** | `playground/` | PS-required Reasoning Server with 3 swappable backends (Local / Manual / Cloud) behind one `{tool, params} | {status:"final"}` contract — see README §7.4 |
+| **MCP Bridge** | `bridge/` | Node singleton daemon: WS server (extension-facing, paired) + MCP server with **dual transport** (stdio + streamable-HTTP/SSE, same handlers); `npx @perscope/bridge mcp` is a thin proxy that finds-or-spawns the daemon — see README §7.2 |
+| **DOM redaction (Phase 1)** | `extension/content/` | Text-level only (`<EMAIL_ID>` placeholders, DOM untouched); Ettin NER + `pii-detector.js` regex/validators fused by char-offset overlap; `FASTVLM_FOR_DOM` off by default — see README §7.3 |
+| **Reasoning backends** | `playground/` + remote host | Local: open-weight VLM via Ollama/vLLM (Moondream2 / Llama-3.2-Vision / PaliGemma-2 candidates, or 3B LLM); Cloud: **same** open-weight model hosted remotely (Together.ai / Fireworks / rented GPU) — see README §7.4 |
 
 ## 6. Human Mode (planned)
 

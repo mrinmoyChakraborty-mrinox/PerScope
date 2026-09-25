@@ -76,6 +76,19 @@
         </div>
       </div>
 
+      <!-- Bridge Connection (agent mode; Human Mode works without it) -->
+      <div class="sidebar-card">
+        <h3>Bridge Connection</h3>
+        <p class="bridge-status">Status: <strong id="dashBridgeStatus">Checking…</strong></p>
+        <div class="form-group">
+          <label for="dashBridgeCode">Pairing code (from bridge dashboard)</label>
+          <input type="text" id="dashBridgeCode" class="form-control" inputmode="numeric"
+                 autocomplete="one-time-code" maxlength="6" placeholder="6-digit code">
+        </div>
+        <button id="dashBridgePair" class="btn btn-secondary btn-full">Pair with Bridge</button>
+        <p class="bridge-msg" id="dashBridgeMsg"></p>
+      </div>
+
       <!-- Actions -->
       <div class="sidebar-actions">
         <button id="dashBtnUpload" class="btn btn-primary btn-full">Upload New Image</button>

@@ -51,6 +51,10 @@ try {
    findings above NER_MIN_SCORE are redacted directly (no
    adjudication tier) because the only thing leaving this module
    is a description, not a DOM mutation.
+   NOTE: DOM capture (src/pipeline/dom-capture.js + src/content/
+   dom-capture-entry.js) is intentionally browser-only — `document` /
+   `window` do not exist in this file's Node context, so unlike the image
+   pipeline there is no Node/browser 1:1 parity for DOM capture by design.
    ============================================================ */
 
 const IMAGE_PATH = process.env.IMAGE_PATH || "s4.png";

@@ -1,7 +1,38 @@
 import { WebSocketServer } from "ws";
 
 const PORT = 8080;
+/* =========================================================
+   PENDING ACTIONS
+========================================================= */
 
+const pendingActions = new Map();
+/* =========================================================
+   DESTRUCTIVE ACTION CHECK
+========================================================= */
+
+function isDestructive({
+    tool,
+    params,
+    element
+}) {
+
+    if (tool !== "click") {
+        return false;
+    }
+
+    if (!element) {
+        return false;
+    }
+
+    const label =
+        element.label || "";
+
+    return (
+        label.includes("Delete") ||
+        params?.element_id === "el_danger"
+    );
+
+}
 const wss = new WebSocketServer({
     port: PORT
 });
@@ -11,18 +42,205 @@ console.log(
 );
 
 wss.on("connection", (socket) => {
+// =====================================
+// SERVER HEARTBEAT
+// =====================================
 
+const heartbeatTimer = setInterval(() => {
+
+    if (socket.readyState === 1) {
+
+        try {
+
+            socket.send(
+                JSON.stringify({
+                    type: "ping"
+                })
+            );
+
+            console.log(
+                "[SERVER → CLIENT] ping"
+            );
+
+        } catch (error) {
+
+            console.error(
+                "[SERVER] Heartbeat failed:",
+                error
+            );
+
+        }
+
+    }
+
+}, 20000);
     console.log("[SERVER] Client connected");
 
+    let currentScrollY = 0;
     socket.on("message", (data) => {
 
         console.log("\n[CLIENT → SERVER]");
         console.log(data.toString());
-
+   
         try {
 
             const request = JSON.parse(data.toString());
+            if (request.type === "ping") {
 
+    socket.send(JSON.stringify({
+        type: "pong"
+    }));
+
+    console.log("[SERVER → CLIENT] pong");
+
+    return;
+}
+ /* =========================================================
+ACTION CONFIRMATION
+========================================================= */
+
+if (
+    request.type === "action_decision"
+) {
+
+    const {
+        pending_id,
+        decision
+    } = request;
+
+
+    const pending =
+        pendingActions.get(
+            pending_id
+        );
+
+
+    if (!pending) {
+
+        socket.send(
+            JSON.stringify({
+                type:
+                    "action_update",
+
+                pending_id,
+
+                status:
+                    "timeout"
+            })
+        );
+
+        return;
+    }
+
+
+    clearTimeout(
+        pending.timeout
+    );
+
+
+    pendingActions.delete(
+        pending_id
+    );
+
+
+    /* -----------------------------------------
+       DENY
+    ----------------------------------------- */
+
+    if (
+        decision === "deny"
+    ) {
+
+        const response = {
+
+            type:
+                "action_update",
+
+            pending_id,
+
+            status:
+                "denied"
+
+        };
+
+
+        socket.send(
+            JSON.stringify(response)
+        );
+
+
+        console.log(
+            "[SERVER → CLIENT]"
+        );
+
+        console.log(response);
+
+
+        return;
+    }
+
+
+    /* -----------------------------------------
+       APPROVE
+    ----------------------------------------- */
+
+    if (
+        decision === "approve"
+    ) {
+
+        const response = {
+
+            type:
+                "action_update",
+
+            pending_id,
+
+            status:
+                "ok"
+
+        };
+
+
+        socket.send(
+            JSON.stringify(response)
+        );
+
+
+        console.log(
+            "[SERVER → CLIENT]"
+        );
+
+        console.log(response);
+
+
+        return;
+    }
+
+
+    /* -----------------------------------------
+       INVALID DECISION
+    ----------------------------------------- */
+
+    socket.send(
+        JSON.stringify({
+
+            type:
+                "action_update",
+
+            pending_id,
+
+            status:
+                "error",
+
+            reason:
+                "invalid_decision"
+
+        })
+    );
+
+
+    return;
+}
             console.log("[SERVER] Parsed request:");
             console.log(request);
 
@@ -36,11 +254,11 @@ wss.on("connection", (socket) => {
                     id: request.id,
                     status: "ok",
                     result: {
-                        url: "https://www.travelease.com/hotels",
-                        title: "TravelEase - Hotels",
-                        summary: "Hotel search page",
-                        element_count: 7,
-                        page_height: 1240
+                       url: "about:blank",
+                       title: "Browser Page",
+                       summary: "Current browser page",
+                       element_count: 1,
+                       page_height: 0
                     }
                 };
 
@@ -65,68 +283,11 @@ if (request.tool === "list_interactive_elements") {
         result: {
             elements: [
                 {
-                    id: "el_1",
-                    type: "input",
-                    input_type: "text",
-                    label: "Destination",
-                    value: "Mumbai",
-                    bbox: [120, 220, 300, 40],
-                    page_height: 1240,
-                    enabled: true
-                },
-                {
-                    id: "el_2",
-                    type: "input",
-                    input_type: "date",
-                    label: "Check-in",
-                    value: "12/06/2025",
-                    bbox: [120, 280, 200, 40],
-                    page_height: 1240,
-                    enabled: true
-                },
-                {
-                    id: "el_3",
-                    type: "input",
-                    input_type: "date",
-                    label: "Check-out",
-                    value: "14/06/2025",
-                    bbox: [340, 280, 200, 40],
-                    page_height: 1240,
-                    enabled: true
-                },
-                {
-                    id: "el_4",
-                    type: "select",
-                    label: "Guests",
-                    value: "2 Adults",
-                    bbox: [560, 280, 150, 40],
-                    page_height: 1240,
-                    enabled: true
-                },
-                {
-                    id: "el_5",
+                    id: "el_8",
                     type: "button",
-                    label: "Search Hotels",
+                    label: "Delete Account",
                     value: null,
-                    bbox: [120, 350, 320, 48],
-                    page_height: 1240,
-                    enabled: true
-                },
-                {
-                    id: "el_6",
-                    type: "link",
-                    label: "My Trips",
-                    value: null,
-                    bbox: [420, 80, 80, 24],
-                    page_height: 1240,
-                    enabled: true
-                },
-                {
-                    id: "el_7",
-                    type: "link",
-                    label: "Support",
-                    value: null,
-                    bbox: [520, 80, 80, 24],
+                    bbox: [620, 350, 180, 48],
                     page_height: 1240,
                     enabled: true
                 }
@@ -149,8 +310,28 @@ if (request.tool === "list_interactive_elements") {
 
 if (request.tool === "type") {
 
+    const params = request.params;
+
+    if (
+        !params ||
+        typeof params.element_id !== "string" ||
+        typeof params.value !== "string"
+    ) {
+        const response = {
+            id: request.id,
+            status: "error",
+            reason: "invalid_params"
+        };
+
+        socket.send(JSON.stringify(response));
+        console.log("[SERVER → CLIENT]");
+        console.log(response);
+
+        return;
+    }
+
     console.log(
-        `[SERVER] Type requested for element: ${request.params.element_id}`
+        `[SERVER] Type requested for element: ${params.element_id}`
     );
 
     const response = {
@@ -158,8 +339,8 @@ if (request.tool === "type") {
         status: "ok",
         result: {
             typed: true,
-            element_id: request.params.element_id,
-            text: request.params.text
+            element_id: params.element_id,
+            value: params.value
         }
     };
 
@@ -178,14 +359,33 @@ if (request.tool === "type") {
 
 if (request.tool === "submit") {
 
-    console.log("[SERVER] Submit requested");
+    const params = request.params;
+     if (
+        !params ||
+        typeof params.element_id !== "string"
+    ) {
+    const response = {
+        id: request.id,
+        status: "error",
+            reason: "invalid_params"
+        };
+
+        socket.send(JSON.stringify(response));
+        console.log("[SERVER → CLIENT]");
+        console.log(response);
+
+        return;
+    }
+    console.log(
+        `[SERVER] Submit requested for element: ${params.element_id}`
+    );
 
     const response = {
         id: request.id,
         status: "ok",
         result: {
             submitted: true,
-            message: "Form submitted successfully"
+            element_id: params.element_id
         }
     };
 
@@ -203,16 +403,52 @@ if (request.tool === "submit") {
 // -----------------------------------------
 
 if (request.tool === "scroll") {
+    const params = request.params;
+    if (
+        !params ||
+        (params.direction !== "up" &&
+         params.direction !== "down") ||
+        !(
+            params.amount === "page" ||
+            Number.isInteger(params.amount)
+        )
+    ) {
+    const response = {
+        id: request.id,
+            status: "error",
+            reason: "invalid_params"
+        };
 
-    console.log("[SERVER] Scroll requested");
+        socket.send(JSON.stringify(response));
+        console.log("[SERVER → CLIENT]");
+        console.log(response);
+
+        return;
+    }
+
+    const pageAmount = 600;
+
+    const amount =
+        params.amount === "page"
+            ? pageAmount
+            : params.amount;
+
+    if (params.direction === "down") {
+        currentScrollY += amount;
+    } else {
+        currentScrollY -= amount;
+    }
+
+    currentScrollY = Math.max(
+        0,
+        currentScrollY
+    );
 
     const response = {
         id: request.id,
         status: "ok",
         result: {
-            scrolled: true,
-            direction: request.params.direction || "down",
-            amount: request.params.amount || 1
+            scroll_y: currentScrollY
         }
     };
 
@@ -231,8 +467,28 @@ if (request.tool === "scroll") {
 
 if (request.tool === "select_option") {
 
+    const params = request.params;
+
+    if (
+        !params ||
+        typeof params.element_id !== "string" ||
+        typeof params.value !== "string"
+    ) {
+        const response = {
+            id: request.id,
+            status: "error",
+            reason: "invalid_params"
+        };
+
+        socket.send(JSON.stringify(response));
+        console.log("[SERVER → CLIENT]");
+        console.log(response);
+
+        return;
+    }
+
     console.log(
-        `[SERVER] Select option requested for element: ${request.params.element_id}`
+        `[SERVER] Select option requested for element: ${params.element_id}`
     );
 
     const response = {
@@ -240,8 +496,8 @@ if (request.tool === "select_option") {
         status: "ok",
         result: {
             selected: true,
-            element_id: request.params.element_id,
-            option: request.params.option
+            element_id: params.element_id,
+            value: params.value
         }
     };
 
@@ -273,20 +529,10 @@ if (request.tool === "click") {
 
     const allowedElements = {
 
-        "el_5": {
-            label: "Search Hotels",
-            type: "button"
-        },
-
-        "el_6": {
-            label: "My Trips",
-            type: "link"
-        },
-
-        "el_7": {
-            label: "Support",
-            type: "link"
-        }
+    "el_8": {
+        label: "Delete Account",
+        type: "button"
+    }
 
     };
 
@@ -306,7 +552,7 @@ if (request.tool === "click") {
 
             status: "error",
 
-            reason: "element_not_found"
+           reason: "stale_element"
 
         };
 
@@ -322,7 +568,91 @@ if (request.tool === "click") {
         return;
     }
 
+     /* -----------------------------------------
+   DESTRUCTIVE ACTION → BLOCK
+----------------------------------------- */
 
+if (
+    isDestructive({
+        tool: request.tool,
+        params: request.params,
+        element
+    })
+) {
+
+    const pending_id =
+        `pend_${Date.now()}`;
+
+    const timeout =
+        setTimeout(() => {
+
+            if (
+                pendingActions.has(
+                    pending_id
+                )
+            ) {
+
+                pendingActions.delete(
+                    pending_id
+                );
+
+                socket.send(
+                    JSON.stringify({
+                        type:
+                            "action_update",
+
+                        pending_id,
+
+                        status:
+                            "timeout"
+                    })
+                );
+
+            }
+
+        }, 60000);
+
+
+    pendingActions.set(
+        pending_id,
+        {
+            socket,
+            tool: request.tool,
+            params: request.params,
+            timeout
+        }
+    );
+
+
+    const response = {
+
+        id: request.id,
+
+        status:
+            "blocked",
+
+        reason:
+            "destructive_action_unconfirmed",
+
+        pending_id
+
+    };
+
+
+    socket.send(
+        JSON.stringify(response)
+    );
+
+
+    console.log(
+        "[SERVER → CLIENT]"
+    );
+
+    console.log(response);
+
+
+    return;
+}
     // -----------------------------------------
     // Element exists
     // -----------------------------------------
@@ -332,17 +662,6 @@ if (request.tool === "click") {
         id: request.id,
 
         status: "ok",
-
-        result: {
-
-            clicked: true,
-
-            element_id: elementId,
-
-            label: element.label
-
-        }
-
     };
 
 
@@ -392,7 +711,7 @@ if (request.tool === "click") {
     });
 
     socket.on("close", () => {
-
+        clearInterval(heartbeatTimer);
         console.log("[SERVER] Client disconnected");
 
     });

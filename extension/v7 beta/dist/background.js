@@ -47,12 +47,83 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     });
     return true;
   }
+  if (message.action === "REQUEST_DOM_CAPTURE") {
+    (async () => {
+      try {
+        const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+        const tabId = tabs && tabs[0] && tabs[0].id;
+        if (tabId === void 0 || tabId === null) {
+          throw new Error("No active tab for DOM capture");
+        }
+        const res = await chrome.tabs.sendMessage(tabId, { type: "CAPTURE_DOM_TEXT" });
+        if (res?.status === "SUCCESS") {
+          sendResponse({ status: "SUCCESS", capture: res.capture });
+        } else {
+          sendResponse({ status: "ERROR", error: res?.error || "DOM capture failed" });
+        }
+      } catch (err) {
+        sendResponse({ status: "ERROR", error: err.message });
+      }
+    })();
+    return true;
+  }
   if (message.action === "ENSURE_OFFSCREEN") {
     ensureOffscreenDocument().then(() => sendResponse({ status: "SUCCESS" })).catch((err) => sendResponse({ status: "ERROR", error: err.message }));
     return true;
   }
+  if (message.action === "BRIDGE_STATUS_UPDATE") {
+    updateBridgeBadge(message.status).catch(() => {
+    });
+    return false;
+  }
+  if (message.action === "BRIDGE_STATUS") {
+    (async () => {
+      try {
+        await ensureOffscreenDocument();
+        const res = await chrome.runtime.sendMessage({ target: "offscreen", action: "BRIDGE_STATUS" });
+        if (res?.bridge) updateBridgeBadge(res.bridge).catch(() => {
+        });
+        sendResponse({ status: "SUCCESS", bridge: res?.bridge || { connected: false, paired: false } });
+      } catch (err) {
+        sendResponse({ status: "SUCCESS", bridge: { connected: false, paired: false, error: err.message } });
+      }
+    })();
+    return true;
+  }
+  if (message.action === "BRIDGE_PAIR") {
+    (async () => {
+      try {
+        await ensureOffscreenDocument();
+        const res = await chrome.runtime.sendMessage({ target: "offscreen", action: "BRIDGE_PAIR", code: message.code });
+        if (res?.ok) {
+          updateBridgeBadge({ connected: true, paired: true }).catch(() => {
+          });
+          sendResponse({ status: "SUCCESS", ok: true });
+        } else {
+          sendResponse({ status: "SUCCESS", ok: false, reason: res?.reason || res?.error || "pair-failed" });
+        }
+      } catch (err) {
+        sendResponse({ status: "SUCCESS", ok: false, reason: err.message });
+      }
+    })();
+    return true;
+  }
   return false;
 });
+async function updateBridgeBadge(s) {
+  const paired = !!(s && s.connected && s.paired);
+  const connected = !!(s && s.connected);
+  try {
+    await chrome.action.setBadgeText({ text: paired || connected ? "\u25CF" : "" });
+    await chrome.action.setBadgeBackgroundColor({
+      color: paired ? "#22c55e" : connected ? "#f59e0b" : "#6b7280"
+    });
+    await chrome.action.setTitle({
+      title: paired ? "PerScope: bridge connected + paired" : connected ? "PerScope: bridge reachable, not paired" : "PerScope: bridge not running"
+    });
+  } catch {
+  }
+}
 export {
   ensureOffscreenDocument
 };

@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>AI Process Chat Mock</title>
+<style>
+  :root{
+    --bg:#1a1917; --panel:#21201d; --panel2:#282622; --panel3:#302e2a;
+    --text:#f2efe9; --muted:#aaa59d; --subtle:#817d75; --line:#3a3833;
+    --accent:#d6a36a; --accent2:#e8bf8f; --green:#9ecb9a; --danger:#da8b82;
+    --glow: rgba(222,170,111,.52);
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%;margin:0;background:var(--bg);color:var(--text);font-family:ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;overflow:hidden}
+  button,input,textarea{font:inherit}
+  .app{display:grid;grid-template-columns:280px 1fr;height:100vh}
+  .sidebar{background:#151411;border-right:1px solid #2b2925;padding:18px 14px;display:flex;flex-direction:column;gap:14px}
+  .brand{display:flex;align-items:center;gap:10px;padding:7px 10px 14px}
+  .brandMark{width:27px;height:27px;border-radius:8px;background:linear-gradient(135deg,#dbb488,#a87546);box-shadow:0 6px 20px rgba(218,173,121,.17);position:relative}
+  .brandMark:before,.brandMark:after{content:"";position:absolute;background:#fff3df;border-radius:99px}
+  .brandMark:before{width:12px;height:4px;left:8px;top:8px;transform:rotate(45deg)}
+  .brandMark:after{width:12px;height:4px;left:8px;top:15px;transform:rotate(-45deg)}
+  .brandName{font-size:15px;font-weight:700;letter-spacing:.1px}
+  .newBtn{border:1px solid #37342e;background:#22211e;color:#eeeae4;padding:10px 12px;border-radius:10px;text-align:left;cursor:pointer}
+  .newBtn:hover{background:#2a2824}
+  .sectionLabel{padding:5px 10px 0;font-size:11px;text-transform:uppercase;letter-spacing:.12em;color:#6f6c65}
+  .thread{padding:9px 10px;border-radius:9px;color:#cbc6be;font-size:13px;display:flex;justify-content:space-between;align-items:center}
+  .thread.active{background:#25231f;color:#fff}
+  .thread span{max-width:190px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .sidebarBottom{margin-top:auto;color:#77736b;font-size:12px;padding:10px}
+  .main{min-width:0;display:grid;grid-template-rows:auto 1fr auto;background:var(--bg)}
+  .topbar{height:60px;border-bottom:1px solid #2c2a26;display:flex;align-items:center;justify-content:space-between;padding:0 22px;background:rgba(26,25,23,.86);backdrop-filter:blur(14px)}
+  .model{font-size:14px;font-weight:650;display:flex;align-items:center;gap:8px}
+  .dot{width:7px;height:7px;background:#8ac98c;border-radius:50%;box-shadow:0 0 14px rgba(138,201,140,.7)}
+  .topActions{display:flex;gap:8px;align-items:center}
+  .mini{border:1px solid #38352f;background:#22211e;color:#bbb6af;border-radius:8px;padding:7px 9px;font-size:12px;cursor:pointer}
+  .mini:hover{color:#fff}
+  .chatWrap{overflow:auto;padding:32px 18px 26px}
+  .chat{width:min(860px,calc(100vw - 350px));margin:0 auto}
+  .msg{display:flex;gap:14px;margin:22px 0}
+  .avatar{width:30px;height:30px;flex:0 0 30px;border-radius:50%;display:grid;place-items:center;font-size:11px;font-weight:700}
+  .user .avatar{background:#7f6e5a;color:#fff}
+  .assistant .avatar{background:linear-gradient(135deg,#d9ae7b,#a6794f);color:#1d1915}
+  .bubble{max-width:760px;line-height:1.6;font-size:15px}
+  .user .bubble{background:#25231f;border:1px solid #302e29;border-radius:13px;padding:11px 14px;white-space:pre-wrap}
+  .assistant .bubble{color:#ece8e1}
+  .hint{font-size:12px;color:#77736d;margin-top:8px}
+  .thinkingCard{margin:18px 0 0 44px;border:1px solid #34312c;background:transparent;border-radius:14px;padding:9px 2px;width:min(670px,calc(100% - 60px));display:none}
+  .thinkingHeader{display:flex;align-items:center;gap:10px;color:#ddd7cf;font-size:14px;font-weight:600;min-height:30px}
+  .thinkingGlyph{width:22px;height:22px;position:relative;display:inline-grid;place-items:center;flex:none}
+  .thinkingGlyph:before{content:"";position:absolute;width:8px;height:8px;border-radius:50%;background:#fff5e7;box-shadow:0 0 10px 2px rgba(244,203,153,.6);animation:glyphCore 2.2s ease-in-out infinite}
+  .thinkingGlyph:after{content:"✦";position:absolute;color:#efc796;font-size:22px;line-height:1;filter:drop-shadow(0 0 8px rgba(238,190,132,.72));animation:glyphMorph 2.2s cubic-bezier(.4,0,.2,1) infinite}
+  @keyframes glyphCore{0%,100%{transform:scale(.8);opacity:.7}50%{transform:scale(1.2);opacity:1}}
+  @keyframes glyphMorph{0%,100%{transform:rotate(0deg) scale(.75);opacity:.72}35%{transform:rotate(45deg) scale(1.08);opacity:1}70%{transform:rotate(90deg) scale(.84);opacity:.82}}
+  .thinkingText{margin-left:32px;margin-top:-1px;height:25px;position:relative;overflow:hidden;font-size:13px;font-weight:500;color:#b3ada4}
+  .thinkingWord{position:absolute;left:0;top:0;will-change:transform,opacity,filter;animation:iconiqWord 3.2s cubic-bezier(.22,.61,.36,1) infinite}
+  @keyframes iconiqWord{0%{opacity:0;transform:translateY(11px);filter:blur(7px)}16%{opacity:.9;transform:translateY(0);filter:blur(0)}62%{opacity:1;transform:translateY(0);filter:blur(0)}78%{opacity:0;transform:translateY(-10px);filter:blur(6px)}100%{opacity:0;transform:translateY(-10px);filter:blur(6px)}}
+  .shimmer{height:1px;width:220px;margin:7px 0 0 32px;border-radius:999px;overflow:hidden;background:linear-gradient(90deg,transparent,rgba(236,198,151,.10),transparent);position:relative}
+  .shimmer:before{content:"";position:absolute;inset:0;width:30%;background:linear-gradient(90deg,transparent,rgba(248,218,181,.75),transparent);filter:blur(1px);animation:iconiqShimmer 2s ease-in-out infinite}
+  @keyframes iconiqShimmer{0%{transform:translateX(-140%)}100%{transform:translateX(470%)}}
+  .process{margin:20px 0 0 44px;border:1px solid #37332d;border-radius:15px;background:#201f1c;padding:18px;width:min(720px,calc(100% - 60px));display:none}
+  .process.show{display:block;animation:fadeIn .5s ease}
+  @keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+  .processTitle{display:flex;justify-content:space-between;align-items:center;margin-bottom:13px}
+  .processTitle strong{font-size:13px}
+  .live{font-size:10px;text-transform:uppercase;letter-spacing:.11em;color:#8fc58f;display:flex;align-items:center;gap:6px}
+  .live:before{content:"";width:6px;height:6px;border-radius:50%;background:#8fc58f;box-shadow:0 0 10px #8fc58f}
+  .tree{position:relative;padding-left:12px}
+  .tree:before{content:"";position:absolute;left:10px;top:13px;bottom:14px;width:1px;background:#45413b}
+  .node{position:relative;margin:0 0 9px 0;padding-left:23px;opacity:0;transform:translateY(8px);max-height:0;overflow:hidden;transition:opacity .45s ease,transform .45s ease,max-height .55s ease}
+  .node.revealed{opacity:1;transform:none;max-height:320px}
+  .node.current .nodeHeader{box-shadow:0 0 0 1px rgba(214,163,106,.22),0 0 18px rgba(214,163,106,.08)}
+  .node.current .nodeDot{animation:nodePulse 1.15s ease-in-out infinite}
+  @keyframes nodePulse{0%,100%{box-shadow:0 0 0 4px #201f1c,0 0 0 rgba(214,163,106,0)}50%{box-shadow:0 0 0 4px #201f1c,0 0 12px rgba(214,163,106,.35)}}
+  .node:before{content:"";position:absolute;left:4px;top:11px;width:13px;height:1px;background:#45413b}
+  .nodeDot{position:absolute;left:-1px;top:7px;width:10px;height:10px;border-radius:50%;background:#2c2924;border:2px solid #a9845e;box-shadow:0 0 0 4px #201f1c}
+  .node.done .nodeDot{background:#9fc89a;border-color:#9fc89a;box-shadow:0 0 14px rgba(159,200,154,.25),0 0 0 4px #201f1c}
+  .nodeHeader{display:flex;justify-content:space-between;gap:10px;align-items:center;padding:8px 10px;border-radius:10px;background:#272521}
+  .nodeLabel{font-size:13px;font-weight:650}.nodeMeta{font-size:11px;color:#79756e}
+  .nodeBody{padding:7px 10px 3px;color:#8f8a82;font-size:11px}
+  .branch{margin-left:20px;margin-top:5px;padding-left:15px;border-left:1px dashed #403c35;opacity:0;transform:translateY(5px);transition:opacity .35s ease .18s,transform .35s ease .18s}
+  .node.revealed .branch{opacity:1;transform:none}
+  .branch div{font-size:11px;color:#7e7971;padding:3px 0}
+  .composer{border-top:1px solid #2d2b27;padding:15px 18px 18px;background:linear-gradient(180deg,rgba(26,25,23,.65),#191816)}
+  .composerInner{width:min(860px,calc(100vw - 350px));margin:0 auto;border:1px solid #464139;border-radius:15px;background:#211f1c;padding:10px;box-shadow:0 8px 30px rgba(0,0,0,.22)}
+  textarea{width:100%;min-height:46px;max-height:130px;resize:none;border:0;outline:0;background:transparent;color:#f2eee8;padding:4px 5px;font-size:14px}
+  textarea::placeholder{color:#68645e}
+  .composerBar{display:flex;align-items:center;justify-content:space-between;margin-top:7px}
+  .mode{font-size:11px;color:#7d7870}
+  .send{border:0;width:34px;height:34px;border-radius:10px;background:#d3a16d;color:#1c1813;font-weight:800;cursor:pointer}
+  .send:hover{filter:brightness(1.08)}
+  .status{font-size:11px;color:#7f7a73;margin-top:7px;text-align:center}
+  .offlineBadge{position:fixed;right:16px;bottom:10px;font-size:10px;color:#6e6a63;background:#1f1e1a;border:1px solid #2f2d28;border-radius:999px;padding:5px 8px}
+  @media(max-width:820px){.app{grid-template-columns:1fr}.sidebar{display:none}.chat{width:100%}.composerInner{width:100%}.thinkingCard,.process{margin-left:0;width:100%}.chatWrap{padding:22px 14px}.topbar{padding:0 15px}}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar">
+    <div class="brand"><div class="brandMark"></div><div class="brandName">Process Chat</div></div>
+    <button class="newBtn" id="newChat">＋ New chat</button>
+    <div class="sectionLabel">Today</div>
+    <div class="thread active"><span>Perception → Action demo</span><span>•••</span></div>
+    <div class="sectionLabel">Offline demo</div>
+    <div class="thread"><span>Redaction workflow</span></div>
+    <div class="thread"><span>Agent process visualization</span></div>
+    <div class="sidebarBottom">Single HTML · works offline</div>
+  </aside>
+  <main class="main">
+    <header class="topbar">
+      <div class="model"><span class="dot"></span> Claude-style Process UI</div>
+      <div class="topActions"><button class="mini" id="reset">Reset</button><button class="mini" id="speed">Fast mode</button></div>
+    </header>
+    <section class="chatWrap" id="chatWrap">
+      <div class="chat" id="chat">
+        <div class="thinkingCard" id="thinkingCard">
+          <div class="thinkingHeader"><span class="thinkingGlyph" aria-hidden="true"></span><span>Thinking</span></div>
+          <div class="thinkingText"><span class="thinkingWord" id="thinkingWord">Thinking…</span></div>
+          <div class="shimmer"></div>
+        </div>
+        <div class="process" id="process">
+          <div class="processTitle"><strong>Process trace</strong><span class="live">Live</span></div>
+          <div class="tree">
+            <div class="node"><span class="nodeDot"></span><div class="nodeHeader"><span class="nodeLabel">Perception</span><span class="nodeMeta">taking a lot</span></div><div class="nodeBody">Understanding the input and identifying what needs to happen.</div><div class="branch"><div>↳ input parsed</div><div>↳ intent detected</div></div></div>
+            <div class="node"><span class="nodeDot"></span><div class="nodeHeader"><span class="nodeLabel">Redacting</span><span class="nodeMeta">sanitizing</span></div><div class="nodeBody">Checking sensitive content before the next stage.</div><div class="branch"><div>↳ sensitive spans found</div><div>↳ safe representation created</div></div></div>
+            <div class="node"><span class="nodeDot"></span><div class="nodeHeader"><span class="nodeLabel">Reasoning</span><span class="nodeMeta">planning</span></div><div class="nodeBody">Selecting the next useful operation for the request.</div></div>
+            <div class="node"><span class="nodeDot"></span><div class="nodeHeader"><span class="nodeLabel">Acting upon</span><span class="nodeMeta">executing</span></div><div class="nodeBody">Applying the selected action and preparing the response.</div></div>
+            <div class="node done"><span class="nodeDot"></span><div class="nodeHeader"><span class="nodeLabel">Done</span><span class="nodeMeta">complete</span></div><div class="nodeBody">Process finished successfully.</div></div>
+          </div>
+        </div>
+      </div>
+    </section>
+    <footer class="composer">
+      <div class="composerInner">
+        <textarea id="input" placeholder="Message…" rows="1"></textarea>
+        <div class="composerBar"><span class="mode">Demo engine · local simulation</span><button class="send" id="send" aria-label="Send">↑</button></div>
+      </div>
+      <div class="status" id="status">Send a message to start the process.</div>
+    </footer>
+  </main>
+</div>
+<div class="offlineBadge" id="badge">OFFLINE READY</div>
+<script>
+(() => {
+  const $ = (s) => document.querySelector(s);
+  const wrap = $('#chatWrap'), chat = $('#chat'), input = $('#input'), send = $('#send');
+  const thinkingCard = $('#thinkingCard'), process = $('#process'), word = $('#thinkingWord'), status = $('#status');
+  let fast = false;
+  let runId = 0;
+  const words = ['Thinking…','Reasoning…','Planning…','Refining…'];
+
+  function scrollBottom(){ wrap.scrollTo({top:wrap.scrollHeight, behavior:'smooth'}); }
+  function addMessage(text, who){
+    const msg = document.createElement('div');
+    msg.className = 'msg ' + who;
+    const avatar = document.createElement('div');
+    avatar.className='avatar';
+    avatar.textContent = who==='user'?'M':'AI';
+    const bubble = document.createElement('div');
+    bubble.className='bubble';
+    bubble.textContent=text;
+    msg.append(avatar,bubble);
+    chat.appendChild(msg);
+    scrollBottom();
+  }
+  function resetView(message='Send a message to start the process.') {
+    runId++;
+    chat.querySelectorAll('.msg').forEach(x=>x.remove());
+    process.classList.remove('show');
+    thinkingCard.style.display='none';
+    // Keep the process UI in the conversation flow, but hidden until a send.
+    chat.appendChild(thinkingCard);
+    chat.appendChild(process);
+    status.textContent=message;
+  }
+  function runFlow(){
+    const id = ++runId;
+    // Move the live UI to the bottom of the current conversation turn.
+    chat.appendChild(thinkingCard);
+    chat.appendChild(process);
+    thinkingCard.style.display='block';
+    process.classList.remove('show');
+    status.textContent='Thinking…';
+
+    let i=0;
+    const restartWordAnimation = () => {
+      word.textContent=words[i];
+      word.style.animation='none';
+      void word.offsetWidth;
+      word.style.animation='iconiqWord 3.2s cubic-bezier(.22,.61,.36,1) infinite';
+    };
+    restartWordAnimation();
+    const interval = setInterval(()=>{
+      if(id !== runId){ clearInterval(interval); return; }
+      i=(i+1)%words.length;
+      restartWordAnimation();
+    }, fast?850:1200);
+
+    const thinkingMs = fast?3000:6500;
+    setTimeout(()=>{
+      clearInterval(interval);
+      if(id !== runId) return;
+      thinkingCard.style.display='none';
+      process.classList.add('show');
+      const nodes = Array.from(process.querySelectorAll('.node'));
+      nodes.forEach(n => n.classList.remove('revealed','current'));
+      status.textContent='Perception';
+      scrollBottom();
+
+      const stepMs = fast ? 1050 : 1750;
+      nodes.forEach((node, index) => {
+        setTimeout(()=>{
+          if(id !== runId) return;
+          node.classList.add('revealed','current');
+          nodes.slice(0,index).forEach(n=>n.classList.remove('current'));
+          const label = node.querySelector('.nodeLabel')?.textContent || 'Processing';
+          status.textContent = label === 'Done' ? 'Complete · local process simulation' : label;
+          scrollBottom();
+        }, index * stepMs);
+      });
+    }, thinkingMs);
+  }
+
+  function submit(){
+    const text=input.value.trim();
+    if(!text) return;
+    // A new user send cleanly starts a new visual run.
+    runId++;
+    thinkingCard.style.display='none';
+    process.classList.remove('show');
+    addMessage(text,'user');
+    input.value='';
+    input.style.height='auto';
+
+    const msg = document.createElement('div');
+    msg.className='msg assistant';
+    msg.innerHTML='<div class="avatar">AI</div><div class="bubble"><div>Processing your request…</div></div>';
+    chat.appendChild(msg);
+    scrollBottom();
+
+    runFlow();
+  }
+
+  send.addEventListener('click', submit);
+  input.addEventListener('keydown', e => {
+    if(e.key === 'Enter' && !e.shiftKey){ e.preventDefault(); submit(); }
+  });
+  input.addEventListener('input',()=>{
+    input.style.height='auto';
+    input.style.height=Math.min(input.scrollHeight,130)+'px';
+  });
+  $('#speed').addEventListener('click',()=>{
+    fast=!fast;
+    $('#speed').textContent=fast?'Normal mode':'Fast mode';
+  });
+  $('#reset').addEventListener('click',()=>{ resetView(); input.focus(); });
+  $('#newChat').addEventListener('click',()=>{ resetView('New chat · send a message to begin.'); input.focus(); });
+})();
+</script>
+</body>
+</html>
