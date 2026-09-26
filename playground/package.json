@@ -4,8 +4,9 @@
   "description": "PerScope Privacy-First Browser Agent Playground",
   "type": "module",
   "scripts": {
-    "start": "serve ui -l 3000",
-    "serve": "serve ui -l 3000",
+    "start": "vite",
+    "serve": "vite",
+    "dev": "vite",
     "mock": "node mock/websocket-server.js",
     "test": "node --test --test-concurrency=1 tests/transport.test.mjs tests/schema.test.mjs"
   },
@@ -21,7 +22,8 @@
     "ws": "^8.21.3"
   },
   "devDependencies": {
+    "concurrently": "^9.2.1",
     "serve": "^14.2.4",
-    "concurrently": "^9.2.1"
+    "vite": "^8.3.1"
   }
 }

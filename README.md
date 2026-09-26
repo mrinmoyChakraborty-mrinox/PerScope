@@ -4,7 +4,9 @@ Chrome MV3 extension + Node reference pipeline that detects personally identifyi
 information in screenshots/photos and redacts it **fully on-device** (WebGPU / WASM,
 no cloud calls). This repo is a working test prototype: the extension in `dist/`
 runs the complete pipeline locally, and `v7.mjs` is the Node reference implementation
-the browser code maintains 1:1 algorithmic parity with.
+the browser code maintains algorithmic parity with (extension-only performance
+divergences: 1600px working-resolution cap, 160-token FastVLM budget — same
+models, order, fusion, and gates; cost, not outcomes).
 
 Status: prototype under active testing. OCR, NER, face detection, fusion, safety gates,
 and canvas redaction all run end-to-end; the FastVLM adjudication step is functional
@@ -51,7 +53,10 @@ resolution rejects any box that is not value-specific.
 |---|---|---|---|---|---|---|
 | 1 | PaddleOCR PP-OCRv6-small | `snowfluke/ppu-paddle-ocr-models` (see `models/model-manifest.json` for URLs + sha256) | Text detection + recognition. Recognition runs **per-box** (`strategy: "per-box"`, `minimumConfidence: 0.5`) — more robust than per-line when detection boxes shift between canvas backends | `PP-OCRv6_small_det.ort` + `PP-OCRv6_small_rec.ort` + dict | det ~10 MB, rec ~21 MB | Browser: WASM EP. Bundled at `dist/models/paddleocr/` |
 | 2 | Ettin 68M Nemotron PII | `rulesentry-io/ettin-68m-nemotron-pii-onnx` | NER token classification over OCR text (BIO labels → entity spans → OCR-region mapping). fp32, `model_file_name: "model"`, 512 max tokens, min score 0.3 | `model.onnx` (+ `model_q4.onnx` present in repo copy) | ~274 MB (+274 MB q4 copy) | WebGPU EP pinned; single-thread WASM (`intra/interOp: 1`) CPU fallback. The int64-encoder-input crash on threaded WASM is why the EP is pinned, not left to auto |
-| 3 | FastVLM-0.5B | `onnx-community/FastVLM-0.5B-ONNX` | Multimodal adjudicator: sees screenshot + OCR/fused evidence, returns JSON `{ caption, redactions, additional_redactions, rejected_candidates }`. Greedy decode, `max_new_tokens: 512`, `repetition_penalty: 1.15`, `no_repeat_ngram_size: 3` | `embed_tokens_fp16` + `vision_encoder_q4f16` + `decoder_model_merged_q4f16` (~780 MB total). Switchable to plain `q4` via `VARIANT=q4` download script (vision q4 is ~482 MB — barely smaller than fp32) | ~780 MB | WebGPU EP pinned; WASM CPU retry. Images resized to max 672 px before inference |
+| 3 | FastVLM-0.5B | `onnx-community/FastVLM-0.5B-ONNX` | Multimodal adjudicator: sees screenshot + OCR/fused evidence, returns JSON `{ caption, redactions, additional_redactions, rejected_candidates }`. Greedy decode,
+`max_new_tokens: 160`, `repetition_penalty: 1.15`, `no_repeat_ngram_size: 3` | `embed_tokens_fp16` +
+`vision_encoder_q4f16` + `decoder_model_merged_q4f16` (~780 MB total). Switchable to plain `q4` via `VARIANT=q4`
+download script (vision q4 is ~482 MB — barely smaller than fp32) | ~780 MB | WebGPU EP pinned; no WASM retry (failed loads fall through to fusion_fallback by design). Images resized to max 448 px before inference |
 | 4 | BlazeFace | `garavv/blazeface-onnx` (`blaze.onnx`) | Face detection → 128×128 planar NCHW RGB input, NMS (IoU 0.3, max 25, min conf 0.6) | `blaze.onnx` | ~0.5 MB | WASM EP by default (fast and stable); WebGPU optional |
 
 Retired/superseded entries still present in `models/` and `model-manifest.json`
@@ -179,7 +184,8 @@ not documentation. `patches/` holds `patch-package` fixes (`ppu-ocv` runtime-ini
 ## 5. Repo Layout
 
 ```text
-v7.mjs                      Node reference pipeline (~5000 lines, 1:1 with extension)
+v7.mjs                      Node reference pipeline (~5000 lines; extension mirrors it
+                            except the documented perf-only divergences above)
 src/pipeline/               v7-extension.js (browser pipeline), gpu.js, face.js,
                             heuristics.js, ner-utils.js, prompts.js, safety.js,
                             canvas-redactor.js

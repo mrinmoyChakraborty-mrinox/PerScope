@@ -164,6 +164,16 @@ export async function startHttpServer(
     res.type("html").send(renderDashboard({ pairing: getPairing(), status: getStatus(), ports }));
   });
   app.get("/health", (_req, res) => res.json({ ok: true, ...getStatus() }));
+  // Machine-readable pairing code for `perscope connect` (localhost only —
+  // the same code the dashboard HTML already shows to any local viewer).
+  app.get("/pairing-code", (_req, res) => {
+    const pairing = getPairing();
+    res.json(
+      pairing.code
+        ? { code: pairing.code, expiresAt: pairing.expiresAt }
+        : { code: null, expiresAt: pairing.expiresAt ?? null }
+    );
+  });
 
   app.all("/mcp", async (req, res) => {
     const server = createMcpServer(bridge, { toolTimeoutMs });

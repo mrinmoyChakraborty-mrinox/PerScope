@@ -17,9 +17,22 @@ and anything that looks like a safety judgment belongs in the extension, not her
 cd bridge
 npm install
 
-# Terminal 1: long-running daemon (keeps the bridge alive persistently)
-npx perscope-bridge daemon
-# prints the pairing code + dashboard URL, stays running until killed
+# One-time global install so the command is just `perscope-bridge`
+npm install -g .
+```
+
+```bash
+# Start (or find) the daemon, print URLs + pairing code
+perscope-bridge connect
+
+# Stop it gracefully when done
+perscope-bridge disconnect
+
+# Force-stop it if graceful stop hangs
+perscope-bridge terminate
+
+# Long-running daemon directly (stays in this terminal until killed)
+perscope-bridge daemon
 ```
 
 ## Register with your agent

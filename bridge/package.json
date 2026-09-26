@@ -1,11 +1,11 @@
 {
   "name": "@perscope/bridge",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "description": "Local message-relay bridge for the PerScope Chrome extension: paired WebSocket to the extension + MCP server (stdio via proxy, streamable-HTTP) for agents. Zero logic — relays only.",
   "type": "module",
   "license": "MIT",
   "bin": {
-    "perscope-bridge": "bin/cli.js"
+    "perscope-bridge": "./bin/cli.js"
   },
   "files": [
     "bin/",
@@ -14,7 +14,7 @@
     "LICENSE"
   ],
   "scripts": {
-    "test": "node --test --test-concurrency=1 test/pairing.test.js test/lockfile.test.js test/ws-auth.test.js test/agent-mux.test.js test/roundtrip.test.js test/stdio-purity.test.js"
+    "test": "node --test --test-concurrency=1 test/pairing.test.js test/lockfile.test.js test/ws-auth.test.js test/agent-mux.test.js test/daemon-control.test.mjs test/roundtrip.test.js test/stdio-purity.test.js"
   },
   "engines": {
     "node": ">=20.0.0"

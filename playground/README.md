@@ -15,7 +15,8 @@ renders — it never decides, never executes, never validates.
 
 ## Scripts
 
-- `npm start` / `npm run serve` — static UI on `:3000` (default path; serves nothing canned).
+- `npm start` / `npm run serve` / `npm run dev` — Vite dev server on `:3000`;
+  open `/` (the app entry — no directory listing, no `.html` paths).
 - `npm run mock` — explicit-only fake `:8080` world for offline UI dev. Bannered DEMO ONLY, frozen, never the default.
 - `npm test` — transport + contract suites against a real bridge daemon (no mock in the path).
 
