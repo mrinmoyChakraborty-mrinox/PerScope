@@ -82,28 +82,28 @@ Tested structure: `popup.html`/`dashboard.html` → `background/service-worker.j
 
 | Component | File | Responsibility | Status |
 |---|---|---|---|
-| `background.js` | `extension/background/background.js` | WS client (3 callers), 20s keepalive, routing, `isDestructive()`, `pendingActions` | **Planned** — tested SW: offscreen lifecycle + tab capture only |
-| `offscreen.js` | `extension/offscreen/offscreen.js` | Hosts **BlazeFace, PaddleOCR, Ettin-68M, FastVLM-0.5B** via Transformers.js + ORT Web; idle pre-warm NER + FastVLM | **Tested** |
-| `content.js` | `extension/content/content.js` | Only live-DOM access; actions + chat injection | **Planned** |
-| Popup | `extension/popup/` | Tab selector, Capture, progress, Review (Visual+Context, clean/ambiguous/blocked), Send / Send & Submit | **Partially tested** (upload/capture/device-tier/progress exist; Send-to-Chat planned) |
-| Side Panel | `extension/sidepanel/` | Live view + Approve/Deny | **Planned** (tested equiv: dashboard bbox-overlay review) |
-| Dashboard | `extension/dashboard/` | Privacy Log + Security Log, redacted-only, Clear All | **Partially tested** (telemetry/evidence/export exist; two-log structure planned) |
+| `background.js` | `extension/v7 beta/src/background/` | Offscreen lifecycle + tab capture + `BRIDGE_STATUS`/`BRIDGE_PAIR` relay + action badge + DOM/element-list relays (`REQUEST_DOM_CAPTURE`, `REQUEST_ELEMENT_LIST`, `LIST_TABS`) | **Built** (no sockets in SW by design — WS lives in offscreen) |
+| `offscreen.js` | `extension/v7 beta/src/offscreen/` | Hosts **BlazeFace, PaddleOCR, Ettin-68M, FastVLM-0.5B** via Transformers.js + ORT Web; idle pre-warm NER + FastVLM; owns bridge WS link + `capture_tab`/`read_page`/`list_interactive_elements`/`list_tabs` routing | **Tested (models) + Built (bridge routing)** |
+| `content.js` | `extension/v7 beta/src/content/dom-capture-entry.js` + `refs.js` | Tier0 snapshot capture (never mutates DOM) + opaque `ref` registry with live re-resolution | **Built + tested** (capture + refs suites); action execution pending (T6d) |
+| Popup | `extension/v7 beta/src/popup/` | Upload/capture/device-tier/progress + DOM capture view + bridge status row | **Built** (Send-to-Chat still planned) |
+| Side Panel | — | Live view + Approve/Deny | **Planned** — D7 approved popup-window for beta instead |
+| Dashboard | `extension/v7 beta/src/app/` | Telemetry/evidence/export + Bridge pairing card | **Built** (two-log structure still planned) |
 | Chat Injection | `extension/content/chat-adapters/` | Tab discovery, per-site adapters, via `content.js` | **Planned** |
 
 Manifest: `minimum_chrome_version: "116"` (for future WS keepalive). Tested MV3 manifest loads ORT WASM from `chrome.runtime.getURL("ort/")`, not CDN (MV3 CSP). Chrome-only; no Firefox claim without testing.
 
-## 4. Tool Schema & Security (planned action layer — contract locked, see root README §7)
+## 4. Tool Schema & Security (action layer — contract locked, partially built; see root README §7)
 
-See `tool-schema.md` and root README §7.2 for the tool schema (`capture_tab`, `read_page`, `list_interactive_elements`, `click`, `type`, `submit`, `select_option`, `scroll`). All callers use `{id, tool, params}` ↔ `{id, status:"ok"|"blocked"|"denied"|"timeout"|"error"}`. Confirm flow is a **blocking tool call** (no polling tool, no push dependency) — decided, supersedes the old `action_update`-push / `check_pending_action` discussion. Validator identical for server/MCP/Playground/injected text. Never send/store raw screenshot. Extension ↔ Bridge pairing is a one-time shared secret over `ws://127.0.0.1:<port>` (origin-checked).
+See `tool-schema.md` and root README §7.2 for the tool schema (`capture_tab`, `read_page`, `list_interactive_elements`, `list_tabs`, `click`, `type`, `submit`, `select_option`, `scroll`). Agent side: `{id, tool, params, auth}` with `role:"agent"` declared at pair/hello; extension side receives `{id, tool, params}` and answers `{id, status:"ok"|"denied"|"timeout"|"error"}` with agent ids remapped to internal UUIDs on the extension leg. Confirm flow is a **blocking tool call** (no polling tool, no push dependency) — as-built in bridge + extension + playground. `isDestructive()` + approval UI still pending (T6d; popup-window approved). Never send/store raw screenshot. Extension ↔ Bridge pairing is a one-time shared secret over `ws://127.0.0.1:<port>`, dashboard always shows a live code.
 
-## 5. Server, Bridge, Playground (planned — locked design in root README §7, not built)
+## 5. Server, Bridge, Playground (locked design in root README §7 — bridge + manual side built)
 
 | Component | Path | Notes |
 |---|---|---|
-| **Playground** | `playground/` | PS-required Reasoning Server with 3 swappable backends (Local / Manual / Cloud) behind one `{tool, params} | {status:"final"}` contract — see README §7.4 |
-| **MCP Bridge** | `bridge/` | Node singleton daemon: WS server (extension-facing, paired) + MCP server with **dual transport** (stdio + streamable-HTTP/SSE, same handlers); `npx @perscope/bridge mcp` is a thin proxy that finds-or-spawns the daemon — see README §7.2 |
-| **DOM redaction (Phase 1)** | `extension/content/` | Text-level only (`<EMAIL_ID>` placeholders, DOM untouched); Ettin NER + `pii-detector.js` regex/validators fused by char-offset overlap; `FASTVLM_FOR_DOM` off by default — see README §7.3 |
-| **Reasoning backends** | `playground/` + remote host | Local: open-weight VLM via Ollama/vLLM (Moondream2 / Llama-3.2-Vision / PaliGemma-2 candidates, or 3B LLM); Cloud: **same** open-weight model hosted remotely (Together.ai / Fireworks / rented GPU) — see README §7.4 |
+| **Playground** | `playground/` | Manual side built: WS agent leg (paired, 70s ceilings), tab picker (`list_tabs`), generic sender, `capture_tab` rendering, pairing UI; mock retired to explicit-only. Chat/model backends deferred (T6, PS-required) — see README §7.4 |
+| **MCP Bridge** | `bridge/` | **Built, `@perscope/bridge@0.1.0` published**; in-repo: role-aware multiplexing (extension vs agent sockets, id remap, `duplicate-id` guard), 9 tools on stdio + streamable-HTTP, `npx @perscope/bridge mcp` proxy-to-daemon — see README §7.2. `0.2.0` ships after final acceptance |
+| **DOM redaction (Phase 1)** | `extension/v7 beta/src/content/` + `src/pipeline/dom-capture.js` | Text-level only (DOM untouched); Tier0-per-segment + label→value association (same-line/neighbor/table, value-only) + opaque `ref` registry; NER adjudication stays out of the DOM path (`FASTVLM_FOR_DOM` opt-in stands) — see README §7.3 |
+| **Reasoning backends** | deferred | Local/chat model loop (T6) + MCP-show demos (T4) pending; same-model-local-vs-remote rule unchanged — see README §7.4 |
 
 ## 6. Human Mode (planned)
 
@@ -114,7 +114,7 @@ Popup Capture flow + Capture Review (Visual + Context) + Send vs Send & Submit +
 - FastVLM-0.5B small: bland captions, occasional JSON-schema misses — survives via fallback.
 - Heuristics can over-redact at edges (safe-direction tradeoff).
 - WASM fallback single-threaded (int64 crash on threaded build) — slow CPU inference; demo on WebGPU hardware.
-- Server / action layer / Send-to-Chat / per-site adapters: not built.
+- Server / action execution / Send-to-Chat / per-site adapters: not built (chat loop T6 deferred by scope; approval UI popup-window approved for beta).
 - Firefox: architecture-compatible, not validated.
 - See `limitations.md` for full list.
 

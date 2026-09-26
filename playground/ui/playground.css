@@ -685,6 +685,11 @@ body.light-theme .ws-status-row {
 }
 
 .ws-status-dot.connected {
+    background: var(--orange);
+    box-shadow: 0 0 8px var(--orange-glow);
+}
+
+.ws-status-dot.paired {
     background: var(--green);
     box-shadow: 0 0 8px var(--green-glow);
 }
@@ -695,6 +700,63 @@ body.light-theme .ws-status-row {
     color: var(--text-muted);
     font-size: 10.5px;
     line-height: 1.4;
+}
+
+/* MANUAL PANEL */
+.manual-panel h3 {
+    margin-bottom: 8px;
+}
+
+.manual-panel label {
+    display: block;
+    font-size: 12px;
+    margin: 8px 0 4px;
+}
+
+.manual-panel select,
+.manual-panel textarea {
+    width: 100%;
+    box-sizing: border-box;
+    margin-bottom: 4px;
+}
+
+.manual-panel textarea {
+    font-family: monospace;
+    font-size: 12px;
+    resize: vertical;
+}
+
+.manual-row {
+    display: flex;
+    gap: 6px;
+}
+
+.manual-row select {
+    flex: 1;
+    margin-bottom: 0;
+}
+
+.manual-panel .primary-button {
+    width: 100%;
+    margin-top: 6px;
+}
+
+/* CAPTURE VIEW */
+.capture-view.hidden {
+    display: none;
+}
+
+.capture-img {
+    max-width: 100%;
+    border-radius: 6px;
+    display: block;
+    margin-bottom: 6px;
+}
+
+.capture-meta {
+    font-size: 12px;
+    opacity: 0.85;
+    margin-bottom: 8px;
 }
 
 /* TOOLS PANEL */

@@ -48852,7 +48852,6 @@ async function runPipelineJob({ jobId, imageBytes, options, onProgress }) {
   };
 }
 var DOM_DEFERRED = /* @__PURE__ */ new Set([
-  "list_interactive_elements",
   "click",
   "type",
   "select_option",
@@ -48899,11 +48898,50 @@ async function handleBridgeTool({ tool, params }) {
       return { status: "error", reason: err?.message || "dom-capture-failed" };
     }
   }
+  if (tool === "list_tabs") {
+    try {
+      const res = await chrome.runtime.sendMessage({ target: "background", action: "LIST_TABS" });
+      if (!res || res.status !== "SUCCESS" || !Array.isArray(res.tabs)) {
+        return { status: "error", reason: res?.error || "tab-listing-failed" };
+      }
+      const tabs = res.tabs.filter((t) => t && typeof t.tabId === "number").map((t) => ({
+        tabId: t.tabId,
+        title: String(t.title ?? ""),
+        url: String(t.url ?? ""),
+        active: !!t.active
+      }));
+      const out = { status: "ok", tabs };
+      if (typeof res.titlesAvailable === "boolean") out.titlesAvailable = res.titlesAvailable;
+      return out;
+    } catch (err) {
+      return { status: "error", reason: err?.message || "tab-listing-failed" };
+    }
+  }
+  if (tool === "list_interactive_elements") {
+    if (params && params.tabId !== void 0 && params.tabId !== null) {
+      return { status: "error", reason: "tab-targeting-requires-tabs-permission" };
+    }
+    try {
+      const res = await chrome.runtime.sendMessage({ target: "background", action: "REQUEST_ELEMENT_LIST" });
+      if (!res || res.status !== "SUCCESS" || !Array.isArray(res.elements)) {
+        return { status: "error", reason: res?.error || "element-listing-failed" };
+      }
+      const elements = res.elements.filter((el2) => el2 && typeof el2.ref === "string").map((el2) => ({
+        ref: el2.ref,
+        tag: String(el2.tag ?? ""),
+        label: String(el2.label ?? ""),
+        role: String(el2.role ?? "")
+      }));
+      return { status: "ok", elements };
+    } catch (err) {
+      return { status: "error", reason: err?.message || "element-listing-failed" };
+    }
+  }
   if (DOM_DEFERRED.has(tool)) {
     return {
       status: "error",
       reason: "dom-not-implemented-in-beta",
-      detail: `${tool} needs element enumeration + refs (T2c scope). This beta serves capture_tab + read_page only.`
+      detail: `${tool} needs action execution (T6d scope). This beta serves capture_tab + read_page + list_interactive_elements only.`
     };
   }
   return { status: "error", reason: `unknown-tool:${tool}` };

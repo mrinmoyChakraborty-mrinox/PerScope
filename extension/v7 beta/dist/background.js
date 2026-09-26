@@ -67,6 +67,47 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     })();
     return true;
   }
+  if (message.action === "REQUEST_ELEMENT_LIST") {
+    (async () => {
+      try {
+        const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+        const tabId = tabs && tabs[0] && tabs[0].id;
+        if (tabId === void 0 || tabId === null) {
+          throw new Error("No active tab for element listing");
+        }
+        const res = await chrome.tabs.sendMessage(tabId, { type: "LIST_ELEMENTS" });
+        if (res?.status === "SUCCESS" && Array.isArray(res.elements)) {
+          sendResponse({ status: "SUCCESS", elements: res.elements });
+        } else {
+          sendResponse({ status: "ERROR", error: res?.error || "Element listing failed" });
+        }
+      } catch (err) {
+        sendResponse({ status: "ERROR", error: err.message });
+      }
+    })();
+    return true;
+  }
+  if (message.action === "LIST_TABS") {
+    (async () => {
+      try {
+        const tabs = await chrome.tabs.query({});
+        const mapped = (tabs || []).map((t) => ({
+          tabId: t.id,
+          title: t.title || "",
+          url: t.url || "",
+          active: !!t.active
+        }));
+        sendResponse({
+          status: "SUCCESS",
+          tabs: mapped,
+          titlesAvailable: mapped.some((t) => t.title || t.url)
+        });
+      } catch (err) {
+        sendResponse({ status: "ERROR", error: err.message });
+      }
+    })();
+    return true;
+  }
   if (message.action === "ENSURE_OFFSCREEN") {
     ensureOffscreenDocument().then(() => sendResponse({ status: "SUCCESS" })).catch((err) => sendResponse({ status: "ERROR", error: err.message }));
     return true;

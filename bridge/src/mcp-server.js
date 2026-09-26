@@ -6,6 +6,7 @@ import { BRIDGE_VERSION } from "./version.js";
 import * as captureTab from "./tools/capture_tab.js";
 import * as click from "./tools/click.js";
 import * as listInteractiveElements from "./tools/list_interactive_elements.js";
+import * as listTabs from "./tools/list_tabs.js";
 import * as readPage from "./tools/read_page.js";
 import * as scroll from "./tools/scroll.js";
 import * as selectOption from "./tools/select_option.js";
@@ -16,6 +17,7 @@ export const TOOL_DEFS = [
   captureTab,
   readPage,
   listInteractiveElements,
+  listTabs,
   click,
   type,
   selectOption,

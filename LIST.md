@@ -141,97 +141,68 @@ Statuses: `done` · `ready` (unblocked, not started) · `blocked:decision` · `b
   limitation/build-order docs aligned. (Some older task files still describe the dead
   push-notification design — tracked separately, not in this list.)
 
+### T2b — read_page over the bridge — done
+- **What:** offscreen route maps the existing SW Tier0 capture to `{sanitizedText,
+  findings}` (allowlisted fields via pure `read-page-mapping.js`); `tabId` variant
+  errors pending D4.
+- **Proven by:** 4 mapping tests (raw-text/locator exclusion asserted on the wire
+  object); live-Chrome verification outstanding (manual).
+
+### T2 — Playground WS leg — done
+- **What:** new `ui/runtime-client.js` (paired agent role, hello re-auth, 70s
+  blocking calls, close-rejects-pending, no push code); UI drives Start/Stop,
+  pairing, send, and chat guard through it; heartbeat deleted (would get the
+  socket closed as unauthorized).
+- **Proven by:** live harness vs real daemon + mock extension (`T2-VERIFY-ALL-PASS`:
+  pair, capture roundtrip with own id and no token leak, 3s blocking hold,
+  token persistence, daemon-death settle + status flip).
+
+### T2a — Mock retirement — done
+- **What:** mock server → `playground/mock/` (DEMO-ONLY banner, frozen); test
+  clients → `playground/tests/`; `npm start` serves static UI only, `npm run mock`
+  is the explicit path.
+- **Proven by:** explicit mock boot + moved smoke client passes; `npm start`
+  cannot reach mock code by construction.
+
+### T7 — Pairing UI — done
+- **What:** three-state dot (red/orange/green), code entry with in-flight guard,
+  token confined to transport closure + storage.
+- **Proven by:** stub-socket harness asserting exact D1 frames (`pair`/`hello`
+  byte-for-byte, `{ok:true}` carrying no token, wrong-code reason); `T7-VERIFY-ALL-PASS`.
+
+### T3 — Dialect, timeouts, capture rendering — done
+- **What:** zero `element_id` in UI; Screen State capture button + base64/evidence
+  renderer; honest errors displayed verbatim.
+- **Proven by:** grep-empty dialect; render harness on shipped code (img src, meta,
+  unhide, event, button wiring); 65s verdict resolving at 65.0s inside the 70s
+  ceiling (`T3-VERIFY-ALL-PASS`).
+
+### T2c — list_interactive_elements with registry refs (format C) — done
+- **What:** `src/content/refs.js` (opaque `el_N` per page load, deterministic
+  re-list, live re-resolution, `stale_element` only on genuine mismatch);
+  entry `LIST_ELEMENTS` + SW relay + offscreen route with wire allowlist.
+- **Proven by:** 10 `content-refs` tests incl. DOM-mutation proofs (remove→stale,
+  label/unrelated edits→resolve, tag/id swap→stale, read-only); full extension
+  suite 51/51; shipped bundle confirmed `import.meta`-free.
+
+### T5 — Manual tab picker (real list_tabs) — done
+- **What:** bridge `list_tabs` (9th tool) + SW `chrome.tabs.query` relay with
+  `titlesAvailable` in-band probe + offscreen route + UI picker/generic sender.
+- **Proven by:** bridge 22/22 (9-name listing); live relay harness both D4
+  branches; UI IDs wired both sides; build SUCCESS with routes in `dist/`.
+  Empirical titles verdict still needs one live-browser Refresh (reported in-band).
+
+### T8 (scoped slice) — done
+- **What:** `playground/tests/{transport,schema}.test.mjs` vs real daemon (no
+  mock in path); old mock-bound scripts deleted; `npm test` wired.
+- **Proven by:** `npm test` in `playground/` → **8/8 pass** (roundtrip, honest
+  error as data, delayed terminal verdict, daemon-death settle; contract shapes
+  for all 9 tools; destructive click asserts `denied`, explicitly not `ok` —
+  the old self-contradiction fixed with its flaw documented in-test).
+
 ## 3. Ready (ordered — work top to bottom)
 
-### T2b — Plug the existing DOM reader into the bridge — ready, nothing blocks it
-- **What/why:** the DOM reader works but only the human popup can reach it; the
-  bridge is still told "not implemented." This task connects the two: a bridge
-  `read_page` call returns the already-sanitized page text + findings. Changes one
-  file (`src/offscreen/offscreen.js`).
-- **Done when:** asking the bridge to read the active tab returns sanitized text and
-  a findings list, with provably no raw text leaking (checked on the actual message).
-
-### T2 — Playground talks to the bridge over direct socket — ready (T1 done)
-- **What/why:** today the playground UI only knows the dead fake server. Point it at
-  the real bridge: pair with token, send tool calls, wait up to ~70s for human-gated
-  answers, show connection truthfully. Guiding rule: the playground is the *window
-  into* PerScope, not a second engine — display / request / observe / visualize only.
-- Dual-leg client behind one `callTool`: WS agent leg (`role:"agent"`, T1
-  multiplexing) first, MCP HTTP leg (`:7332/mcp`) second. T1 is what makes speaking
-  to 7331 legitimate — paired agent role, never an anonymous socket.
-- **Open point (flagged, not improvised):** browser→`:7332` fetch is cross-origin
-  and the bridge sends no CORS headers today. Either serve the UI same-origin or add
-  localhost-only CORS to the bridge (recommend the latter — contained, localhost
-  only). Needs a lead nod before T2 implements it.
-- **Done when:** with the fake server stopped, Start reaches the bridge; a hand-typed
-  screenshot-redaction call shows a real redacted image; killing the bridge program
-  turns the dot red with no freezing; no trace of the old push-notification protocol
-  remains in the connection code.
-
-### T2a — Retire the fake server — ready
-- **What/why:** the program that pretends to be an extension (`:8080`, canned
-  answers, home-grown danger check) must stop being the default world, or someone
-  will demo fake results as real. Concrete relocation: mock server →
-  `playground/mock/`, test clients → `playground/tests/`, frozen (no new features,
-  never graft `capture_tab` onto it). UI gets a mode toggle — **Real PerScope
-  (default)** vs **Demo/Mock (explicit, development-only)** — so the fallback exists
-  without confusing anyone. Fake mode may survive only behind that explicit mode,
-  off by default, and must never fake *decisions*.
-- **Done when:** normal startup serves nothing canned.
-
-### T7 — Playground pairing screen — ready (T1 + D1 done)
-- **What/why:** the playground needs the same one-time code entry the extension has,
-  plus a stored token and a status display that tells "bridge is down" apart from
-  "not paired yet."
-- **Done when:** fresh browser → type code → paired forever across reloads; wrong
-  code gives a retryable error; the secret token never appears in any visible panel.
-
-### T3 — Playground speaks the real tool language — ready after T2
-- **What/why:** the UI still sends the dead `element_id` dialect and has no
-  screenshot button at all. Migrate to `ref`, lengthen timeouts past the 60s human
-  window, add the screenshot tool with image + evidence display, and show honest
-  "not built yet" errors verbatim instead of hiding them.
-- Structure: UI calls a runtime-client module (transport hidden), runtime events
-  flow through an event-handler into state, UI renders. Tool metadata
-  (`read`/`gated`/`action` badges) lives in a UI-side registry, not in call logic.
-  Screen State shows real URL/title/counts/findings (never hardcoded page/element
-  text); inspector gains request direction (who→who) and latency from real calls;
-  action log records the runtime path (requested → validator verdict → executed).
-  Demo/Real mode toggle from T2a applies here too.
-- **Done when:** no `element_id` text remains in `playground/`; screenshot renders;
-  unbuilt tools display their honest errors; a deliberately 65-second-delayed answer
-  still resolves (proves the UI really waits).
-
-### T2c — List clickable elements over the bridge — ready after T2b
-- **What/why:** reading text (T2b) isn't enough for an agent — it needs the list of
-  buttons/fields with stable names (`ref`s) it can act on later. Derive them from
-  the already-captured page segments.
-- **Blocker inside the task: the lead must spend 5 minutes confirming the `ref`
-  format first (segment number vs page-path vs plain index) — do not guess.**
-- **Done when:** repeated listings of an unchanged page return identical `ref`s;
-  responses match the bridge's `[{ref, tag, label, role}]` shape; stale names get a
-  `stale_element` error.
-
-### T5 — Manual side tab picker — ready after T2
-- **What/why:** the Manual side's core promise — "pick a tab you can see, see what
-  the agent would see." Start with a hand-typed tab number (works now, no new
-  permissions); graduate to the real tab list once D4's `list_tabs` exists.
-  Prove-out ladder once execution exists: `scroll` → `type` → `select_option` →
-  `click` → `submit`, each against real refs; until T6d lands, gated rungs prove
-  honest verdicts/errors instead of executing. Canonical demo scenario: a
-  registration form (name/email/country/submit) driven entirely from listed refs.
-- **Done when:** the chosen tab's screenshot matches what's on screen, and the raw
-  message panes show exactly what an agent gets for the same call.
-
-### T8 (scoped slice) — tests for T2–T5, T2b, T2c only
-- **What/why:** repoint the smoke/schema tests at the real bridge and fix the one
-  that asserts a self-contradictory expectation (it demands `ok` for a click the
-  fake server itself would block).
-- **Done when:** green against the real bridge with no fake server in the path,
-  including the 65-second-wait case. (Full T8 waits for the chat loop; this slice
-  doesn't.) Coverage gates: connection/real-tools/no-fake-data/safety-observability
-  (verdicts displayed, never decided)/privacy (sanitized shown, raw never) — the
-  action-execution rows stay unchecked until T6d.
+All T2–T8-slice items are done (see §2 for what + proof). Remaining, in order:
 
 ### T4 — MCP demonstration leg — approved, lowest priority, free-parallel only
 - **What/why:** scripts + a display pane showing the literal MCP messages a real
@@ -285,8 +256,9 @@ Statuses: `done` · `ready` (unblocked, not started) · `blocked:decision` · `b
 
 ## 6. Critical path
 
-Decisions D1/D2 (done) → T1 (done) → **T2b + T2** → T2c/T3/T5 → T8-slice → T9.
-D3/D4/D5/D7 decided; D6 open but blocks nothing except chat acceptance.
+Decisions D1–D5, D7 decided (D6 open, blocks chat acceptance only) → T0–T8-slice
+done → T9 pending T6/T6d/TX. Outstanding manual checks: T2b live read_page,
+`list_tabs` titles verdict.
 
 ## 7. External review deltas (two playground plans, read 2026-09-16 — adopted vs rejected)
 

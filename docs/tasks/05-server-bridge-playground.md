@@ -1,5 +1,7 @@
 # Person 5 — Server-Side / Demo Agent Client + MCP Bridge + Reasoning Server (Banashree)
 
+> **Status 2026-09-16 — live tracker is `LIST.md`; T0–T8 slice done.** Bridge built + published (`@perscope/bridge@0.1.0`, multiplexing in-repo); playground Manual WS leg built (mock retired); DOM read/list wired; chat loop (T6) + actions (T6d) deferred. The push-flow (`blocked`/`pending_id`/`action_update`), `element_id` dialect, and Qwen3-server parts below are **dead — do not build**; blocking call + `ref` + open-weight-TBD rule in root README §7 and `docs/tool-schema.md`.
+
 **Scope expanded — highest-risk item on tracker: now three deliverables, not two.** Pair with Person 1 early; start Reasoning Server **in parallel with Playground, not after**.
 
 ## A. Playground — unchanged (primary on-stage instrument)

@@ -211,11 +211,11 @@ s4.png / s5.jpg             test images (document, person photo)
 
 ## 7. Next Phase (Locked Plan): Bridge, DOM Redaction, Playground
 
-**Status: planned, not yet built.** Everything in this section is the locked design
-for the next three pieces of work, built on top of the tested image pipeline above.
-Nothing here should be presented as working until it actually is — mark PRs against
-the relevant subsection as they land, and update the status lines below in the same
-commit.
+**Status: partially built (see per-subsection lines).** Everything in this section
+is the locked design for the next three pieces of work, built on top of the tested
+image pipeline above. Nothing here should be presented as working until it actually
+is — mark PRs against the relevant subsection as they land, and update the status
+lines below in the same commit.
 
 ### 7.1 Tech Stack (new components)
 
@@ -236,7 +236,12 @@ commit.
 
 ### 7.2 The Bridge
 
-**Status: not started.**
+**Status: built — `@perscope/bridge@0.1.0` published on npm; role-aware multiplexing
+(T1) implemented and tested in-repo, pending `0.2.0` release.** Daemon (paired WS
+7331 + MCP HTTP 7332 + relay 7333 + dashboard + lockfile), `mcp` stdio-proxy
+singleton, 9 tools, blocking confirm flow, pairing with agent/extension roles and
+per-socket id remap. Downstream work runs the checkout daemon, never the stale
+tarball.
 
 **What it is:** one Node process with two faces. It is **zero-logic** by design — it
 relays and formats messages, it never decides anything and never executes anything on
@@ -307,8 +312,14 @@ claude mcp add perscope -- npx -y @perscope/bridge mcp
 
 ### 7.3 DOM-Native Redaction (Phase 1)
 
-**Status: not started.** Depends on `content.js` existing (currently absent from the
-tested prototype — see README §5 repo layout).
+**Status: Tier0 capture + read_page + list_interactive_elements wired; actions pending.**
+`content/dom-capture-entry.js` (auto-injected, all frames) walks text/attribute/form
+segments with Tier0-per-segment redaction (tested, DOM never mutated);
+`read_page` and `list_interactive_elements` (opaque `ref` registry with live
+re-resolution, `stale_element` only on genuine mismatch) route over the bridge.
+Label→value association (same-line / neighbor / table, value-only) is in.
+Still pending: `click`/`type`/`select_option`/`submit`/`scroll` execution,
+`isDestructive()` wiring, approval UI, `list_tabs` titles check live.
 
 ```text
 content.js: extractDOMText() + extractFormValues()
@@ -352,8 +363,13 @@ explicit, honest opt-in.
 
 ### 7.4 The Playground
 
-**Status: not started.** This is the PS's required Reasoning Server, built with three
-swappable backends instead of one hardcoded model. All three implement the identical
+**Status: Manual side WS leg built (T2–T8 slice); chat/model backends deferred.**
+The playground talks to the bridge directly — WS agent leg (paired, blocking calls,
+70s ceilings) and MCP leg proven; Manual side (tab picker via new `list_tabs`,
+generic tool sender, `capture_tab` rendering, pairing UI) works against the real
+runtime; mock server retired to explicit-only. Still pending: chat-side model loop
+(T6, PS-required Server Side Integration), MCP-show demo scripts (T4), approval UI.
+All three backends implement the identical
 contract, so the extension and bridge never know or care which is active:
 
 ```text

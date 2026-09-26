@@ -12,17 +12,36 @@ import {
     setLatency
 } from "../js/demo/demo-state.js";
 
+import {
+    createRuntimeClient,
+    DEFAULT_BRIDGE_URL,
+} from "./runtime-client.js";
+
 
 /* =========================================================
    CONFIGURATION
 ========================================================= */
 
-let socket = null;
-let serverUrl = "ws://localhost:8080";
+let serverUrl = DEFAULT_BRIDGE_URL;
 let requestCounter = 0;
 let requestStartTime = 0;
-let heartbeatTimer = null;
-let heartbeatTimeout = null;
+
+// Single transport instance. There is intentionally no heartbeat:
+// the bridge has no ping handler, and an unauthenticated {type:"ping"}
+// frame would get this socket closed as unauthorized (ws-server rejects
+// anything that is not pair/hello/authed). Liveness = socket state.
+const runtime = createRuntimeClient({
+    url: serverUrl,
+    onStatus: (status) => {
+        if (status.connected && status.paired) {
+            updateServerStatus(true, "Connected + paired", true);
+        } else if (status.connected) {
+            updateServerStatus(true, "Reachable, not paired", false);
+        } else {
+            updateServerStatus(false, "Disconnected", false);
+        }
+    },
+});
 
 /* =========================================================
    DOM HELPERS
@@ -92,74 +111,18 @@ const wsStatus =
     $("ws-status");
 const progressFastToggle =
     $("progress-fast-toggle");
- //Create a startHeartbeat() function
-   function startHeartbeat() {
-    stopHeartbeat();
-
-    heartbeatTimer = setInterval(() => {
-        if (!socket || socket.readyState !== WebSocket.OPEN) {
-            return;
-        }
-
-        try {
-            socket.send(JSON.stringify({
-                type: "ping"
-            }));
-
-            console.log("[UI → SERVER] ping");
-
-            heartbeatTimeout = setTimeout(() => {
-                console.warn("[UI] Heartbeat timeout");
-
-                addEvent(
-                    "WebSocket heartbeat timeout",
-                    "error",
-                    "Playground"
-                );
-
-                socket?.close();
-            }, 5000);
-
-        } catch (error) {
-            console.error("[UI] Heartbeat failed:", error);
-        }
-
-    }, 20000);
-}
-//stopHeartbeat()
-function stopHeartbeat() {
-    if (heartbeatTimer) {
-        clearInterval(heartbeatTimer);
-        heartbeatTimer = null;
-    }
-
-    if (heartbeatTimeout) {
-        clearTimeout(heartbeatTimeout);
-        heartbeatTimeout = null;
-    }
-}
+// No heartbeat by design (see runtime-client note above): the bridge
+// closes sockets on unauthenticated frames, so pinging would disconnect
+// us. Connection liveness comes from the socket itself.
 /* =========================================================
-   WEBSOCKET CONNECTION
+   BRIDGE CONNECTION (via runtime-client)
 ========================================================= */
 
 function connectToServer() {
 
-    if (socket) {
-
-        if (
-            socket.readyState ===
-            WebSocket.OPEN
-        ) {
-            return;
-        }
-
-        if (
-            socket.readyState ===
-            WebSocket.CONNECTING
-        ) {
-            return;
-        }
-
+    const current = runtime.getStatus();
+    if (current.connected) {
+        return;
     }
 
 
@@ -190,156 +153,56 @@ function connectToServer() {
     );
 
 
-    try {
+    runtime.connect(serverUrl).then(
+        (status) => {
 
-        socket =
-            new WebSocket(
-                serverUrl
+            console.log(
+                "[UI] Connected to bridge"
             );
 
-    } catch (error) {
 
-        console.error(
-            "[UI] WebSocket connection failed:",
-            error
-        );
+            addEvent(
+                status.paired
+                    ? "Connected to bridge (paired)"
+                    : "Connected to bridge (not paired — enter a pairing code)",
+                status.paired ? "success" : "warning",
+                "Playground"
+            );
 
-        updateServerStatus(
-            false,
-            "Disconnected"
-        );
+        },
+        (error) => {
 
-        return;
-    }
+            console.error(
+                "[UI] Bridge connection failed:",
+                error
+            );
 
 
-   socket.onopen = () => {
+            addUIEvent(
+                "Bridge connection failed: " +
+                    (error?.message || error),
+                "error",
+                "Playground"
+            );
 
-    console.log(
-        "[UI] Connected to server"
-    );
 
-    updateServerStatus(
-        true,
-        "Connected"
-    );
-    startHeartbeat();
-    addEvent(
-        "Connected to WebSocket server",
-        "success",
-        "Playground"
-    );
-
-    socket.addEventListener(
-        "message",
-        (event) => {
-
-            try {
-
-                const response =
-                    JSON.parse(event.data);
-               {
-
-              // =====================================
-            // HEARTBEAT PONG
-            // =====================================
-
-            if (response.type === "pong") {
-
-                if (heartbeatTimeout) {
-
-                    clearTimeout(
-                        heartbeatTimeout
-                    );
-
-                    heartbeatTimeout = null;
-                }
-
-                console.log(
-                    "[UI] pong received"
-                );
-
-                return;
-            }
-}
-                if (
-                    response.type ===
-                    "action_update"
-                ) {
-
-                    handleActionUpdate(
-                        response
-                    );
-
-                }
-
-            } catch (error) {
-
-                console.error(
-                    "[UI] Invalid WebSocket message:",
-                    error
-                );
-
-            }
+            updateServerStatus(
+                false,
+                "Disconnected"
+            );
 
         }
     );
 
-};
 
-    socket.onclose = () => {
-        stopHeartbeat();
-        console.log(
-            "[UI] Server disconnected"
-        );
-
-
-        updateServerStatus(
-            false,
-            "Disconnected"
-        );
-
-
-        addEvent(
-            "WebSocket connection closed",
-            "warning",
-            "Playground"
-        );
-
-
-        socket = null;
-
-    };
-
-
-   socket.onerror = (error) => {
-
-    const reason =
-        error?.message ||
-        error?.type ||
-        "connection_error";
-
-    console.error(
-        "[UI] WebSocket error:",
-        reason
-    );
-
-    addUIEvent(
-        "WebSocket error: " + reason,
-        "error",
-        "Playground"
-    );
-
-    updateServerStatus(
-        false,
-        "Connection Error"
-    );
-};
 }
+
 //closeWebSocket()
 function closeWebSocket() {
 
-    if (!socket) {
+    const current = runtime.getStatus();
+
+    if (!current.connected) {
 
         updateServerStatus(
             false,
@@ -351,14 +214,11 @@ function closeWebSocket() {
 
 
     console.log(
-        "[UI] Closing WebSocket..."
+        "[UI] Closing bridge connection..."
     );
 
-    stopHeartbeat();
-    socket.close();
 
-
-    socket = null;
+    runtime.disconnect();
 
 
     updateServerStatus(
@@ -373,7 +233,8 @@ function closeWebSocket() {
 
 function updateServerStatus(
     connected,
-    label = null
+    label = null,
+    paired = false
 ) {
 
     /*
@@ -387,6 +248,11 @@ function updateServerStatus(
         wsStatus.classList.toggle(
             "connected",
             connected
+        );
+
+        wsStatus.classList.toggle(
+            "paired",
+            connected && paired
         );
 
     }
@@ -492,13 +358,31 @@ function sendRequest(tool, params = {}) {
     return new Promise(
         (resolve, reject) => {
 
-            if (
-                !socket ||
-                socket.readyState !== WebSocket.OPEN
-            ) {
+            const bridge = runtime.getStatus();
+
+            if (!bridge.connected) {
 
               const message =
-    "WebSocket server is not connected.";
+    "Bridge is not connected. Click Start first.";
+
+addUIEvent(
+    message,
+    "error",
+    "Playground"
+);
+
+reject(
+    new Error(message)
+);
+
+                return;
+            }
+
+
+            if (!bridge.paired) {
+
+              const message =
+    "Bridge is reachable but not paired. Enter the pairing code first.";
 
 addUIEvent(
     message,
@@ -530,7 +414,6 @@ reject(
 
             requestStartTime =
                 performance.now();
-            let requestTimeout;
 
             /* Show request */
 
@@ -538,59 +421,30 @@ reject(
 
 
             console.log(
-                "[UI → SERVER]",
+                "[UI → BRIDGE]",
                 request
             );
 
 
-            socket.send(
-                JSON.stringify(request)
-            );
+            // Blocking call through the runtime client: resolves with the
+            // extension's terminal response (ok / denied / timeout / error).
+            // There is no push step after this — approval happens in the
+            // extension, and its verdict arrives here.
+            runtime.callTool(tool, params).then(
+                (response) => {
+
+                    const latency =
+                        Math.round(
+                            performance.now() -
+                            requestStartTime
+                        );
 
 
-            const handleResponse =
-                (event) => {
+                    setLatency(latency);
 
-                    try {
+                    showLatency(latency);
 
-                        const response =
-    JSON.parse(event.data);
-
-
-/* -----------------------------------------
-   IGNORE RESPONSE FOR OTHER REQUESTS
------------------------------------------ */
-
-if (
-    response.id !==
-    request.id
-) {
-    return;
-}
-
-
-/* -----------------------------------------
-   RESPONSE RECEIVED
------------------------------------------ */
-
-socket.removeEventListener(
-    "message",
-    handleResponse
-);
-clearTimeout(requestTimeout);
-
-const latency =
-    Math.round(
-        performance.now() -
-        requestStartTime
-    );
-
-
-setLatency(latency);
-
-showLatency(latency);
-
-showToolResponse(response);
+                    showToolResponse(response);
 
 /* -----------------------------------------
    TOOL ERROR
@@ -601,7 +455,7 @@ if (response.status === "error") {
     addEvent(
         `Tool error: ${response.reason || "unknown_error"}`,
         "error",
-        "WebSocket"
+        "Bridge"
     );
 
     reject(
@@ -614,54 +468,42 @@ if (response.status === "error") {
 }
 
 /* -----------------------------------------
-   ACTION BLOCKED
+   TERMINAL VERDICTS (blocking contract)
 ----------------------------------------- */
 
-if (response.status === "blocked") {
+if (
+    response.status === "denied" ||
+    response.status === "timeout"
+) {
 
     console.warn(
-        "[ACTION BLOCKED]",
+        "[ACTION NOT EXECUTED]",
         response
     );
 
 
     addUIEvent(
-        "Validator: action blocked",
+        response.status === "denied"
+            ? "Validator: action denied (human decision in extension)"
+            : "Validator: action timed out waiting for approval",
         "blocked",
-        "Local Action Guard"
+        "Extension Validator"
     );
-    const validator =
-        document.querySelector(
-            ".validator > strong"
-        );
 
-
-    if (validator) {
-
-        validator.textContent =
-            "BLOCKED";
-
-        validator.style.color =
-            "var(--red)";
-    }
-
-
-    if (response.pending_id) {
-
-        showApprovalRequest(
-            response.pending_id,
-            request.tool === "click"
-                ? `Click on element ${request.params.element_id}`
-                : `Execute ${request.tool}`
-        );
-
-    }
+    updateValidatorUI(
+        "BLOCKED",
+        response.status === "denied"
+            ? "The action was denied and not executed"
+            : "No approval within 60s — not executed"
+    );
 
 
     if (chatStatus) {
 
         chatStatus.textContent =
-            "Waiting for approval...";
+            response.status === "denied"
+                ? "Action denied"
+                : "Approval timed out";
 
     }
 
@@ -672,54 +514,35 @@ if (response.status === "blocked") {
 }
 
 
+if (response.status === "ok") {
+
+    updateValidatorUI(
+        "SAFE",
+        "Action executed"
+    );
+
+}
+
+
 /* -----------------------------------------
    NORMAL RESPONSE
 ----------------------------------------- */
 
 resolve(response);
 
-} catch (error) {
+                },
+                (error) => {
 
-    addEvent(
-        "Invalid JSON received from WebSocket server",
-        "error",
-        "WebSocket"
-    );
+                    addEvent(
+                        `Transport error: ${error?.message || error}`,
+                        "error",
+                        "Bridge"
+                    );
 
-    reject(
-        new Error(
-            "Invalid JSON received from WebSocket server"
-        )
-    );
+                    reject(error instanceof Error ? error : new Error(String(error)));
 
-}
-                };
-
-
-            socket.addEventListener(
-                "message",
-                handleResponse
+                }
             );
-            requestTimeout = setTimeout(() => {
-
-    socket.removeEventListener(
-        "message",
-        handleResponse
-    );
-
-    addUIEvent(
-        `Request timeout: ${request.tool}`,
-        "error",
-        "WebSocket"
-    );
-
-    reject(
-        new Error(
-            `Request timed out after 5 seconds: ${request.tool}`
-        )
-    );
-
-}, 5000);
         }
     );
 
@@ -727,242 +550,21 @@ resolve(response);
 /* =========================================================
    ACTION APPROVAL
    ========================================================= */
-function handleActionUpdate(response) {
-
-    console.log(
-        "[ACTION UPDATE]",
-        response
-    );
-
-
-    if (response.type !== "action_update") {
-        return;
-    }
-
-
-    /* -----------------------------------------
-       ACTION APPROVED / COMPLETED
-    ----------------------------------------- */
-
-   if (response.status === "ok") {
-
-    updateValidatorUI(
-        "SAFE",
-        "Action approved and executed"
-    );
-    setChatStep(
-        "acting",
-        "done"
-    );
-
-    setChatStep(
-        "done",
-        "done"
-    );
-     
-
-    addUIEvent(
-        "Action approved and executed",
-        "success",
-        "Action Guard"
-    );
-     if (chatStatus) {
-
-            chatStatus.textContent =
-                "Action completed";
-
-        }
-
-
-        addChatMessage(
-            "The approved action was successfully executed.",
-            "agent"
-        );
-
-        return;
-    }
-
-
-    /* -----------------------------------------
-       ACTION DENIED / BLOCKED
-    ----------------------------------------- */
-
-    else if (
-        response.status === "denied" ||
-        response.status === "blocked"
-    ) {
-    updateValidatorUI(
-    "BLOCKED",
-    "The action was denied and not executed"
-        );
-         /* Acting was stopped */
-
-        setChatStep(
-            "acting",
-            "blocked"
-        );
-
-        addUIEvent(
-            "Action denied by user",
-            "blocked",
-            "Action Guard"
-        );
-
-
-        if (chatStatus) {
-
-            chatStatus.textContent =
-                "Action denied";
-        }
-
-
-        addChatMessage(
-            "The action was not executed.",
-            "agent"
-        );
-        return;
-    }
-
-}
-function sendActionDecision(pendingId, decision) {
-
-    if (
-        !socket ||
-        socket.readyState !== WebSocket.OPEN
-    ) {
-        console.error(
-            "[ACTION] WebSocket not connected"
-        );
-
-        return;
-    }
-
-    const message = {
-        type: "action_decision",
-        pending_id: pendingId,
-        decision: decision
-    };
-
-    console.log(
-        "[ACTION DECISION]",
-        message
-    );
-
-    socket.send(
-        JSON.stringify(message)
-    );
-}
+/* =========================================================
+   ACTION VERDICTS (blocking contract)
+   =========================================================
+   Deleted: handleActionUpdate (action_update push) and sendActionDecision
+   (action_decision sender). The bridge holds each gated call open until
+   the extension answers ok / denied / timeout, so verdicts arrive as the
+   terminal response inside sendRequest — there is nothing to push and
+   nowhere to send a decision. Approval itself happens in the extension. */
 /* =========================================================
    APPROVAL UI
-   ========================================================= */
-
-function showApprovalRequest(
-    pendingId,
-    actionLabel
-) {
-
-    const chatWrap =
-        $("chatWrap");
-
-    if (!chatWrap) {
-        return;
-    }
-
-    const card =
-        document.createElement("div");
-
-    card.className =
-        "approval-card";
-
-    card.innerHTML = `
-        <div class="approval-title">
-            ⚠ Action requires approval
-        </div>
-
-        <div class="approval-action">
-            ${actionLabel}
-        </div>
-
-        <div class="approval-buttons">
-
-            <button
-                class="approval-approve"
-                type="button"
-            >
-                Approve
-            </button>
-
-            <button
-                class="approval-deny"
-                type="button"
-            >
-                Deny
-            </button>
-
-        </div>
-    `;
-
-    chatWrap.appendChild(card);
-
-    chatWrap.scrollTop =
-        chatWrap.scrollHeight;
-
-
-    const approveButton =
-        card.querySelector(
-            ".approval-approve"
-        );
-
-    const denyButton =
-        card.querySelector(
-            ".approval-deny"
-        );
-
-
-    approveButton.addEventListener(
-        "click",
-        () => {
-
-            approveButton.disabled =
-                true;
-
-            denyButton.disabled =
-                true;
-
-            approveButton.textContent =
-                "Approving...";
-
-            sendActionDecision(
-                pendingId,
-                "approve"
-            );
-
-        }
-    );
-
-
-    denyButton.addEventListener(
-        "click",
-        () => {
-
-            approveButton.disabled =
-                true;
-
-            denyButton.disabled =
-                true;
-
-            denyButton.textContent =
-                "Denying...";
-
-            sendActionDecision(
-                pendingId,
-                "deny"
-            );
-
-        }
-    );
-
-}
+   =========================================================
+   Deleted: showApprovalRequest (Approve/Deny card + action_decision
+   senders). Under the blocking contract there is no pending_id to act
+   on — approval happens in the extension's own UI, and the verdict
+   arrives as the terminal tool response handled in sendRequest. */
 /* =========================================================
    TOOL REQUEST DISPLAY
 ========================================================= */
@@ -1179,13 +781,23 @@ async function runChatTask(task) {
         return;
     }
 
-    if (
-        !socket ||
-        socket.readyState !== WebSocket.OPEN
-    ) {
+    const bridgeState = runtime.getStatus();
+
+    if (!bridgeState.connected) {
 
         addChatMessage(
-            "WebSocket server is not connected.",
+            "Bridge is not connected. Click Start first.",
+            "agent"
+        );
+
+        return;
+    }
+
+
+    if (!bridgeState.paired) {
+
+        addChatMessage(
+            "Bridge is reachable but not paired. Enter the pairing code first.",
             "agent"
         );
 
@@ -1451,12 +1063,16 @@ updateNextActionUI(
         await sendRequest(
             "click",
             {
-                element_id: "el_8"
+                ref: "el_8"
             }
         );
+    // Terminal verdicts arrive here directly (blocking contract) —
+    // there is no follow-up push, so denied/timeout end the turn now.
     if (
         actionResponse.status ===
-        "blocked"
+        "denied" ||
+        actionResponse.status ===
+        "timeout"
     ) {
 
         setChatStep(
@@ -1465,19 +1081,23 @@ updateNextActionUI(
         );
           updateValidatorUI(
             "BLOCKED",
-            "This action requires user approval"
+            actionResponse.status === "denied"
+                ? "Denied in the extension — not executed"
+                : "Approval timed out in the extension — not executed"
         );
         addUIEvent(
-            "Validator blocked destructive action",
+            "Validator verdict: " + actionResponse.status,
             "blocked",
-            "Action Guard"
+            "Extension Validator"
         );
 
         if (
             chatStatus
         ) {chatStatus.textContent
              =
-                "Waiting for approval...";
+                actionResponse.status === "denied"
+                    ? "Action denied"
+                    : "Approval timed out";
         }
 
         return;
@@ -1882,6 +1502,146 @@ function renderScreenState() {
 
 }
 
+
+/* =========================================================
+   CAPTURE RESULT (capture_tab rendering)
+   ========================================================= */
+
+function renderCaptureResult(response) {
+
+    const view = $("capture-view");
+    const img = $("capture-img");
+    const meta = $("capture-meta");
+
+    if (!view || !img || !meta) {
+        return;
+    }
+
+    if (response && response.redactedImage) {
+        img.src =
+            "data:image/png;base64," + response.redactedImage;
+
+        const evidence = response.evidence || {};
+        const count = Array.isArray(evidence.findings)
+            ? evidence.findings.length
+            : "—";
+
+        meta.textContent =
+            `Redacted image + evidence (${count} findings` +
+            (response.totalTimeMs != null ? `, ${response.totalTimeMs} ms` : "") +
+            ")";
+
+        view.classList.remove("hidden");
+    }
+
+    addUIEvent(
+        "capture_tab returned redacted image + evidence",
+        "success",
+        "Bridge"
+    );
+
+}
+
+
+const captureTabButton = $("capture-tab-btn");
+if (captureTabButton) {
+    captureTabButton.addEventListener("click", () => {
+        sendRequest("capture_tab", {}).then(
+            (response) => {
+                renderCaptureResult(response);
+            },
+            (error) => {
+                addUIEvent(
+                    "capture_tab failed: " + (error?.message || error),
+                    "error",
+                    "Playground"
+                );
+            }
+        );
+    });
+}
+
+/* =========================================================
+   MANUAL SIDE (T5: tab picker + generic tool sender)
+   =========================================================
+   Results land in the Tool inspector through sendRequest, byte-identical
+   to what an agent sees on the same call. */
+
+function refreshManualTabs() {
+    sendRequest("list_tabs", {}).then(
+        (response) => {
+            const picker = $("manual-tab-picker");
+            if (!picker) return;
+            const current = picker.value;
+            picker.innerHTML = "";
+            const active = document.createElement("option");
+            active.value = "";
+            active.textContent = "Active tab";
+            picker.appendChild(active);
+            for (const tab of response.tabs || []) {
+                const option = document.createElement("option");
+                option.value = String(tab.tabId);
+                const label = tab.title || tab.url || `Tab ${tab.tabId}`;
+                option.textContent = `${tab.active ? "● " : ""}${label}`.slice(0, 60);
+                picker.appendChild(option);
+            }
+            if (current) picker.value = current;
+            if (typeof response.titlesAvailable === "boolean") {
+                addUIEvent(
+                    response.titlesAvailable
+                        ? `Tab list: ${response.tabs.length} tab(s), titles populated`
+                        : "Tab list has BLANK titles/URLs — D4 fallback (tabs permission) may be needed",
+                    response.titlesAvailable ? "success" : "warning",
+                    "Playground"
+                );
+            }
+        },
+        (error) => {
+            addUIEvent(
+                "Tab list failed: " + (error?.message || error),
+                "error",
+                "Playground"
+            );
+        }
+    );
+}
+
+const manualRefreshButton = $("manual-refresh-tabs");
+if (manualRefreshButton) {
+    manualRefreshButton.addEventListener("click", refreshManualTabs);
+}
+
+const manualSendButton = $("manual-send");
+if (manualSendButton) {
+    manualSendButton.addEventListener("click", () => {
+        const toolEl = $("manual-tool");
+        const paramsEl = $("manual-params");
+        const pickerEl = $("manual-tab-picker");
+        const tool = toolEl?.value || "";
+        if (!tool) return;
+        let params;
+        try {
+            params = paramsEl && paramsEl.value.trim() ? JSON.parse(paramsEl.value) : {};
+        } catch {
+            addUIEvent("Params are not valid JSON.", "error", "Playground");
+            return;
+        }
+        if (tool !== "list_tabs" && pickerEl && pickerEl.value !== "") {
+            const tabId = Number(pickerEl.value);
+            if (Number.isInteger(tabId)) params = { ...params, tabId };
+        }
+        sendRequest(tool, params).then(
+            () => {},
+            (error) => {
+                addUIEvent(
+                    `${tool} failed: ` + (error?.message || error),
+                    "error",
+                    "Playground"
+                );
+            }
+        );
+    });
+}
 
 /* =========================================================
    RAW JSON
@@ -2451,6 +2211,38 @@ wsDisconnect.addEventListener(
     "click",
     closeWebSocket
 );
+
+
+const wsPairButton = $("ws-pair");
+if (wsPairButton) {
+    wsPairButton.addEventListener("click", async () => {
+        const codeEl = $("ws-pair-code");
+        const code = codeEl?.value || "";
+        wsPairButton.disabled = true;
+        addUIEvent("Pairing with bridge…", "info", "Playground");
+        try {
+            const res = await runtime.pair(code);
+            if (res?.ok) {
+                addUIEvent("Paired. Token stored for reconnects.", "success", "Playground");
+                if (codeEl) codeEl.value = "";
+            } else {
+                addUIEvent(
+                    "Pair failed: " + (res?.reason || "unknown") + " — retry.",
+                    "error",
+                    "Playground"
+                );
+            }
+        } catch (err) {
+            addUIEvent(
+                "Pair failed: " + (err?.message || err),
+                "error",
+                "Playground"
+            );
+        } finally {
+            wsPairButton.disabled = false;
+        }
+    });
+}
 
     
 

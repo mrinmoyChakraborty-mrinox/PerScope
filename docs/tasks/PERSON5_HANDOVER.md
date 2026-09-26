@@ -1,5 +1,7 @@
 # Handover — Person 5 (Banashree): Playground Chat Rework — ALL Tasks + Guide
 
+> **Status 2026-09-16: T0–T8 slice done per `LIST.md`; this file's push-flow contract (line 5) is dead** — blocking call + `ref` dialect rule in `docs/tool-schema.md`. Remaining live item here is the chat rework = T6 (deferred, D6 open). `perscopee.* → playground.*` rename IS done on disk (the "Fix 1 DONE" claim is now true).
+
 Hey Banashree — `git pull` on `main` first. This one file is your complete work list. Nothing outside `playground/` unless stated.
 
 Contract (never violate): `docs/tool-schema.md` — `{id, tool, params} → {id, status: ok|blocked|error, result|reason|pending_id}` + async `{type:"action_update", pending_id, status: ok|denied|timeout}` + `{type:"ping"}↔{type:"pong"}`.

@@ -1,11 +1,18 @@
 "use strict";
-const path = require("path");
-const fs = require("fs");
 
-const NER_MODEL = path.resolve(
-    __dirname,
-    "models/ettin-68m-nemotron-pii-onnx"
-);
+// Debug logging for PII-bearing internals. OFF by default and safe to import
+// in browser/extension bundles: `process` does not exist there, so the flag
+// can never be on outside Node. Never log raw text/detections unconditionally.
+const PII_DEBUG =
+    typeof process !== "undefined" &&
+    !!process.env &&
+    process.env.PII_DEBUG === "1";
+
+function debugLog(...args) {
+    if (PII_DEBUG) {
+        console.log(...args);
+    }
+}
 
 const NER_MODEL_FILE_NAME = "model";
 const NER_MAX_TOKENS = 512;
@@ -16,6 +23,20 @@ async function loadNER() {
     if (nerCache) {
         return nerCache;
     }
+
+    // Node/CPU instance of the Ettin session, loaded lazily so this module
+    // stays import-safe in bundled browser/extension contexts (no top-level
+    // Node builtins). Distinct from the v7 image pipeline's WebGPU Ettin
+    // session — which integration is canonical for DOM work is still an OPEN
+    // decision (reference: piidetector-extension-readiness). Do not merge,
+    // delete, or redirect either session without an explicit instruction.
+    const path = require("path");
+    const fs = require("fs");
+
+    const NER_MODEL = path.resolve(
+        __dirname,
+        "models/ettin-68m-nemotron-pii-onnx"
+    );
 
     const {
         AutoTokenizer,
@@ -39,6 +60,10 @@ async function loadNER() {
             {
                 dtype: "fp32",
                 model_file_name: NER_MODEL_FILE_NAME,
+                // The upstream repo keeps model.onnx at ROOT (no onnx/
+                // subfolder); transformers.js defaults subfolder to "onnx",
+                // which 404s. Empty string targets the root file.
+                subfolder: "",
                 device: "cpu"
             }
         );
@@ -286,6 +311,14 @@ const PATTERNS = {
     EMAIL_ID:
         /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/gi,
 
+    // UPI/VPA handles have no dotted TLD (user@okhdfcbank), so the EMAIL_ID
+    // pattern above can never match them — they need their own type. The
+    // trailing negative lookahead keeps dotted addresses for EMAIL_ID:
+    // overlap resolution (same start → longer wins) would also prefer the
+    // full email, but excluding them here avoids duplicate candidates.
+    UPI_VPA:
+        /\b[a-zA-Z0-9._-]{2,}@[a-zA-Z][a-zA-Z0-9-]*(?!\.[a-zA-Z]{2,})\b/g,
+
     PHONE_NUMBER:
         /(?<!\d)(?:\+91[\s.-]?)?[6-9]\d{9}(?!\d)/g,
 
@@ -319,7 +352,7 @@ const PATTERNS = {
         /(?<!\d)(?:\d[ -]?){13,19}(?!\d)/g,
 
     BANK_ACCOUNT:
-        /\b(?:account|a\/c|acct)\s*(?:number|no\.?)?\s*[:\-]?\s*\d{9,18}\b/gi,
+        /(?<=\b(?:account|a\/c|acct)\s*(?:number|no\.?)?\s*[:\-]?\s*)\d{9,18}\b/gi,
 
     IBAN:
         /\b[A-Z]{2}\d{2}[A-Z0-9]{11,30}\b/gi,
@@ -328,13 +361,13 @@ const PATTERNS = {
         /\b[A-Z]{4}0[A-Z0-9]{6}\b/gi,
 
     SWIFT_BIC:
-        /\b[A-Z]{4}[A-Z]{2}[A-Z0-9]{2}(?:[A-Z0-9]{3})?\b/g,
+        /\b[A-Z]{4}[A-Z]{2}[A-Z0-9]{2}(?:[A-Z0-9]{3})?\b/g, // intentionally case-sensitive: BICs are uppercase by spec (was /gi before 79247a3 — author to confirm)
 
     GSTIN:
         /\b\d{2}[A-Z]{5}\d{4}[A-Z]\d[Zz][A-Z0-9]\b/gi,
 
     TAX_ID:
-        /\b(?:tax\s*(?:id|number)|TIN)\s*[:\-]?\s*[A-Z0-9-]{6,20}\b/gi,
+        /(?<=\b(?:tax\s*(?:id|number)|TIN)\s*[:\-]?\s*)[A-Z0-9-]{6,20}\b/gi,
 
 
     // ------------------------------------------------------------------------
@@ -348,24 +381,29 @@ const PATTERNS = {
         /\b(?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}\b/g,
 
     DEVICE_ID:
-        /\b(?:device\s*id|device\s*identifier)\s*[:\-]?\s*[A-Za-z0-9._:-]{6,50}\b/gi,
+        /(?<=\b(?:device\s*id|device\s*identifier)\s*[:\-]?\s*)[A-Za-z0-9._:-]{6,50}\b/gi,
 
 
     // ------------------------------------------------------------------------
     // AUTHENTICATION / SECRETS
+    //
+    // Convention for every label-prefixed type below: the label lives in a
+    // variable-length lookbehind, so the match span is the VALUE ONLY — the
+    // label stays visible after redaction. (V8/Node support unbounded
+    // lookbehind; this module is Chrome-or-Node only.)
     // ------------------------------------------------------------------------
 
     USERNAME:
-        /\b(?:username|user\s*name|login\s*id)\s*[:\-]?\s*[A-Za-z0-9._-]{3,40}\b/gi,
+        /(?<=\b(?:username|user\s*name|login\s*id)\s*[:\-]?\s*)[A-Za-z0-9._-]{3,40}\b/gi,
 
     PASSWORD:
-        /\b(?:password|passwd|pwd)\s*[:=]\s*\S+/gi,
+        /(?<=\b(?:password|passwd|pwd)\s*[:=]\s*)\S+/gi,
 
     PIN:
-        /\b(?:PIN|pin\s*number)\s*[:\-]?\s*\d{4,6}\b/g,
+        /(?<=\b(?:PIN|pin\s*number)\s*[:\-]?\s*)\d{4,6}\b/g,
 
     OTP:
-        /\b(?:OTP|one[-\s]?time\s+password)\s*[:\-]?\s*\d{4,8}\b/gi,
+        /(?<=\b(?:OTP|one[-\s]?time\s+password)\s*[:\-]?\s*)\d{4,8}\b/gi,
 
     API_KEY:
         /\b(?:api[_\s-]?key|apikey)\s*[:=]\s*[A-Za-z0-9_-]{12,}\b/gi,
@@ -376,10 +414,10 @@ const PATTERNS = {
     // ------------------------------------------------------------------------
 
     EMPLOYEE_ID:
-        /\b(?:employee\s*(?:id|number|no\.?))\s*[:\-]?\s*[A-Za-z0-9-]{4,30}\b/gi,
+        /(?<=\b(?:employee\s*(?:id|number|no\.?))\s*[:\-]?\s*)[A-Za-z0-9-]{4,30}\b/gi,
 
     CUSTOMER_ID:
-        /\b(?:customer\s*(?:id|number|no\.?))\s*[:\-]?\s*[A-Za-z0-9-]{4,30}\b/gi,
+        /(?<=\b(?:customer\s*(?:id|number|no\.?))\s*[:\-]?\s*)[A-Za-z0-9-]{4,30}\b/gi,
 
     STUDENT_ID:
         /\b(?:student\s*(?:id|number|no\.?))\s*[:\-]?\s*[A-Za-z0-9-]{4,30}\b/gi,
@@ -462,6 +500,50 @@ const NER_REPLACEMENTS = {
     USER_NAME: "<USER_NAME>",
     VEHICLE_IDENTIFIER: "<VEHICLE_IDENTIFIER>"
 };
+
+/* ============================================================================
+ * VERHOEFF CHECKSUM (Aadhaar)
+ * ============================================================================
+ *
+ * Aadhaar numbers carry a Verhoeff check digit and are never issued with a
+ * leading 0/1. A bare 12-digit run matches the AADHAAR shape but is usually
+ * an order number or identifier — validate before accepting.
+ */
+const VERHOEFF_D = [
+    [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+    [1, 2, 3, 4, 0, 6, 7, 8, 9, 5],
+    [2, 3, 4, 0, 1, 7, 8, 9, 5, 6],
+    [3, 4, 0, 1, 2, 8, 9, 5, 6, 7],
+    [4, 0, 1, 2, 3, 9, 5, 6, 7, 8],
+    [5, 9, 8, 7, 6, 0, 4, 3, 2, 1],
+    [6, 5, 9, 8, 7, 1, 0, 4, 3, 2],
+    [7, 6, 5, 9, 8, 2, 1, 0, 4, 3],
+    [8, 7, 6, 5, 9, 3, 2, 1, 0, 4],
+    [9, 8, 7, 6, 5, 4, 3, 2, 1, 0]
+];
+const VERHOEFF_P = [
+    [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+    [1, 5, 7, 6, 2, 8, 3, 0, 9, 4],
+    [5, 8, 0, 3, 7, 9, 6, 1, 4, 2],
+    [8, 9, 1, 6, 0, 4, 3, 7, 2, 5],
+    [9, 4, 5, 3, 1, 2, 6, 8, 7, 0],
+    [4, 2, 8, 6, 5, 7, 3, 9, 0, 1],
+    [2, 7, 9, 3, 8, 0, 6, 4, 1, 5],
+    [7, 0, 4, 6, 9, 1, 3, 2, 5, 8]
+];
+const VERHOEFF_INV = [0, 4, 3, 2, 1, 5, 6, 7, 8, 9];
+
+function verhoeffCheck(number) {
+    const digits = String(number ?? "").replace(/\D/g, "");
+    if (digits.length !== 12) return false;
+    if (digits[0] === "0" || digits[0] === "1") return false;
+    let checksum = 0;
+    for (let i = 0; i < digits.length; i++) {
+        const digit = Number(digits[digits.length - 1 - i]);
+        checksum = VERHOEFF_D[checksum][VERHOEFF_P[i % 8][digit]];
+    }
+    return checksum === 0;
+}
 
 /* ============================================================================
  * VALIDATORS
@@ -643,6 +725,7 @@ function calculateConfidence(type, value, context) {
     // Strong pattern matches.
     const highConfidenceTypes = new Set([
         "EMAIL_ID",
+        "UPI_VPA",
         "PAN_NUMBER",
         "AADHAAR",
         "IFSC_CODE",
@@ -679,7 +762,16 @@ function calculateConfidence(type, value, context) {
         "login",
         "student",
         "employee",
-        "patient"
+        "patient",
+        "dob",
+        "birth",
+        "ifsc",
+        "upi",
+        "vpa",
+        "signup",
+        "signin",
+        "gst",
+        "tax"
     ];
 
     if (contextWords.some(word => combined.includes(word))) {
@@ -705,6 +797,9 @@ function validateMatch(type, value) {
 
         case "CARD_NUMBER":
             return luhn(value);
+
+        case "AADHAAR":
+            return verhoeffCheck(value);
 
         case "IBAN":
             return ibanValid(value);
@@ -892,7 +987,9 @@ function detectPII(text) {
 function redactPII(text, detections) {
 
     let result = String(text ?? "");
-    console.log(
+    // Raw-text logging lives behind PII_DEBUG (default off) — this function
+    // runs against real page content, so unconditional logging is a leak.
+    debugLog(
         "[REDACT] Before:",
         JSON.stringify(result)
     );
@@ -916,7 +1013,7 @@ function redactPII(text, detections) {
             replacement +
             result.slice(detection.end);
     }
-    console.log(
+    debugLog(
         "[REDACT] After:",
         JSON.stringify(result)
     );
@@ -1202,8 +1299,10 @@ async function detectPIIWithNER(text) {
         });
     }
     // Debug: inspect raw Ettin token predictions before merging.
-    console.log("[NER] Raw predictions:");
-    console.log(
+    // Gated (default off): the slices below include discarded/unmerged
+    // candidate spans, not just final detections — never log unconditionally.
+    debugLog("[NER] Raw predictions:");
+    debugLog(
         predictions.map(prediction => ({
             entity: prediction.entity,
             prefix: prediction.prefix,
@@ -1284,7 +1383,32 @@ async function detectPIIWithNER(text) {
         `[NER] Ettin detected ${detections.length} candidate(s)`
     );
 
-    return detections;
+    return stripPlaceholderDetections(detections, residualText);
+}
+
+/**
+ * Drop detections that fall inside `<PLACEHOLDER>` spans.
+ *
+ * Placeholders are already-redacted output (ours or Tier0's). Without this,
+ * NER re-fires on bracket fragments ("FIRST", "CITY", "NAME"), the
+ * self-audit re-redacts placeholders-inside-placeholders, and the loop can
+ * never converge — clean input ends BLOCKED. Pure function (unit-tested).
+ */
+function stripPlaceholderDetections(detections, text) {
+    const source = String(text ?? "");
+    const holes = [];
+    const re = /<[A-Z0-9_]+>/g;
+    let m;
+    while ((m = re.exec(source)) !== null) {
+        holes.push([m.index, m.index + m[0].length]);
+    }
+    if (!holes.length) return detections;
+    return (detections || []).filter(
+        (d) =>
+            !holes.some(
+                (h) => d.start < h[1] && d.end > h[0]
+            )
+    );
 }
 /**
  * Tier 0 + Tier 1 PII processing.
@@ -1383,6 +1507,11 @@ async function processPIIWithNER(text) {
     /*
      * If we reach here, the text could not become
      * clean within the allowed audit passes.
+     *
+     * CONTRACT (fail-closed): `text: null` on block is a BLOCK signal, not
+     * an empty string. Any caller (present or future — e.g. whoever wires
+     * the chat loop) MUST treat null as "do not use / do not forward" and
+     * must never substitute "" and continue as if clean.
      */
     console.error(
         "[SELF-AUDIT] Could not reach a clean state. Blocking output."
@@ -1651,6 +1780,7 @@ module.exports = {
     redactPII,
     processPII,
     processPIIWithNER,
+    stripPlaceholderDetections,
 
     extractDOMText,
     extractFormValues

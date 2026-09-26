@@ -14,7 +14,7 @@
 
 3. **Route `list_interactive_elements`. [KEEP beta wiring, UPDATE wording]** `background.js` → offscreen `RUN_PIPELINE` (parallel-fusion BlazeFace+PaddleOCR+Ettin+FastVLM — old "tiered → plan" wording superseded) → sanitized response. You are the router; reflect real stages in loading-state UI. Never touch pipeline internals.
 
-4. **Action validator.** `isDestructive()` in `background.js` — unchanged logic, now gates Reasoning Server actions identically. Same pending map (`pending_id` → 60s timeout) for all callers.
+4. **Action validator.** `isDestructive()` — unchanged logic, gates all callers identically with the **blocking** confirm flow (hold ≤60s → terminal `ok`/`denied`/`timeout`; the old `pending_id`-push map is dead — see `docs/tool-schema.md`). Module ships tested and unwired (`src/shared/is-destructive.js`); wiring + approval UI is T6d (popup-window approved).
 
 5. **Popup Capture flow (high-priority, was "lowest priority") [REBUILD UI on beta wiring]** — `extension/popup/popup.html` + `popup.js`. Keep beta `handleImageFile → RUN_PIPELINE`, progress listener, viewer/overlay/export; replace model-jargon UI with Human Mode:
    - Tab selector (defaults to current tab) + **Capture** button (not Analyze).

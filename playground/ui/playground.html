@@ -176,13 +176,13 @@ WEBSOCKET CONNECTION
 <div class="ws-controls">
 
     <label for="ws-url">
-        WebSocket Server
+        Bridge WebSocket
     </label>
 
     <input
         id="ws-url"
         type="text"
-        value="ws://localhost:8080"
+        value="ws://127.0.0.1:7331"
         autocomplete="off">
 
     <div class="ws-buttons">
@@ -199,6 +199,28 @@ WEBSOCKET CONNECTION
             class="secondary-button"
             type="button">
             Stop
+        </button>
+
+    </div>
+    <div class="ws-pairing">
+
+        <label for="ws-pair-code">
+            Pairing code (bridge dashboard)
+        </label>
+
+        <input
+            id="ws-pair-code"
+            type="text"
+            inputmode="numeric"
+            autocomplete="one-time-code"
+            maxlength="6"
+            placeholder="6-digit code">
+
+        <button
+            id="ws-pair"
+            class="secondary-button"
+            type="button">
+            Pair
         </button>
 
     </div>
@@ -230,8 +252,8 @@ WEBSOCKET CONNECTION
     </div>
 
     <small class="ws-hint">
-        Start Node server first —
-        browser cannot spawn it.
+        Start the bridge daemon first (it prints the pairing code),
+        then Start here, then Pair — the browser cannot spawn the daemon.
     </small>
 
 </div>
@@ -246,8 +268,16 @@ WEBSOCKET CONNECTION
             <section class="tools-panel">
 
                 <h3>
-                    Tools (7)
+                    Tools (9)
                 </h3>
+
+
+                <div class="tool-row">
+                    <span>capture_tab</span>
+                    <span class="tool-status read">
+                        Read
+                    </span>
+                </div>
 
 
                 <div class="tool-row">
@@ -312,6 +342,91 @@ WEBSOCKET CONNECTION
                         Read
                     </span>
                 </div>
+
+
+                <div class="tool-row">
+                    <span>list_tabs</span>
+
+                    <span class="tool-status read">
+                        Read
+                    </span>
+                </div>
+
+            </section>
+
+
+            <!-- =================================================
+                 MANUAL SIDE (T5: tab picker + generic tool sender)
+            ================================================== -->
+
+            <section class="manual-panel">
+
+                <h3>
+                    Manual
+                </h3>
+
+
+                <label for="manual-tab-picker">
+                    Tab
+                </label>
+
+                <div class="manual-row">
+
+                    <select id="manual-tab-picker">
+                        <option value="">Active tab</option>
+                    </select>
+
+                    <button
+                        id="manual-refresh-tabs"
+                        class="secondary-button"
+                        type="button">
+                        Refresh
+                    </button>
+
+                </div>
+
+
+                <label for="manual-tool">
+                    Tool
+                </label>
+
+                <select id="manual-tool">
+                    <option value="capture_tab">capture_tab</option>
+                    <option value="read_page">read_page</option>
+                    <option value="list_interactive_elements">list_interactive_elements</option>
+                    <option value="list_tabs">list_tabs</option>
+                    <option value="click">click</option>
+                    <option value="type">type</option>
+                    <option value="select_option">select_option</option>
+                    <option value="submit">submit</option>
+                    <option value="scroll">scroll</option>
+                </select>
+
+
+                <label for="manual-params">
+                    Params (JSON)
+                </label>
+
+                <textarea
+                    id="manual-params"
+                    rows="3"
+                    spellcheck="false">{}</textarea>
+
+
+                <button
+                    id="manual-send"
+                    class="primary-button"
+                    type="button">
+                    Send
+                </button>
+
+
+                <small class="ws-hint">
+                    Results land in the Tool inspector, exactly as an
+                    agent would see them. The selected tab is injected
+                    as tabId (except list_tabs); pick Active tab to omit
+                    it. Destructive tools still gate in the extension.
+                </small>
 
             </section>
 
@@ -457,13 +572,21 @@ WEBSOCKET CONNECTION
 
                          <div class="screen-header-right">
 
-                        <button
-                            id="raw-json-toggle"
-                            class="outline-button">
+                         <button
+                             id="raw-json-toggle"
+                             class="outline-button">
 
-                            View Raw JSON
+                             View Raw JSON
 
-                        </button>
+                         </button>
+                         <button
+                             id="capture-tab-btn"
+                             class="outline-button"
+                             type="button">
+
+                             Capture active tab
+
+                         </button>
                         <span
             id="latency-value"
             class="latency-value">
@@ -474,6 +597,21 @@ WEBSOCKET CONNECTION
 
 </div>
                     <!-- STRUCTURED VIEW -->
+
+                    <div
+                        id="capture-view"
+                        class="capture-view hidden">
+
+                        <img
+                            id="capture-img"
+                            class="capture-img"
+                            alt="Redacted tab capture">
+
+                        <div
+                            id="capture-meta"
+                            class="capture-meta"></div>
+
+                    </div>
 
                     <div
                         id="structured-screen-state">
