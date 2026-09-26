@@ -128,12 +128,13 @@ function escapeHtml(s) {
 }
 
 export function renderDashboard({ pairing, status, ports }) {
-  const code = pairing.code ?? "(paired — no code needed; restart to re-pair a new client)";
+  const code = pairing.code ?? "(no live code right now — check daemon stdout)";
+  const clients = (status.clients || []).map((c) => `${c.clientId} (${c.role})`).join(", ") || "none yet";
   const rows = [
     ["Extension", status.extensionConnected ? "connected" : "not connected"],
-    ["Paired clients", String(status.pairedClients)],
+    ["Paired clients", `${status.pairedClients} — ${clients}`],
     ["Pairing locked", status.pairingLocked ? "yes (back off, then retry)" : "no"],
-    ["WS (extension)", `ws://127.0.0.1:${ports.wsPort}`],
+    ["WS (extension + agents)", `ws://127.0.0.1:${ports.wsPort}`],
     ["MCP (streamable HTTP)", `http://127.0.0.1:${ports.httpPort}/mcp`],
     ["Tools", TOOL_DEFS.map((t) => t.name).join(", ")],
   ]

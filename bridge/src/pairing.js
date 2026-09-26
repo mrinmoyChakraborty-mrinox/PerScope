@@ -96,10 +96,15 @@ export function savePairedClients(dir, data) {
   }
 }
 
-export function addPairedClient(dir, { clientId, token }) {
+export function addPairedClient(dir, { clientId, token, role }) {
   const data = loadPairedClients(dir);
   data.clients = data.clients.filter((c) => c.clientId !== clientId);
-  data.clients.push({ clientId, token, pairedAt: new Date().toISOString() });
+  data.clients.push({
+    clientId,
+    token,
+    role: role === "agent" ? "agent" : "extension",
+    pairedAt: new Date().toISOString(),
+  });
   savePairedClients(dir, data);
   return data;
 }

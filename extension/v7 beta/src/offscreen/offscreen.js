@@ -12,6 +12,7 @@
  */
 import { resolveComputeDevice } from "../pipeline/gpu.js";
 import { runExtensionPipeline } from "../pipeline/v7-extension.js";
+import { mapDomCaptureToReadPage } from "../shared/read-page-mapping.js";
 import { startBridgeLink } from "./bridge-link.js";
 
 console.log("[PerScope Offscreen] Initialized and listening for pipeline tasks.");
@@ -73,12 +74,12 @@ async function runPipelineJob({ jobId, imageBytes, options, onProgress }) {
 }
 
 // -- Bridge tool routing -----------------------------------------------------
-// capture_tab runs the real image pipeline. DOM tools (read_page,
-// list_interactive_elements, click, type, select_option, submit, scroll)
-// need content.js, which is deferred to Final by design — they answer with
-// an explicit error, never silence and never fake data.
+// capture_tab runs the real image pipeline. read_page reuses the existing
+// SW REQUEST_DOM_CAPTURE path (content script + Tier0, active tab) and maps
+// it to the bridge {sanitizedText, findings} shape. Remaining DOM tools
+// (list/count/act) need element enumeration + refs, still Final scope —
+// they answer with an explicit error, never silence and never fake data.
 const DOM_DEFERRED = new Set([
-  "read_page",
   "list_interactive_elements",
   "click",
   "type",
@@ -116,11 +117,29 @@ async function handleBridgeTool({ tool, params }) {
       return { status: "error", reason: err?.message || "pipeline-failed" };
     }
   }
+  if (tool === "read_page") {
+    // Beta scope: active-tab DOM only. Targeting an arbitrary tabId needs
+    // the list_tabs tool (D4), still pending.
+    if (params && params.tabId !== undefined && params.tabId !== null) {
+      return { status: "error", reason: "tab-targeting-requires-tabs-permission" };
+    }
+    try {
+      // chrome.tabs is unavailable in offscreen documents, so DOM capture
+      // goes through the service worker (same action the popup uses).
+      const res = await chrome.runtime.sendMessage({ target: "background", action: "REQUEST_DOM_CAPTURE" });
+      if (!res || res.status !== "SUCCESS" || !res.capture) {
+        return { status: "error", reason: res?.error || "dom-capture-failed" };
+      }
+      return mapDomCaptureToReadPage(res.capture);
+    } catch (err) {
+      return { status: "error", reason: err?.message || "dom-capture-failed" };
+    }
+  }
   if (DOM_DEFERRED.has(tool)) {
     return {
       status: "error",
       reason: "dom-not-implemented-in-beta",
-      detail: `${tool} needs content.js (Final scope). This beta serves capture_tab only.`,
+      detail: `${tool} needs element enumeration + refs (T2c scope). This beta serves capture_tab + read_page only.`,
     };
   }
   return { status: "error", reason: `unknown-tool:${tool}` };

@@ -16,7 +16,7 @@ export async function runDaemon(config = loadConfig()) {
   });
   bridge.on("pairing-rotated", (pairing) => {
     if (pairing.code) {
-      console.log(`[perscope-bridge] pairing code rotated (lockout/expiry): ${pairing.code}`);
+      console.log(`[perscope-bridge] new pairing code: ${pairing.code} (expires in 10 min, single-use)`);
     }
   });
 
@@ -57,13 +57,17 @@ export async function runDaemon(config = loadConfig()) {
   const close = async () => {
     if (closing) return;
     closing = true;
+    process.off("SIGINT", onSigint);
+    process.off("SIGTERM", onSigterm);
     await new Promise((resolve) => tcp.close(resolve));
     await new Promise((resolve) => httpServer.close(resolve));
     await bridge.close();
     releaseLock(config.dir);
   };
-  process.on("SIGINT", () => close().then(() => process.exit(0)));
-  process.on("SIGTERM", () => close().then(() => process.exit(0)));
+  const onSigint = () => close().then(() => process.exit(0));
+  const onSigterm = () => close().then(() => process.exit(0));
+  process.on("SIGINT", onSigint);
+  process.on("SIGTERM", onSigterm);
 
   return {
     bridge,

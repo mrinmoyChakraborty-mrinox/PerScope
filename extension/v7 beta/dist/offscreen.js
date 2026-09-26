@@ -48582,6 +48582,29 @@ var init_v7_extension = __esm({
 init_gpu();
 init_v7_extension();
 
+// src/shared/read-page-mapping.js
+var FINDING_FIELDS = ["type", "source", "confidence", "segmentId", "forceRedacted", "structuralHint"];
+function sanitizeFinding(f) {
+  if (!f || typeof f !== "object") return null;
+  const out = {};
+  for (const key of FINDING_FIELDS) {
+    if (f[key] !== void 0) out[key] = f[key];
+  }
+  if (typeof out.source !== "string") out.source = "dom";
+  return out;
+}
+function mapDomCaptureToReadPage(capture) {
+  if (!capture || typeof capture !== "object") {
+    return { status: "error", reason: "dom-capture-failed" };
+  }
+  const findings = Array.isArray(capture.findings) ? capture.findings.map(sanitizeFinding).filter(Boolean) : [];
+  return {
+    status: "ok",
+    sanitizedText: String(capture.redactedDocument ?? ""),
+    findings
+  };
+}
+
 // src/offscreen/bridge-link.js
 var BRIDGE_WS_URL = "ws://127.0.0.1:7331";
 var TOKEN_KEY = "perscope.bridgeToken";
@@ -48829,7 +48852,6 @@ async function runPipelineJob({ jobId, imageBytes, options, onProgress }) {
   };
 }
 var DOM_DEFERRED = /* @__PURE__ */ new Set([
-  "read_page",
   "list_interactive_elements",
   "click",
   "type",
@@ -48863,11 +48885,25 @@ async function handleBridgeTool({ tool, params }) {
       return { status: "error", reason: err?.message || "pipeline-failed" };
     }
   }
+  if (tool === "read_page") {
+    if (params && params.tabId !== void 0 && params.tabId !== null) {
+      return { status: "error", reason: "tab-targeting-requires-tabs-permission" };
+    }
+    try {
+      const res = await chrome.runtime.sendMessage({ target: "background", action: "REQUEST_DOM_CAPTURE" });
+      if (!res || res.status !== "SUCCESS" || !res.capture) {
+        return { status: "error", reason: res?.error || "dom-capture-failed" };
+      }
+      return mapDomCaptureToReadPage(res.capture);
+    } catch (err) {
+      return { status: "error", reason: err?.message || "dom-capture-failed" };
+    }
+  }
   if (DOM_DEFERRED.has(tool)) {
     return {
       status: "error",
       reason: "dom-not-implemented-in-beta",
-      detail: `${tool} needs content.js (Final scope). This beta serves capture_tab only.`
+      detail: `${tool} needs element enumeration + refs (T2c scope). This beta serves capture_tab + read_page only.`
     };
   }
   return { status: "error", reason: `unknown-tool:${tool}` };
