@@ -21,6 +21,7 @@
 
 import { captureDOMSegments, runTier0OnSegments } from "../pipeline/dom-capture.js";
 import { reconstructDocument } from "../pipeline/dom-heuristics.js";
+import { enumerateInteractive } from "./refs.js";
 // Koyel's Tier0 engine (fixed contract — do not modify piidetector.js).
 // Bundled by build.mjs (mirrors the offscreen.js pattern); the `readline`
 // CLI branch inside piidetector.js is dead in this context (require.main is
@@ -183,7 +184,22 @@ if (typeof window !== "undefined" && typeof window.addEventListener === "functio
 // Single message type this content script handles.
 if (typeof chrome !== "undefined" && chrome?.runtime?.onMessage) {
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-    if (!message || message.type !== "CAPTURE_DOM_TEXT") return false;
+    if (!message) return false;
+    // Interactive-element enumeration (T2c): opaque refs from the
+    // per-page registry. Read-only — never mutates the DOM. Response
+    // carries ref/tag/label/role only; domPaths stay registry-side.
+    if (message.type === "LIST_ELEMENTS") {
+      try {
+        const elements = enumerateInteractive(
+          typeof document !== "undefined" ? document : null
+        );
+        sendResponse({ status: "SUCCESS", elements });
+      } catch (err) {
+        sendResponse({ status: "ERROR", error: err && err.message ? err.message : String(err) });
+      }
+      return true;
+    }
+    if (message.type !== "CAPTURE_DOM_TEXT") return false;
     (async () => {
       try {
         if (isTopFrame()) {

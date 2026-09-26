@@ -12,6 +12,7 @@
  */
 import { resolveComputeDevice } from "../pipeline/gpu.js";
 import { runExtensionPipeline } from "../pipeline/v7-extension.js";
+import { mapDomCaptureToReadPage } from "../shared/read-page-mapping.js";
 import { startBridgeLink } from "./bridge-link.js";
 
 console.log("[PerScope Offscreen] Initialized and listening for pipeline tasks.");
@@ -73,13 +74,14 @@ async function runPipelineJob({ jobId, imageBytes, options, onProgress }) {
 }
 
 // -- Bridge tool routing -----------------------------------------------------
-// capture_tab runs the real image pipeline. DOM tools (read_page,
-// list_interactive_elements, click, type, select_option, submit, scroll)
-// need content.js, which is deferred to Final by design — they answer with
-// an explicit error, never silence and never fake data.
+// capture_tab runs the real image pipeline. read_page reuses the existing
+// SW REQUEST_DOM_CAPTURE path (content script + Tier0, active tab) and maps
+// it to the bridge {sanitizedText, findings} shape. list_interactive_elements
+// reuses SW REQUEST_ELEMENT_LIST (content registry [{ref,tag,label,role}],
+// active tab). Remaining action tools (click/type/select_option/submit and
+// scroll execution) still need T6d — they answer with an explicit error,
+// never silence and never fake data.
 const DOM_DEFERRED = new Set([
-  "read_page",
-  "list_interactive_elements",
   "click",
   "type",
   "select_option",
@@ -116,11 +118,76 @@ async function handleBridgeTool({ tool, params }) {
       return { status: "error", reason: err?.message || "pipeline-failed" };
     }
   }
+  if (tool === "read_page") {
+    // Beta scope: active-tab DOM only. Targeting an arbitrary tabId needs
+    // the list_tabs tool (D4), still pending.
+    if (params && params.tabId !== undefined && params.tabId !== null) {
+      return { status: "error", reason: "tab-targeting-requires-tabs-permission" };
+    }
+    try {
+      // chrome.tabs is unavailable in offscreen documents, so DOM capture
+      // goes through the service worker (same action the popup uses).
+      const res = await chrome.runtime.sendMessage({ target: "background", action: "REQUEST_DOM_CAPTURE" });
+      if (!res || res.status !== "SUCCESS" || !res.capture) {
+        return { status: "error", reason: res?.error || "dom-capture-failed" };
+      }
+      return mapDomCaptureToReadPage(res.capture);
+    } catch (err) {
+      return { status: "error", reason: err?.message || "dom-capture-failed" };
+    }
+  }
+  if (tool === "list_tabs") {
+    try {
+      const res = await chrome.runtime.sendMessage({ target: "background", action: "LIST_TABS" });
+      if (!res || res.status !== "SUCCESS" || !Array.isArray(res.tabs)) {
+        return { status: "error", reason: res?.error || "tab-listing-failed" };
+      }
+      // Allowlist shape: identity + targeting fields only.
+      const tabs = res.tabs
+        .filter((t) => t && typeof t.tabId === "number")
+        .map((t) => ({
+          tabId: t.tabId,
+          title: String(t.title ?? ""),
+          url: String(t.url ?? ""),
+          active: !!t.active,
+        }));
+      const out = { status: "ok", tabs };
+      if (typeof res.titlesAvailable === "boolean") out.titlesAvailable = res.titlesAvailable;
+      return out;
+    } catch (err) {
+      return { status: "error", reason: err?.message || "tab-listing-failed" };
+    }
+  }
+  if (tool === "list_interactive_elements") {
+    // Beta scope: active-tab listing only (tabId targeting needs list_tabs).
+    if (params && params.tabId !== undefined && params.tabId !== null) {
+      return { status: "error", reason: "tab-targeting-requires-tabs-permission" };
+    }
+    try {
+      const res = await chrome.runtime.sendMessage({ target: "background", action: "REQUEST_ELEMENT_LIST" });
+      if (!res || res.status !== "SUCCESS" || !Array.isArray(res.elements)) {
+        return { status: "error", reason: res?.error || "element-listing-failed" };
+      }
+      // Allowlist shape: ref/tag/label/role only. Locator internals
+      // (domPaths) stay registry-side in the content script, never on wire.
+      const elements = res.elements
+        .filter((el) => el && typeof el.ref === "string")
+        .map((el) => ({
+          ref: el.ref,
+          tag: String(el.tag ?? ""),
+          label: String(el.label ?? ""),
+          role: String(el.role ?? ""),
+        }));
+      return { status: "ok", elements };
+    } catch (err) {
+      return { status: "error", reason: err?.message || "element-listing-failed" };
+    }
+  }
   if (DOM_DEFERRED.has(tool)) {
     return {
       status: "error",
       reason: "dom-not-implemented-in-beta",
-      detail: `${tool} needs content.js (Final scope). This beta serves capture_tab only.`,
+      detail: `${tool} needs action execution (T6d scope). This beta serves capture_tab + read_page + list_interactive_elements only.`,
     };
   }
   return { status: "error", reason: `unknown-tool:${tool}` };

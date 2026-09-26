@@ -38,11 +38,79 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 var require_piidetector = __commonJS({
   "../../piidetector.js"(exports, module) {
     "use strict";
+    var PII_DEBUG = typeof process !== "undefined" && !!process.env && process.env.PII_DEBUG === "1";
+    function debugLog(...args) {
+      if (PII_DEBUG) {
+        console.log(...args);
+      }
+    }
+    var NER_MODEL_FILE_NAME = "model";
+    var NER_MAX_TOKENS = 512;
+    var NER_MIN_SCORE = 0.3;
+    var nerCache = null;
+    async function loadNER() {
+      if (nerCache) {
+        return nerCache;
+      }
+      const path = __require("path");
+      const fs = __require("fs");
+      const NER_MODEL = path.resolve(
+        __dirname,
+        "models/ettin-68m-nemotron-pii-onnx"
+      );
+      const {
+        AutoTokenizer,
+        AutoModelForTokenClassification
+      } = await import("@huggingface/transformers");
+      let modelId = NER_MODEL;
+      try {
+        await fs.promises.access(modelId);
+      } catch {
+        modelId = "rulesentry-io/ettin-68m-nemotron-pii-onnx";
+      }
+      const tokenizer = await AutoTokenizer.from_pretrained(modelId);
+      const model = await AutoModelForTokenClassification.from_pretrained(
+        modelId,
+        {
+          dtype: "fp32",
+          model_file_name: NER_MODEL_FILE_NAME,
+          // The upstream repo keeps model.onnx at ROOT (no onnx/
+          // subfolder); transformers.js defaults subfolder to "onnx",
+          // which 404s. Empty string targets the root file.
+          subfolder: "",
+          device: "cpu"
+        }
+      );
+      const id2label = model.config?.id2label ?? {};
+      if (Object.keys(id2label).length === 0) {
+        throw new Error("Ettin NER id2label is missing.");
+      }
+      const configuredMax = Number(
+        model.config?.max_position_embeddings ?? NER_MAX_TOKENS
+      );
+      const maxTokens = Math.min(
+        NER_MAX_TOKENS,
+        configuredMax > 0 ? configuredMax : NER_MAX_TOKENS
+      );
+      nerCache = {
+        tokenizer,
+        model,
+        id2label,
+        maxTokens
+      };
+      return nerCache;
+    }
     var PATTERNS = {
       // ------------------------------------------------------------------------
       // BASIC PERSONAL INFORMATION
       // ------------------------------------------------------------------------
       EMAIL_ID: /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/gi,
+      // UPI/VPA handles have no dotted TLD (user@okhdfcbank), so the EMAIL_ID
+      // pattern above can never match them — they need their own type. The
+      // trailing negative lookahead keeps dotted addresses for EMAIL_ID:
+      // overlap resolution (same start → longer wins) would also prefer the
+      // full email, but excluding them here avoids duplicate candidates.
+      UPI_VPA: /\b[a-zA-Z0-9._-]{2,}@[a-zA-Z][a-zA-Z0-9-]*(?!\.[a-zA-Z]{2,})\b/g,
       PHONE_NUMBER: /(?<!\d)(?:\+91[\s.-]?)?[6-9]\d{9}(?!\d)/g,
       DATE_OF_BIRTH: /\b(?:DOB|D\.O\.B|Date of Birth|Birth Date)\s*[:\-]?\s*\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b/gi,
       AGE: /\b(?:age)\s*[:\-]?\s*\d{1,3}\s*(?:years?|yrs?)?\b/gi,
@@ -55,31 +123,37 @@ var require_piidetector = __commonJS({
       VOTER_ID: /\b[A-Z]{3}[0-9]{7}\b/gi,
       DRIVING_LICENSE: /\b[A-Z]{2}[-\s]?[0-9]{2}[-\s]?[0-9]{4}[-\s]?[0-9]{7}\b/gi,
       CARD_NUMBER: /(?<!\d)(?:\d[ -]?){13,19}(?!\d)/g,
-      BANK_ACCOUNT: /\b(?:account|a\/c|acct)\s*(?:number|no\.?)?\s*[:\-]?\s*\d{9,18}\b/gi,
+      BANK_ACCOUNT: /(?<=\b(?:account|a\/c|acct)\s*(?:number|no\.?)?\s*[:\-]?\s*)\d{9,18}\b/gi,
       IBAN: /\b[A-Z]{2}\d{2}[A-Z0-9]{11,30}\b/gi,
       IFSC_CODE: /\b[A-Z]{4}0[A-Z0-9]{6}\b/gi,
-      SWIFT_BIC: /\b[A-Z]{4}[A-Z]{2}[A-Z0-9]{2}(?:[A-Z0-9]{3})?\b/gi,
+      SWIFT_BIC: /\b[A-Z]{4}[A-Z]{2}[A-Z0-9]{2}(?:[A-Z0-9]{3})?\b/g,
+      // intentionally case-sensitive: BICs are uppercase by spec (was /gi before 79247a3 — author to confirm)
       GSTIN: /\b\d{2}[A-Z]{5}\d{4}[A-Z]\d[Zz][A-Z0-9]\b/gi,
-      TAX_ID: /\b(?:tax\s*(?:id|number)|TIN)\s*[:\-]?\s*[A-Z0-9-]{6,20}\b/gi,
+      TAX_ID: /(?<=\b(?:tax\s*(?:id|number)|TIN)\s*[:\-]?\s*)[A-Z0-9-]{6,20}\b/gi,
       // ------------------------------------------------------------------------
       // DEVICE / NETWORK IDENTIFIERS
       // ------------------------------------------------------------------------
       IP_ADDRESS: /\b(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)\b/g,
       MAC_ADDRESS: /\b(?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}\b/g,
-      DEVICE_ID: /\b(?:device\s*id|device\s*identifier)\s*[:\-]?\s*[A-Za-z0-9._:-]{6,50}\b/gi,
+      DEVICE_ID: /(?<=\b(?:device\s*id|device\s*identifier)\s*[:\-]?\s*)[A-Za-z0-9._:-]{6,50}\b/gi,
       // ------------------------------------------------------------------------
       // AUTHENTICATION / SECRETS
+      //
+      // Convention for every label-prefixed type below: the label lives in a
+      // variable-length lookbehind, so the match span is the VALUE ONLY — the
+      // label stays visible after redaction. (V8/Node support unbounded
+      // lookbehind; this module is Chrome-or-Node only.)
       // ------------------------------------------------------------------------
-      USERNAME: /\b(?:username|user\s*name|login\s*id)\s*[:\-]?\s*[A-Za-z0-9._-]{3,40}\b/gi,
-      PASSWORD: /\b(?:password|passwd|pwd)\s*[:=]\s*\S+/gi,
-      PIN: /\b(?:PIN|pin\s*number)\s*[:\-]?\s*\d{4,6}\b/g,
-      OTP: /\b(?:OTP|one[-\s]?time\s+password)\s*[:\-]?\s*\d{4,8}\b/gi,
+      USERNAME: /(?<=\b(?:username|user\s*name|login\s*id)\s*[:\-]?\s*)[A-Za-z0-9._-]{3,40}\b/gi,
+      PASSWORD: /(?<=\b(?:password|passwd|pwd)\s*[:=]\s*)\S+/gi,
+      PIN: /(?<=\b(?:PIN|pin\s*number)\s*[:\-]?\s*)\d{4,6}\b/g,
+      OTP: /(?<=\b(?:OTP|one[-\s]?time\s+password)\s*[:\-]?\s*)\d{4,8}\b/gi,
       API_KEY: /\b(?:api[_\s-]?key|apikey)\s*[:=]\s*[A-Za-z0-9_-]{12,}\b/gi,
       // ------------------------------------------------------------------------
       // ORGANIZATION-SPECIFIC IDENTIFIERS
       // ------------------------------------------------------------------------
-      EMPLOYEE_ID: /\b(?:employee\s*(?:id|number|no\.?))\s*[:\-]?\s*[A-Za-z0-9-]{4,30}\b/gi,
-      CUSTOMER_ID: /\b(?:customer\s*(?:id|number|no\.?))\s*[:\-]?\s*[A-Za-z0-9-]{4,30}\b/gi,
+      EMPLOYEE_ID: /(?<=\b(?:employee\s*(?:id|number|no\.?))\s*[:\-]?\s*)[A-Za-z0-9-]{4,30}\b/gi,
+      CUSTOMER_ID: /(?<=\b(?:customer\s*(?:id|number|no\.?))\s*[:\-]?\s*)[A-Za-z0-9-]{4,30}\b/gi,
       STUDENT_ID: /\b(?:student\s*(?:id|number|no\.?))\s*[:\-]?\s*[A-Za-z0-9-]{4,30}\b/gi,
       PATIENT_ID: /\b(?:patient\s*(?:id|number|no\.?))\s*[:\-]?\s*[A-Za-z0-9-]{4,30}\b/gi,
       POLICY_NUMBER: /\b(?:policy\s*(?:number|no\.?|id))\s*[:\-]?\s*[A-Za-z0-9-]{5,30}\b/gi
@@ -87,6 +161,96 @@ var require_piidetector = __commonJS({
     var REPLACEMENTS = {};
     for (const type of Object.keys(PATTERNS)) {
       REPLACEMENTS[type] = `<${type}>`;
+    }
+    var NER_REPLACEMENTS = {
+      ACCOUNT_NUMBER: "<ACCOUNT_NUMBER>",
+      AGE: "<AGE>",
+      API_KEY: "<API_KEY>",
+      BANK_ROUTING_NUMBER: "<BANK_ROUTING_NUMBER>",
+      BIOMETRIC_IDENTIFIER: "<BIOMETRIC_IDENTIFIER>",
+      BLOOD_TYPE: "<BLOOD_TYPE>",
+      CERTIFICATE_LICENSE_NUMBER: "<CERTIFICATE_LICENSE_NUMBER>",
+      CITY: "<CITY>",
+      COMPANY_NAME: "<COMPANY_NAME>",
+      COORDINATE: "<COORDINATE>",
+      COUNTRY: "<COUNTRY>",
+      COUNTY: "<COUNTY>",
+      CREDIT_DEBIT_CARD: "<CREDIT_DEBIT_CARD>",
+      CUSTOMER_ID: "<CUSTOMER_ID>",
+      CVV: "<CVV>",
+      DATE: "<DATE>",
+      DATE_OF_BIRTH: "<DATE_OF_BIRTH>",
+      DATE_TIME: "<DATE_TIME>",
+      DEVICE_IDENTIFIER: "<DEVICE_IDENTIFIER>",
+      EDUCATION_LEVEL: "<EDUCATION_LEVEL>",
+      EMAIL: "<EMAIL>",
+      EMPLOYEE_ID: "<EMPLOYEE_ID>",
+      EMPLOYMENT_STATUS: "<EMPLOYMENT_STATUS>",
+      FAX_NUMBER: "<FAX_NUMBER>",
+      FIRST_NAME: "<FIRST_NAME>",
+      GENDER: "<GENDER>",
+      HEALTH_PLAN_BENEFICIARY_NUMBER: "<HEALTH_PLAN_BENEFICIARY_NUMBER>",
+      HTTP_COOKIE: "<HTTP_COOKIE>",
+      IPV4: "<IPV4>",
+      IPV6: "<IPV6>",
+      LANGUAGE: "<LANGUAGE>",
+      LAST_NAME: "<LAST_NAME>",
+      LICENSE_PLATE: "<LICENSE_PLATE>",
+      MAC_ADDRESS: "<MAC_ADDRESS>",
+      MEDICAL_RECORD_NUMBER: "<MEDICAL_RECORD_NUMBER>",
+      NATIONAL_ID: "<NATIONAL_ID>",
+      OCCUPATION: "<OCCUPATION>",
+      PASSWORD: "<PASSWORD>",
+      PHONE_NUMBER: "<PHONE_NUMBER>",
+      PIN: "<PIN>",
+      POLITICAL_VIEW: "<POLITICAL_VIEW>",
+      POSTCODE: "<POSTCODE>",
+      RACE_ETHNICITY: "<RACE_ETHNICITY>",
+      RELIGIOUS_BELIEF: "<RELIGIOUS_BELIEF>",
+      SEXUALITY: "<SEXUALITY>",
+      SSN: "<SSN>",
+      STATE: "<STATE>",
+      STREET_ADDRESS: "<STREET_ADDRESS>",
+      SWIFT_BIC: "<SWIFT_BIC>",
+      TAX_ID: "<TAX_ID>",
+      TIME: "<TIME>",
+      UNIQUE_ID: "<UNIQUE_ID>",
+      URL: "<URL>",
+      USER_NAME: "<USER_NAME>",
+      VEHICLE_IDENTIFIER: "<VEHICLE_IDENTIFIER>"
+    };
+    var VERHOEFF_D = [
+      [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+      [1, 2, 3, 4, 0, 6, 7, 8, 9, 5],
+      [2, 3, 4, 0, 1, 7, 8, 9, 5, 6],
+      [3, 4, 0, 1, 2, 8, 9, 5, 6, 7],
+      [4, 0, 1, 2, 3, 9, 5, 6, 7, 8],
+      [5, 9, 8, 7, 6, 0, 4, 3, 2, 1],
+      [6, 5, 9, 8, 7, 1, 0, 4, 3, 2],
+      [7, 6, 5, 9, 8, 2, 1, 0, 4, 3],
+      [8, 7, 6, 5, 9, 3, 2, 1, 0, 4],
+      [9, 8, 7, 6, 5, 4, 3, 2, 1, 0]
+    ];
+    var VERHOEFF_P = [
+      [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+      [1, 5, 7, 6, 2, 8, 3, 0, 9, 4],
+      [5, 8, 0, 3, 7, 9, 6, 1, 4, 2],
+      [8, 9, 1, 6, 0, 4, 3, 7, 2, 5],
+      [9, 4, 5, 3, 1, 2, 6, 8, 7, 0],
+      [4, 2, 8, 6, 5, 7, 3, 9, 0, 1],
+      [2, 7, 9, 3, 8, 0, 6, 4, 1, 5],
+      [7, 0, 4, 6, 9, 1, 3, 2, 5, 8]
+    ];
+    function verhoeffCheck(number) {
+      const digits = String(number ?? "").replace(/\D/g, "");
+      if (digits.length !== 12) return false;
+      if (digits[0] === "0" || digits[0] === "1") return false;
+      let checksum = 0;
+      for (let i = 0; i < digits.length; i++) {
+        const digit = Number(digits[digits.length - 1 - i]);
+        checksum = VERHOEFF_D[checksum][VERHOEFF_P[i % 8][digit]];
+      }
+      return checksum === 0;
     }
     function luhn(number) {
       const digits = String(number).replace(/\D/g, "");
@@ -158,6 +322,7 @@ var require_piidetector = __commonJS({
       let score = 0.5;
       const highConfidenceTypes = /* @__PURE__ */ new Set([
         "EMAIL_ID",
+        "UPI_VPA",
         "PAN_NUMBER",
         "AADHAAR",
         "IFSC_CODE",
@@ -189,7 +354,16 @@ var require_piidetector = __commonJS({
         "login",
         "student",
         "employee",
-        "patient"
+        "patient",
+        "dob",
+        "birth",
+        "ifsc",
+        "upi",
+        "vpa",
+        "signup",
+        "signin",
+        "gst",
+        "tax"
       ];
       if (contextWords.some((word) => combined.includes(word))) {
         score += 0.2;
@@ -200,6 +374,8 @@ var require_piidetector = __commonJS({
       switch (type) {
         case "CARD_NUMBER":
           return luhn(value);
+        case "AADHAAR":
+          return verhoeffCheck(value);
         case "IBAN":
           return ibanValid(value);
         case "IP_ADDRESS":
@@ -261,11 +437,19 @@ var require_piidetector = __commonJS({
     }
     function redactPII2(text, detections) {
       let result = String(text ?? "");
+      debugLog(
+        "[REDACT] Before:",
+        JSON.stringify(result)
+      );
       const sorted = [...detections].sort((a, b) => b.start - a.start);
       for (const detection of sorted) {
-        const replacement = REPLACEMENTS[detection.type] ?? "<PII>";
+        const replacement = REPLACEMENTS[detection.type] ?? NER_REPLACEMENTS[detection.type] ?? "<PII>";
         result = result.slice(0, detection.start) + replacement + result.slice(detection.end);
       }
+      debugLog(
+        "[REDACT] After:",
+        JSON.stringify(result)
+      );
       return result;
     }
     function processPII(text) {
@@ -282,8 +466,279 @@ var require_piidetector = __commonJS({
           type: detection.type,
           start: detection.start,
           end: detection.end,
-          confidence: detection.confidence
+          confidence: detection.confidence,
+          source: "regex"
         }))
+      };
+    }
+    async function detectPIIWithNER(text) {
+      const residualText = String(text ?? "");
+      if (!residualText.trim()) {
+        return [];
+      }
+      const ner = await loadNER();
+      console.log("[NER] Running Ettin on Tier-0 residual text");
+      const encoded = await ner.tokenizer(
+        residualText,
+        {
+          return_offsets_mapping: true,
+          truncation: true,
+          max_length: ner.maxTokens
+        }
+      );
+      console.log("[NER] Tokenization complete");
+      const output = await ner.model(encoded);
+      const logits = output.logits;
+      if (!logits) {
+        throw new Error("Ettin NER did not return logits.");
+      }
+      const data = logits.data;
+      const dims = logits.dims;
+      if (!data || !dims || dims.length < 3) {
+        throw new Error("Unexpected Ettin logits shape.");
+      }
+      const sequenceLength = dims[dims.length - 2];
+      const numberOfLabels = dims[dims.length - 1];
+      let offsets = encoded.offset_mapping;
+      if (offsets?.tolist) {
+        offsets = offsets.tolist();
+      }
+      if (Array.isArray(offsets?.[0])) {
+        offsets = offsets[0];
+      }
+      if (!Array.isArray(offsets)) {
+        console.log("[NER] offset_mapping unavailable; building manual offsets");
+        const tokens = ner.tokenizer.tokenize(residualText);
+        offsets = [[0, 0]];
+        let cursor = 0;
+        for (const token of tokens) {
+          if (!token || token.startsWith("[") || token === "<s>" || token === "</s>") {
+            offsets.push([0, 0]);
+            continue;
+          }
+          let cleanToken = token.replace(/^##/, "").replace(/^▁/, "").replace(/^Ġ/, "");
+          if (!cleanToken) {
+            offsets.push([0, 0]);
+            continue;
+          }
+          let start = residualText.indexOf(
+            cleanToken,
+            cursor
+          );
+          if (start === -1) {
+            start = residualText.toLowerCase().indexOf(
+              cleanToken.toLowerCase(),
+              cursor
+            );
+          }
+          if (start === -1) {
+            offsets.push([0, 0]);
+            continue;
+          }
+          const end = start + cleanToken.length;
+          offsets.push([start, end]);
+          cursor = end;
+        }
+        offsets.push([0, 0]);
+      }
+      function softmax(values) {
+        const max = Math.max(...values);
+        const exps = values.map(
+          (value) => Math.exp(value - max)
+        );
+        const sum = exps.reduce(
+          (total, value) => total + value,
+          0
+        );
+        return exps.map((value) => value / sum);
+      }
+      function normalizeLabel(label) {
+        const value = String(label ?? "O");
+        if (value === "O") {
+          return {
+            prefix: "O",
+            entity: null
+          };
+        }
+        const parts = value.split("-", 2);
+        if (parts.length === 2) {
+          return {
+            prefix: parts[0].toUpperCase(),
+            entity: parts[1].toLowerCase()
+          };
+        }
+        return {
+          prefix: "B",
+          entity: value.toLowerCase()
+        };
+      }
+      const predictions = [];
+      for (let tokenIndex = 0; tokenIndex < sequenceLength; tokenIndex++) {
+        const tokenStart = offsets[tokenIndex]?.[0] ?? 0;
+        const tokenEnd = offsets[tokenIndex]?.[1] ?? 0;
+        if (tokenEnd <= tokenStart) {
+          continue;
+        }
+        const tokenLogits = [];
+        for (let labelIndex = 0; labelIndex < numberOfLabels; labelIndex++) {
+          const index = tokenIndex * numberOfLabels + labelIndex;
+          tokenLogits.push(data[index]);
+        }
+        const probabilities = softmax(tokenLogits);
+        let bestLabelIndex = 0;
+        for (let labelIndex = 1; labelIndex < probabilities.length; labelIndex++) {
+          if (probabilities[labelIndex] > probabilities[bestLabelIndex]) {
+            bestLabelIndex = labelIndex;
+          }
+        }
+        const confidence = probabilities[bestLabelIndex];
+        const label = ner.id2label[bestLabelIndex] ?? ner.id2label[String(bestLabelIndex)] ?? "O";
+        const parsed = normalizeLabel(label);
+        if (parsed.prefix === "O" || !parsed.entity || confidence < NER_MIN_SCORE) {
+          continue;
+        }
+        predictions.push({
+          prefix: parsed.prefix,
+          entity: parsed.entity,
+          confidence,
+          start: tokenStart,
+          end: tokenEnd
+        });
+      }
+      debugLog("[NER] Raw predictions:");
+      debugLog(
+        predictions.map((prediction) => ({
+          entity: prediction.entity,
+          prefix: prediction.prefix,
+          start: prediction.start,
+          end: prediction.end,
+          text: residualText.slice(
+            prediction.start,
+            prediction.end
+          ),
+          confidence: prediction.confidence
+        }))
+      );
+      const detections = [];
+      let current = null;
+      for (const prediction of predictions) {
+        const predictionType = prediction.entity.toUpperCase();
+        const sameEntity = current && current.entity === prediction.entity;
+        const adjacent = current && prediction.start <= current.end + 1;
+        if (!current || !sameEntity || !adjacent) {
+          if (current) {
+            detections.push(current);
+          }
+          current = {
+            entity: prediction.entity,
+            type: predictionType,
+            value: residualText.slice(
+              prediction.start,
+              prediction.end
+            ),
+            start: prediction.start,
+            end: prediction.end,
+            confidence: prediction.confidence,
+            source: "ner"
+          };
+          continue;
+        }
+        current.end = Math.max(
+          current.end,
+          prediction.end
+        );
+        current.value = residualText.slice(
+          current.start,
+          current.end
+        );
+        current.confidence = Math.min(
+          current.confidence,
+          prediction.confidence
+        );
+      }
+      if (current) {
+        detections.push(current);
+      }
+      console.log(
+        `[NER] Ettin detected ${detections.length} candidate(s)`
+      );
+      return stripPlaceholderDetections(detections, residualText);
+    }
+    function stripPlaceholderDetections(detections, text) {
+      const source = String(text ?? "");
+      const holes = [];
+      const re = /<[A-Z0-9_]+>/g;
+      let m;
+      while ((m = re.exec(source)) !== null) {
+        holes.push([m.index, m.index + m[0].length]);
+      }
+      if (!holes.length) return detections;
+      return (detections || []).filter(
+        (d) => !holes.some(
+          (h) => d.start < h[1] && d.end > h[0]
+        )
+      );
+    }
+    async function processPIIWithNER(text) {
+      const tier0Result = processPII(text);
+      let finalText = tier0Result.text;
+      const nerDetections = await detectPIIWithNER(finalText);
+      finalText = redactPII2(
+        finalText,
+        nerDetections
+      );
+      const MAX_AUDIT_PASSES = 2;
+      const auditDetections = [];
+      for (let auditPass = 1; auditPass <= MAX_AUDIT_PASSES; auditPass++) {
+        console.log(
+          `[SELF-AUDIT] Pass ${auditPass}`
+        );
+        const auditTier0 = detectPII2(finalText);
+        let auditTier1 = [];
+        if (auditTier0.text.trim()) {
+          auditTier1 = await detectPIIWithNER(finalText);
+        }
+        const newlyDetected = [
+          ...auditTier0.detections,
+          ...auditTier1
+        ];
+        if (newlyDetected.length === 0) {
+          console.log(
+            "[SELF-AUDIT] Clean after remediation."
+          );
+          return {
+            text: finalText,
+            blocked: false,
+            detections: [
+              ...tier0Result.detections,
+              ...nerDetections,
+              ...auditDetections
+            ]
+          };
+        }
+        console.log(
+          `[SELF-AUDIT] Found ${newlyDetected.length} additional candidate(s). Redacting.`
+        );
+        auditDetections.push(
+          ...newlyDetected
+        );
+        finalText = redactPII2(
+          finalText,
+          newlyDetected
+        );
+      }
+      console.error(
+        "[SELF-AUDIT] Could not reach a clean state. Blocking output."
+      );
+      return {
+        text: null,
+        blocked: true,
+        reason: "SELF_AUDIT_FAILED",
+        detections: [
+          ...tier0Result.detections,
+          ...nerDetections,
+          ...auditDetections
+        ]
       };
     }
     function shouldIgnoreElement(element) {
@@ -356,6 +811,8 @@ var require_piidetector = __commonJS({
       detectPII: detectPII2,
       redactPII: redactPII2,
       processPII,
+      processPIIWithNER,
+      stripPlaceholderDetections,
       extractDOMText,
       extractFormValues
     };
@@ -363,29 +820,33 @@ var require_piidetector = __commonJS({
       const readline = __require("readline");
       const rl = readline.createInterface({
         input: process.stdin,
-        output: process.stdout
+        output: process.stdout,
+        terminal: false
       });
-      rl.question(
-        "\nPaste text to scan:\n",
-        (input) => {
-          const result = processPII(input);
-          console.log(
-            "\nREDACTED:\n"
-          );
-          console.log(result.text);
-          console.log(
-            "\nDETECTIONS:\n"
-          );
-          console.log(
-            JSON.stringify(
-              result.detections,
-              null,
-              2
-            )
-          );
+      const lines = [];
+      console.log("\nPaste text to scan.");
+      console.log("Type END on a new line when finished.\n");
+      rl.on("line", (line) => {
+        if (line.trim() === "END") {
           rl.close();
+          return;
         }
-      );
+        lines.push(line);
+      });
+      rl.on("close", async () => {
+        const input = lines.join("\n");
+        const result = await processPIIWithNER(input);
+        console.log("\nREDACTED:\n");
+        console.log(result.text);
+        console.log("\nDETECTIONS:\n");
+        console.log(
+          JSON.stringify(
+            result.detections,
+            null,
+            2
+          )
+        );
+      });
     }
   }
 });
@@ -421,7 +882,9 @@ function classifySensitiveField(element) {
   }
   return { forceRedact: false, reason: "no-force-rule" };
 }
-function placeholderForForceRedact(element, reason) {
+function placeholderForForceRedact(element, reason, forcedType) {
+  const forced = String(forcedType ?? "");
+  if (/^[A-Z0-9_]+$/.test(forced)) return `<${forced}>`;
   const r = String(reason || "");
   if (r.includes("password") || r.includes("hidden")) return "<PASSWORD>";
   if (r.includes("cc-csc")) return "<PASSWORD>";
@@ -572,6 +1035,27 @@ function reconstructDocument(segments) {
   }
   return lines.join("\n").replace(/\n{3,}/g, "\n\n").replace(/\n+$/, "");
 }
+var SECRET_LABEL_VOCABULARY = [
+  { match: ["password", "passwd", "pwd", "passcode"], type: "PASSWORD" },
+  { match: ["one time password", "one-time password", "otp"], type: "OTP" },
+  { match: ["pin number", "pin"], type: "PIN" },
+  { match: ["email address", "e-mail", "email"], type: "EMAIL_ID" },
+  { match: ["phone number", "mobile number", "contact number", "telephone", "mobile", "phone"], type: "PHONE_NUMBER" },
+  { match: ["upi id", "upi", "vpa"], type: "UPI_VPA" },
+  { match: ["account number", "account no", "acct"], type: "BANK_ACCOUNT" },
+  { match: ["card number"], type: "CARD_NUMBER" },
+  { match: ["ifsc"], type: "IFSC_CODE" },
+  { match: ["date of birth", "birth date", "dob"], type: "DATE_OF_BIRTH" },
+  { match: ["aadhaar", "aadhar", "uidai"], type: "AADHAAR" },
+  { match: ["passport number", "passport no"], type: "PASSPORT_NUMBER" }
+];
+function escapeRegExp(s) {
+  return String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+var SECRET_LABEL_PATTERNS = SECRET_LABEL_VOCABULARY.map((entry) => {
+  const alts = [...entry.match].sort((a, b) => b.length - a.length).map(escapeRegExp);
+  return { type: entry.type, re: new RegExp(`\\b(?:${alts.join("|")})\\b`) };
+});
 
 // src/pipeline/dom-capture.js
 var IGNORED_TAGS = /* @__PURE__ */ new Set([
@@ -871,9 +1355,10 @@ function runTier0OnSegments(segments, detector) {
     if (segment.forceRedact) {
       const placeholder = placeholderForForceRedact(
         null,
-        segment.forceReason || "input-type-password"
+        segment.forceReason || "input-type-password",
+        segment.forcedType
       );
-      const type = placeholder === "<CARD_NUMBER>" ? "CARD_NUMBER" : "PASSWORD";
+      const type = segment.forcedType || (placeholder === "<CARD_NUMBER>" ? "CARD_NUMBER" : "PASSWORD");
       segmentResults.push({ segment, redactedText: placeholder, detections: [] });
       findings.push({
         type,
@@ -906,6 +1391,160 @@ function runTier0OnSegments(segments, detector) {
     }
   }
   return { segmentResults, findings };
+}
+
+// src/content/refs.js
+var registry = /* @__PURE__ */ new Map();
+var counter = 0;
+var INTERACTIVE_TAGS = /* @__PURE__ */ new Set(["a", "button", "input", "textarea", "select"]);
+function isSkippable(el) {
+  if (!el || typeof el.tagName !== "string") return true;
+  const tag = el.tagName.toLowerCase();
+  if (tag === "script" || tag === "style" || tag === "noscript" || tag === "template") return true;
+  if (tag === "input") {
+    const type = String(el.getAttribute ? el.getAttribute("type") : el.type || "text").trim().toLowerCase();
+    if (type === "hidden") return true;
+  }
+  if (el.hidden) return true;
+  try {
+    if (el.getAttribute && el.getAttribute("aria-hidden") === "true") return true;
+  } catch {
+  }
+  return false;
+}
+function isInteractive(el) {
+  if (isSkippable(el)) return false;
+  const tag = el.tagName.toLowerCase();
+  if (INTERACTIVE_TAGS.has(tag)) {
+    if (tag === "a") {
+      try {
+        if (!el.getAttribute || !el.getAttribute("href")) return false;
+      } catch {
+        return false;
+      }
+    }
+    return true;
+  }
+  try {
+    const role = el.getAttribute && el.getAttribute("role");
+    if (role === "button" || role === "link") return true;
+  } catch {
+  }
+  return false;
+}
+function textOf2(el, maxLen = 60) {
+  try {
+    const t = String(el.textContent ?? "").replace(/\s+/g, " ").trim();
+    return t.length > maxLen ? t.slice(0, maxLen) : t;
+  } catch {
+    return "";
+  }
+}
+function elementLabel(el) {
+  try {
+    const aria = el.getAttribute && el.getAttribute("aria-label");
+    if (aria && String(aria).trim()) return String(aria).trim().slice(0, 60);
+  } catch {
+  }
+  try {
+    const doc = el.ownerDocument;
+    const id = el.getAttribute && el.getAttribute("id");
+    if (id && doc && typeof doc.querySelector === "function") {
+      const label = doc.querySelector(`label[for="${String(id).replace(/"/g, "")}"]`);
+      const labelText = label && String(label.textContent ?? "").replace(/\s+/g, " ").trim();
+      if (labelText) return labelText.slice(0, 60);
+    }
+  } catch {
+  }
+  const text = textOf2(el);
+  if (text) return text;
+  try {
+    for (const attr of ["value", "placeholder", "name", "title"]) {
+      const v = el.getAttribute && el.getAttribute(attr);
+      if (v && String(v).trim()) return String(v).trim().slice(0, 60);
+    }
+  } catch {
+  }
+  return "";
+}
+function elementRole(el) {
+  const tag = String(el.tagName || "").toLowerCase();
+  try {
+    const role = el.getAttribute && el.getAttribute("role");
+    if (role === "button" || role === "link") return role;
+  } catch {
+  }
+  if (tag === "a") return "link";
+  if (tag === "button") return "button";
+  if (tag === "select") return "combobox";
+  if (tag === "textarea") return "textbox";
+  if (tag === "input") {
+    const type = String(el.getAttribute ? el.getAttribute("type") : el.type || "text").trim().toLowerCase();
+    if (type === "checkbox") return "checkbox";
+    if (type === "radio") return "radio";
+    return "textbox";
+  }
+  return tag;
+}
+function identityOf(el) {
+  let idAttr = null;
+  let nameAttr = null;
+  try {
+    idAttr = el.getAttribute ? el.getAttribute("id") : null;
+    nameAttr = el.getAttribute ? el.getAttribute("name") : null;
+  } catch {
+  }
+  return {
+    idAttr: idAttr != null ? String(idAttr) : null,
+    nameAttr: nameAttr != null ? String(nameAttr) : null
+  };
+}
+function collectInteractive(root) {
+  const found = [];
+  const visit = (node) => {
+    if (!node) return;
+    if (node.nodeType === 1) {
+      if (isInteractive(node)) found.push(node);
+      const tag = String(node.tagName || "").toLowerCase();
+      if (tag === "script" || tag === "style" || tag === "noscript") return;
+    }
+    const children = node.childNodes || [];
+    for (const child of children) visit(child);
+  };
+  const start = root && root.nodeType === 9 ? root.documentElement || root : root;
+  visit(start);
+  return found;
+}
+function enumerateInteractive(rootDoc) {
+  const seenPaths = /* @__PURE__ */ new Set();
+  const out = [];
+  for (const el of collectInteractive(rootDoc)) {
+    const domPath = buildDomPath(el);
+    const tag = String(el.tagName || "").toLowerCase();
+    const label = elementLabel(el);
+    const role = elementRole(el);
+    const { idAttr, nameAttr } = identityOf(el);
+    const key = `${domPath}|${tag}`;
+    if (seenPaths.has(key)) continue;
+    seenPaths.add(key);
+    let ref = null;
+    for (const [existingRef, record] of registry) {
+      if (record.domPath === domPath && record.tag === tag) {
+        ref = existingRef;
+        record.label = label;
+        record.idAttr = idAttr;
+        record.nameAttr = nameAttr;
+        break;
+      }
+    }
+    if (!ref) {
+      counter += 1;
+      ref = `el_${counter}`;
+      registry.set(ref, { domPath, tag, label, idAttr, nameAttr });
+    }
+    out.push({ ref, tag, label, role });
+  }
+  return out;
 }
 
 // src/content/dom-capture-entry.js
@@ -1038,7 +1677,19 @@ if (typeof window !== "undefined" && typeof window.addEventListener === "functio
 }
 if (typeof chrome !== "undefined" && chrome?.runtime?.onMessage) {
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-    if (!message || message.type !== "CAPTURE_DOM_TEXT") return false;
+    if (!message) return false;
+    if (message.type === "LIST_ELEMENTS") {
+      try {
+        const elements = enumerateInteractive(
+          typeof document !== "undefined" ? document : null
+        );
+        sendResponse({ status: "SUCCESS", elements });
+      } catch (err) {
+        sendResponse({ status: "ERROR", error: err && err.message ? err.message : String(err) });
+      }
+      return true;
+    }
+    if (message.type !== "CAPTURE_DOM_TEXT") return false;
     (async () => {
       try {
         if (isTopFrame()) {

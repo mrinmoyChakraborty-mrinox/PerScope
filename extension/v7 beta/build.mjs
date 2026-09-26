@@ -23,10 +23,18 @@ const entries = [
   // Node CLI branch requires "readline", which is dead in this context
   // (require.main is unset in the bundle, so the lazy __require call never
   // fires) — hence "readline" is external rather than bundled.
-  { in: resolve(src, "content/dom-capture-entry.js"), out: "dom-capture-entry.js" },
+  // NOTE 2: "@huggingface/transformers" is external ONLY for this entry.
+  // piidetector's loadNER() dynamically imports it, but the content script
+  // runs Tier0 only and never calls loadNER. Without this, esbuild inlines
+  // the whole transformers+ORT web stack (with top-level `import.meta`,
+  // which is a parse-time SyntaxError in classic-script content scripts
+  // and kills the listener on every page) and ships ~1.4MB of dead weight
+  // into every frame.
+  { in: resolve(src, "content/dom-capture-entry.js"), out: "dom-capture-entry.js",
+    external: ["@huggingface/transformers"] },
 ];
 
-for (const { in: entryIn, out } of entries) {
+for (const { in: entryIn, out, external: extraExternal = [] } of entries) {
   if (!existsSync(entryIn)) {
     console.error(`Missing entry: ${entryIn}`);
     process.exit(1);
@@ -45,7 +53,7 @@ for (const { in: entryIn, out } of entries) {
     minify: false,
     mainFields: ["module", "browser", "main"],
     conditions: ["browser", "module", "import"],
-    external: ["fs", "crypto", "path", "os", "module", "readline"],
+    external: ["fs", "crypto", "path", "os", "module", "readline", ...extraExternal],
     loader: { ".wasm": "file" },
     define: {
       "process.env.NODE_ENV": '"production"',

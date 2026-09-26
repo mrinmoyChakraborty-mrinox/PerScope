@@ -47891,6 +47891,11 @@ async function _prewarmModels() {
   try {
     const computeDevice = await resolveComputeDevice();
     configureOrtEnvironment(ort_bundle_min_exports, env2, computeDevice);
+    const heavyPrewarmAllowed = computeDevice.tier === "dedicated";
+    if (!heavyPrewarmAllowed) {
+      console.log(`[PREWARM] Tier=${computeDevice.tier}: skipping NER/FastVLM prewarm (will load lazily on first capture).`);
+      return;
+    }
     if (!_nerCache) {
       console.log("[PREWARM] Pre-loading Ettin NER in background...");
       await loadNER(computeDevice).catch((e) => console.warn("[PREWARM] NER pre-warm failed:", e.message));
@@ -47929,6 +47934,27 @@ async function decodeImageInput(input) {
     imageBitmap,
     width: imageBitmap.width,
     height: imageBitmap.height
+  };
+}
+async function capWorkingResolution(decoded, maxDim = MAX_WORKING_DIMENSION) {
+  const { width, height } = decoded;
+  if (!width || !height || width <= maxDim && height <= maxDim) return decoded;
+  const scale = Math.min(maxDim / width, maxDim / height);
+  const targetW = Math.max(1, Math.round(width * scale));
+  const targetH = Math.max(1, Math.round(height * scale));
+  const canvas = new OffscreenCanvas(targetW, targetH);
+  const ctx = canvas.getContext("2d");
+  ctx.drawImage(decoded.imageBitmap, 0, 0, targetW, targetH);
+  const resizedBlob = await canvas.convertToBlob({ type: "image/png" });
+  const resizedBuffer = await resizedBlob.arrayBuffer();
+  const resizedBitmap = await createImageBitmap(resizedBlob);
+  console.log(`[PIPELINE] Capped working resolution ${width}x${height} -> ${targetW}x${targetH}`);
+  return {
+    blob: resizedBlob,
+    arrayBuffer: resizedBuffer,
+    imageBitmap: resizedBitmap,
+    width: targetW,
+    height: targetH
   };
 }
 async function loadOCRService() {
@@ -47975,11 +48001,13 @@ async function loadOCRService() {
 async function runOCR(imageArrayBuffer) {
   const service = await loadOCRService();
   const result = await service.recognize(imageArrayBuffer, { flatten: true });
-  console.log(`[OCR-DEBUG] result.results count=${(result.results || []).length} text.length=${(result.text || "").length} confidence=${result.confidence}`);
-  console.log(`[OCR-DEBUG] full text: '${result.text}'`);
-  for (const r of result.results || []) {
-    const b = r.box || {};
-    console.log(`[OCR-DEBUG] bbox=[x=${b.x}, y=${b.y}, w=${b.width}, h=${b.height}] text='${r.text}' conf=${Number(r.confidence ?? 0).toFixed(3)} raw=${JSON.stringify(r)}`);
+  if (PII_DEBUG) {
+    console.log(`[OCR-DEBUG] result.results count=${(result.results || []).length} text.length=${(result.text || "").length} confidence=${result.confidence}`);
+    console.log(`[OCR-DEBUG] full text: '${result.text}'`);
+    for (const r of result.results || []) {
+      const b = r.box || {};
+      console.log(`[OCR-DEBUG] bbox=[x=${b.x}, y=${b.y}, w=${b.width}, h=${b.height}] text='${r.text}' conf=${Number(r.confidence ?? 0).toFixed(3)} raw=${JSON.stringify(r)}`);
+    }
   }
   const items = (result.results || []).map((item, index) => ({
     id: `ocr_${index}`,
@@ -48012,42 +48040,50 @@ async function resolveNERModelPath() {
 }
 async function loadNER(computeDevice) {
   if (_nerCache) return _nerCache;
-  const modelId = await resolveNERModelPath();
-  const targetDevice = computeDevice.type === "webgpu" ? "webgpu" : "cpu";
-  const webgpuSessionOptions = { executionProviders: ["webgpu"] };
-  const wasmSessionOptions = { executionProviders: ["wasm"], intraOpNumThreads: 1, interOpNumThreads: 1 };
-  console.log(`[NER] Loading Ettin NER: ${modelId} (${targetDevice})`);
-  let tokenizer;
-  let model;
-  try {
-    tokenizer = await AutoTokenizer.from_pretrained(modelId);
-    model = await AutoModelForTokenClassification.from_pretrained(modelId, {
-      dtype: "fp32",
-      model_file_name: "model",
-      device: targetDevice,
-      session_options: targetDevice === "webgpu" ? webgpuSessionOptions : wasmSessionOptions
-    });
-    console.log(`[NER] Ettin NER sessions on EP: ${targetDevice === "webgpu" ? "webgpu" : "wasm/1-thread"}`);
-  } catch (err) {
-    console.warn(`[NER] NER load failed on ${targetDevice}:`, err.message);
-    if (targetDevice === "webgpu") {
-      console.log("[NER] Retrying Ettin NER on CPU/WASM fallback...");
-      tokenizer = tokenizer || await AutoTokenizer.from_pretrained(modelId);
+  if (_nerLoadPromise) return await _nerLoadPromise;
+  _nerLoadPromise = (async () => {
+    const modelId = await resolveNERModelPath();
+    const targetDevice = computeDevice.type === "webgpu" ? "webgpu" : "cpu";
+    const webgpuSessionOptions = { executionProviders: ["webgpu"] };
+    const wasmSessionOptions = { executionProviders: ["wasm"], intraOpNumThreads: 1, interOpNumThreads: 1 };
+    console.log(`[NER] Loading Ettin NER: ${modelId} (${targetDevice})`);
+    let tokenizer;
+    let model;
+    try {
+      tokenizer = await AutoTokenizer.from_pretrained(modelId);
       model = await AutoModelForTokenClassification.from_pretrained(modelId, {
         dtype: "fp32",
         model_file_name: "model",
-        device: "cpu",
-        session_options: wasmSessionOptions
+        device: targetDevice,
+        session_options: targetDevice === "webgpu" ? webgpuSessionOptions : wasmSessionOptions
       });
-    } else {
-      throw err;
+      console.log(`[NER] Ettin NER sessions on EP: ${targetDevice === "webgpu" ? "webgpu" : "wasm/1-thread"}`);
+    } catch (err) {
+      console.warn(`[NER] NER load failed on ${targetDevice}:`, err.message);
+      if (targetDevice === "webgpu") {
+        console.log("[NER] Retrying Ettin NER on CPU/WASM fallback...");
+        tokenizer = tokenizer || await AutoTokenizer.from_pretrained(modelId);
+        model = await AutoModelForTokenClassification.from_pretrained(modelId, {
+          dtype: "fp32",
+          model_file_name: "model",
+          device: "cpu",
+          session_options: wasmSessionOptions
+        });
+      } else {
+        throw err;
+      }
     }
+    const id2label = normalizeId2Label(model.config?.id2label);
+    const configuredMax = Number(model.config?.max_position_embeddings ?? NER_MAX_TOKENS);
+    const maxTokens = Math.min(NER_MAX_TOKENS, configuredMax > 0 ? configuredMax : NER_MAX_TOKENS);
+    _nerCache = { tokenizer, model, id2label, maxTokens };
+    return _nerCache;
+  })();
+  try {
+    return await _nerLoadPromise;
+  } finally {
+    _nerLoadPromise = null;
   }
-  const id2label = normalizeId2Label(model.config?.id2label);
-  const configuredMax = Number(model.config?.max_position_embeddings ?? NER_MAX_TOKENS);
-  const maxTokens = Math.min(NER_MAX_TOKENS, configuredMax > 0 ? configuredMax : NER_MAX_TOKENS);
-  _nerCache = { tokenizer, model, id2label, maxTokens };
-  return _nerCache;
 }
 async function runNER(ner, ocr) {
   const findings = [];
@@ -48163,17 +48199,18 @@ async function runNER(ner, ocr) {
 }
 async function loadFastVLM(computeDevice) {
   if (_fastvlmCache) return _fastvlmCache;
-  const device = computeDevice.type === "webgpu" ? "webgpu" : "cpu";
-  const sessionOptions = { executionProviders: device === "webgpu" ? ["webgpu"] : ["wasm"] };
-  console.log(`[FASTVLM] Loading FastVLM 0.5B on ${computeDevice.label} (device: ${device})`);
-  try {
+  if (_fastvlmLoadPromise) return await _fastvlmLoadPromise;
+  _fastvlmLoadPromise = (async () => {
+    const device = computeDevice.type === "webgpu" ? "webgpu" : "cpu";
+    const sessionOptions = { executionProviders: device === "webgpu" ? ["webgpu"] : ["wasm"] };
+    console.log(`[FASTVLM] Loading FastVLM 0.5B on ${computeDevice.label} (device: ${device})`);
     const processor = await AutoProcessor.from_pretrained(FASTVLM_MODEL);
     const model = await AutoModelForImageTextToText.from_pretrained(FASTVLM_MODEL, {
       dtype: FASTVLM_DTYPE,
       device,
       session_options: sessionOptions
     });
-    console.log("[FASTVLM-DEBUG] sessions:", Object.keys(model.sessions || {}));
+    if (PII_DEBUG) console.log("[FASTVLM-DEBUG] sessions:", Object.keys(model.sessions || {}));
     _fastvlmCache = {
       model,
       processor,
@@ -48183,33 +48220,17 @@ async function loadFastVLM(computeDevice) {
     };
     console.log(`[FASTVLM] Loaded FastVLM 0.5B successfully on ${_fastvlmCache.backend}`);
     return _fastvlmCache;
-  } catch (err) {
-    console.warn(`[FASTVLM] FastVLM load failed on ${device}:`, err.message);
-    if (device === "webgpu") {
-      console.log("[FASTVLM] Retrying FastVLM on CPU/WASM fallback...");
-      const processor = await AutoProcessor.from_pretrained(FASTVLM_MODEL);
-      const model = await AutoModelForImageTextToText.from_pretrained(FASTVLM_MODEL, {
-        dtype: FASTVLM_DTYPE,
-        device: "cpu",
-        session_options: { executionProviders: ["wasm"] }
-      });
-      console.log("[FASTVLM-DEBUG] sessions:", Object.keys(model.sessions || {}));
-      _fastvlmCache = {
-        model,
-        processor,
-        modelId: FASTVLM_MODEL,
-        device: "cpu",
-        backend: "CPU (Fallback)"
-      };
-      return _fastvlmCache;
-    }
-    throw err;
+  })();
+  try {
+    return await _fastvlmLoadPromise;
+  } finally {
+    _fastvlmLoadPromise = null;
   }
 }
 async function prepareFastVLMImage(imageBlob) {
   try {
     const bitmap = await createImageBitmap(imageBlob);
-    const max2 = 672;
+    const max2 = 448;
     const w = bitmap.width;
     const h = bitmap.height;
     if (!w || !h || w <= max2 && h <= max2) {
@@ -48302,6 +48323,17 @@ async function runFastVLMAdjudication({ imageBlob, evidence, computeDevice }) {
   };
 }
 async function runExtensionPipeline(inputImage, options = {}, onProgress = null) {
+  if (_pipelineRunning) {
+    throw new Error("PerScope: a capture is already in progress. Please wait for it to finish.");
+  }
+  _pipelineRunning = true;
+  try {
+    return await _runExtensionPipelineInner(inputImage, options, onProgress);
+  } finally {
+    _pipelineRunning = false;
+  }
+}
+async function _runExtensionPipelineInner(inputImage, options = {}, onProgress = null) {
   const tTotalStart = performance.now();
   const emit = (stage, status, extra = {}) => {
     try {
@@ -48314,7 +48346,8 @@ async function runExtensionPipeline(inputImage, options = {}, onProgress = null)
   configureOrtEnvironment(ort_bundle_min_exports, env2, computeDevice);
   emit("DEVICE", "RESOLVED", { device: computeDevice });
   emit("IMAGE_DECODE", "START");
-  const decoded = await decodeImageInput(inputImage);
+  let decoded = await decodeImageInput(inputImage);
+  decoded = await capWorkingResolution(decoded);
   emit("IMAGE_DECODE", "DONE", { width: decoded.width, height: decoded.height });
   let faceFindings = [];
   const faceEnabled = options.faceEnabled !== false;
@@ -48346,8 +48379,10 @@ async function runExtensionPipeline(inputImage, options = {}, onProgress = null)
     console.log("[NER] Ettin NER model loaded. Running inference...");
     nerFindings = await runNER(ner, ocr);
     console.log(`[NER] runNER complete: ${nerFindings.length} findings`);
-    for (const f of nerFindings) {
-      console.log(`[NER] finding: entity=${f.entity} text='${f.text}' score=${Number(f.score).toFixed(3)} source=${f.source_id}`);
+    if (PII_DEBUG) {
+      for (const f of nerFindings) {
+        console.log(`[NER] finding: entity=${f.entity} text='${f.text}' score=${Number(f.score).toFixed(3)} source=${f.source_id}`);
+      }
     }
     emit("NER", "DONE", { count: nerFindings.length, findings: nerFindings.map((f) => ({ entity: f.entity, text: f.text, score: f.score })) });
   } catch (err) {
@@ -48362,8 +48397,10 @@ async function runExtensionPipeline(inputImage, options = {}, onProgress = null)
     deterministicFindings
   });
   console.log(`[HEURISTICS] deterministicFindings=${deterministicFindings.length} fusedCandidates=${fusedCandidates.length}`);
-  for (const c of fusedCandidates) {
-    console.log(`[HEURISTICS] candidate: ${c.candidate_id} text='${c.text}' types=${c.candidate_types.join("+")} sources=${c.sources.join("+")} conf=${Number(c.confidence).toFixed(3)}`);
+  if (PII_DEBUG) {
+    for (const c of fusedCandidates) {
+      console.log(`[HEURISTICS] candidate: ${c.candidate_id} text='${c.text}' types=${c.candidate_types.join("+")} sources=${c.sources.join("+")} conf=${Number(c.confidence).toFixed(3)}`);
+    }
   }
   const uiStructure = buildUIStructure({
     image: decoded,
@@ -48425,8 +48462,10 @@ async function runExtensionPipeline(inputImage, options = {}, onProgress = null)
   });
   const finalTextFindings = adjudication.finalFindings || [];
   console.log(`[ADJUDICATION] status=${adjudication.status} fallback=${adjudication.fallback} finalTextFindings=${finalTextFindings.length}`);
-  for (const f of finalTextFindings) {
-    console.log(`[ADJUDICATION] final: entity=${f.entity} text='${f.text}' score=${Number(f.score).toFixed(3)} decision=${f.decision_source}`);
+  if (PII_DEBUG) {
+    for (const f of finalTextFindings) {
+      console.log(`[ADJUDICATION] final: entity=${f.entity} text='${f.text}' score=${Number(f.score).toFixed(3)} decision=${f.decision_source}`);
+    }
   }
   const finalFindings = [...finalTextFindings, ...faceFindings];
   emit("REDACT", "START", { regionsCount: finalFindings.length });
@@ -48544,7 +48583,7 @@ async function runExtensionPipeline(inputImage, options = {}, onProgress = null)
     totalTimeMs
   };
 }
-var FASTVLM_MODEL, FASTVLM_DTYPE, FASTVLM_MAX_NEW_TOKENS, NER_MODEL_LOCAL, NER_MODEL_REMOTE, NER_MAX_TOKENS, _ocrServiceCache, _nerCache, _fastvlmCache;
+var FASTVLM_MODEL, FASTVLM_DTYPE, FASTVLM_MAX_NEW_TOKENS, PII_DEBUG, _pipelineRunning, NER_MODEL_LOCAL, NER_MODEL_REMOTE, NER_MAX_TOKENS, _ocrServiceCache, _nerCache, _fastvlmCache, MAX_WORKING_DIMENSION, _nerLoadPromise, _fastvlmLoadPromise;
 var init_v7_extension = __esm({
   "src/pipeline/v7-extension.js"() {
     init_ort_bundle_min();
@@ -48563,7 +48602,9 @@ var init_v7_extension = __esm({
       vision_encoder: "q4f16",
       decoder_model_merged: "q4f16"
     };
-    FASTVLM_MAX_NEW_TOKENS = 512;
+    FASTVLM_MAX_NEW_TOKENS = 160;
+    PII_DEBUG = false;
+    _pipelineRunning = false;
     if (typeof chrome !== "undefined" && chrome?.runtime?.getURL) {
       env2.allowLocalModels = true;
       env2.useBrowserCache = true;
@@ -48575,12 +48616,38 @@ var init_v7_extension = __esm({
     _ocrServiceCache = null;
     _nerCache = null;
     _fastvlmCache = null;
+    MAX_WORKING_DIMENSION = 1600;
+    _nerLoadPromise = null;
+    _fastvlmLoadPromise = null;
   }
 });
 
 // src/offscreen/offscreen.js
 init_gpu();
 init_v7_extension();
+
+// src/shared/read-page-mapping.js
+var FINDING_FIELDS = ["type", "source", "confidence", "segmentId", "forceRedacted", "structuralHint"];
+function sanitizeFinding(f) {
+  if (!f || typeof f !== "object") return null;
+  const out = {};
+  for (const key of FINDING_FIELDS) {
+    if (f[key] !== void 0) out[key] = f[key];
+  }
+  if (typeof out.source !== "string") out.source = "dom";
+  return out;
+}
+function mapDomCaptureToReadPage(capture) {
+  if (!capture || typeof capture !== "object") {
+    return { status: "error", reason: "dom-capture-failed" };
+  }
+  const findings = Array.isArray(capture.findings) ? capture.findings.map(sanitizeFinding).filter(Boolean) : [];
+  return {
+    status: "ok",
+    sanitizedText: String(capture.redactedDocument ?? ""),
+    findings
+  };
+}
 
 // src/offscreen/bridge-link.js
 var BRIDGE_WS_URL = "ws://127.0.0.1:7331";
@@ -48829,8 +48896,6 @@ async function runPipelineJob({ jobId, imageBytes, options, onProgress }) {
   };
 }
 var DOM_DEFERRED = /* @__PURE__ */ new Set([
-  "read_page",
-  "list_interactive_elements",
   "click",
   "type",
   "select_option",
@@ -48863,11 +48928,64 @@ async function handleBridgeTool({ tool, params }) {
       return { status: "error", reason: err?.message || "pipeline-failed" };
     }
   }
+  if (tool === "read_page") {
+    if (params && params.tabId !== void 0 && params.tabId !== null) {
+      return { status: "error", reason: "tab-targeting-requires-tabs-permission" };
+    }
+    try {
+      const res = await chrome.runtime.sendMessage({ target: "background", action: "REQUEST_DOM_CAPTURE" });
+      if (!res || res.status !== "SUCCESS" || !res.capture) {
+        return { status: "error", reason: res?.error || "dom-capture-failed" };
+      }
+      return mapDomCaptureToReadPage(res.capture);
+    } catch (err) {
+      return { status: "error", reason: err?.message || "dom-capture-failed" };
+    }
+  }
+  if (tool === "list_tabs") {
+    try {
+      const res = await chrome.runtime.sendMessage({ target: "background", action: "LIST_TABS" });
+      if (!res || res.status !== "SUCCESS" || !Array.isArray(res.tabs)) {
+        return { status: "error", reason: res?.error || "tab-listing-failed" };
+      }
+      const tabs = res.tabs.filter((t) => t && typeof t.tabId === "number").map((t) => ({
+        tabId: t.tabId,
+        title: String(t.title ?? ""),
+        url: String(t.url ?? ""),
+        active: !!t.active
+      }));
+      const out = { status: "ok", tabs };
+      if (typeof res.titlesAvailable === "boolean") out.titlesAvailable = res.titlesAvailable;
+      return out;
+    } catch (err) {
+      return { status: "error", reason: err?.message || "tab-listing-failed" };
+    }
+  }
+  if (tool === "list_interactive_elements") {
+    if (params && params.tabId !== void 0 && params.tabId !== null) {
+      return { status: "error", reason: "tab-targeting-requires-tabs-permission" };
+    }
+    try {
+      const res = await chrome.runtime.sendMessage({ target: "background", action: "REQUEST_ELEMENT_LIST" });
+      if (!res || res.status !== "SUCCESS" || !Array.isArray(res.elements)) {
+        return { status: "error", reason: res?.error || "element-listing-failed" };
+      }
+      const elements = res.elements.filter((el2) => el2 && typeof el2.ref === "string").map((el2) => ({
+        ref: el2.ref,
+        tag: String(el2.tag ?? ""),
+        label: String(el2.label ?? ""),
+        role: String(el2.role ?? "")
+      }));
+      return { status: "ok", elements };
+    } catch (err) {
+      return { status: "error", reason: err?.message || "element-listing-failed" };
+    }
+  }
   if (DOM_DEFERRED.has(tool)) {
     return {
       status: "error",
       reason: "dom-not-implemented-in-beta",
-      detail: `${tool} needs content.js (Final scope). This beta serves capture_tab only.`
+      detail: `${tool} needs action execution (T6d scope). This beta serves capture_tab + read_page + list_interactive_elements only.`
     };
   }
   return { status: "error", reason: `unknown-tool:${tool}` };

@@ -1,6 +1,6 @@
-# PerScope — Security Model (v4, Tested + Planned)
+# PerScope — Security Model (v4, Tested + Built-transport)
 
-> Tested guarantees (gates, fallback, caption scrubbing) are implemented. Validator / confirm-flow / logging guarantees are locked design, not yet built — marked per row.
+> Tested guarantees (gates, fallback, caption scrubbing) are implemented. Bridge transport/pairing/multiplexing is built (0.1.0 + in-repo roles). Validator / approval UI / logging guarantees are locked design, not yet built — marked per row.
 
 ## Two Boundaries
 
@@ -8,12 +8,12 @@
 [Input image: screenshot / upload]
   ↓ (on-device only)
 [BlazeFace + PaddleOCR + Ettin-68M + heuristics + FastVLM-0.5B → Fusion → Safety Gates → Value-Only Geometry → Canvas Redaction → Caption Scrubbing]  TESTED
-  ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ TRUST BOUNDARY: Sanitized Context (intended, not yet wired) ─ ─ ─ ─ ─ ─ ─ ─ ─ ─
-[Reasoning Server / Real MCP Agent / Playground / Paste-Target Chat] — reasoning over sanitized context only  PLANNED
-  ↓ {id, tool, params}
-[Validator: isDestructive()] — identical for all callers  PLANNED
+  ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ TRUST BOUNDARY: Sanitized Context (bridge carries it; reasoning stays on sanitized side) ─ ─ ─ ─ ─ ─ ─ ─ ─ ─
+[Reasoning Server (T6 deferred) / Real MCP Agent / Playground Manual side] — reasoning over sanitized context only  PARTIAL (transport built, chat loop pending)
+  ↓ {id, tool, params, auth} via paired bridge (extension vs agent roles, id remap)
+[Validator: isDestructive()] — identical for all callers  PLANNED (module tested, unwired; popup-window approved)
   ↓
-[content.js: live DOM execution]  PLANNED
+[content.js: live DOM execution]  PARTIAL (Tier0 capture + ref registry built; action execution pending T6d)
 ```
 
 ## Guarantees

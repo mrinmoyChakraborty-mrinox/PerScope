@@ -17,9 +17,22 @@ and anything that looks like a safety judgment belongs in the extension, not her
 cd bridge
 npm install
 
-# Terminal 1: long-running daemon (keeps the bridge alive persistently)
-npx perscope-bridge daemon
-# prints the pairing code + dashboard URL, stays running until killed
+# One-time global install so the command is just `perscope-bridge`
+npm install -g .
+```
+
+```bash
+# Start (or find) the daemon, print URLs + pairing code
+perscope-bridge connect
+
+# Stop it gracefully when done
+perscope-bridge disconnect
+
+# Force-stop it if graceful stop hangs
+perscope-bridge terminate
+
+# Long-running daemon directly (stays in this terminal until killed)
+perscope-bridge daemon
 ```
 
 ## Register with your agent
@@ -50,23 +63,23 @@ development, point the command at this directory:
 Remote/browser agents use the streamable-HTTP transport instead:
 `http://127.0.0.1:7332/mcp` (same tools, same handlers).
 
-## Pairing (do once)
+## Pairing (do once per client)
 
 1. Start the daemon: `npx perscope-bridge daemon`.
-2. Read the 6-digit pairing code from stdout or the dashboard (`http://127.0.0.1:7332/`).
-3. Enter it once in the extension's options page. The extension sends
-   `{type:"pair", code}` over WS; the daemon replies with a persistent secret
-   token, stored in `~/.perscope/paired-clients.json` (mode 0600).
-4. On reconnects the extension sends `{type:"hello", auth:"<token>"}` and every
-   subsequent message carries top-level `auth`. Sockets without a valid token
-   are answered with an error and closed.
+2. Read the 6-digit pairing code from stdout or the dashboard (`http://127.0.0.1:7332/` — a fresh code is always shown; used codes rotate immediately).
+3. Enter it once in the extension's options page (or the playground's pairing card). The client sends `{type:"pair", code[, role:"agent"]}` over WS; the daemon replies with a persistent secret token, stored in `~/.perscope/paired-clients.json` (mode 0600).
+4. On reconnects the client sends `{type:"hello", auth:"<token>"[, role:"agent"]}` and every subsequent message carries top-level `auth`. Sockets without a valid token — or with a role mismatching their stored record — are answered with an error and closed.
 
 Pairing codes are single-use, expire after 10 minutes, and lock for 60s after 5
 wrong guesses (a fresh code is generated and shown on the dashboard).
 
+## Agent sockets (playground / direct WS clients)
+
+Beyond the extension, the WS server accepts **agent-role** clients (the playground Manual side, test scripts): they pair like above with `role:"agent"`, send `{id, tool, params, auth}`, and get terminal `{id, status, ...}` replies. Agent ids are remapped to internal UUIDs on the extension leg (concurrent agents can share request ids safely); duplicate in-flight ids get `{status:"error", reason:"duplicate-id"}`. Extension-bound calls never route to agent sockets. In-repo since T1; ships in `0.2.0` (published `0.1.0` is extension + MCP only).
+
 ## Tools
 
-`capture_tab`, `read_page`, `list_interactive_elements`, `click`, `type`,
+`capture_tab`, `read_page`, `list_interactive_elements`, `list_tabs`, `click`, `type`,
 `select_option`, `submit`, `scroll` — identical on stdio and HTTP. Each handler
 validates params shape, forwards `{id, tool, params}` to the paired extension,
 and awaits the correlated response (default 60s). `click`/`type`/`select_option`/

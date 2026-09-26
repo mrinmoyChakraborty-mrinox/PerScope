@@ -1,0 +1,29 @@
+{
+  "name": "playground",
+  "version": "1.0.0",
+  "description": "PerScope Privacy-First Browser Agent Playground",
+  "type": "module",
+  "scripts": {
+    "start": "vite",
+    "serve": "vite",
+    "dev": "vite",
+    "mock": "node mock/websocket-server.js",
+    "test": "node --test --test-concurrency=1 tests/transport.test.mjs tests/schema.test.mjs"
+  },
+  "keywords": [
+    "perscope",
+    "browser-agent",
+    "websocket",
+    "privacy"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "ws": "^8.21.3"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1",
+    "serve": "^14.2.4",
+    "vite": "^8.3.1"
+  }
+}
