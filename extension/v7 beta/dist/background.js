@@ -149,7 +149,128 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     })();
     return true;
   }
+  if (message.action === "REQUEST_PREVIEW" || message.action === "REQUEST_EXECUTE") {
+    (async () => {
+      try {
+        if (message.tabId !== void 0 && message.tabId !== null) {
+          throw new Error("tab-targeting-requires-tabs-permission");
+        }
+        const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+        const tabId = tabs && tabs[0] && tabs[0].id;
+        if (tabId === void 0 || tabId === null) {
+          throw new Error("No active tab for action");
+        }
+        const res = await chrome.tabs.sendMessage(tabId, {
+          type: message.action === "REQUEST_PREVIEW" ? "PREVIEW_ACTION" : "EXECUTE_ACTION",
+          tool: message.tool,
+          ref: message.ref,
+          text: message.text,
+          value: message.value,
+          direction: message.direction,
+          amount: message.amount
+        });
+        if (!res || res.status !== "SUCCESS") {
+          sendResponse({ status: "ERROR", error: res?.error || "action-failed" });
+          return;
+        }
+        sendResponse({
+          status: "SUCCESS",
+          ...res.preview ? { preview: res.preview } : {},
+          ...res.result ? { result: res.result } : {}
+        });
+      } catch (err) {
+        sendResponse({ status: "ERROR", error: err.message });
+      }
+    })();
+    return true;
+  }
   return false;
+});
+var APPROVAL_WINDOW_MS = 55e3;
+var approvalPending = /* @__PURE__ */ new Map();
+function resolveApproval(id, { approved, dismissed, error }) {
+  const pending = approvalPending.get(id);
+  if (!pending) return;
+  approvalPending.delete(id);
+  try {
+    clearTimeout(pending.timer);
+  } catch {
+  }
+  try {
+    pending.port.postMessage({
+      action: "APPROVAL_RESULT",
+      id,
+      approved: !!approved,
+      ...dismissed ? { dismissed: true } : {},
+      ...error ? { error } : {}
+    });
+  } catch {
+  }
+  if (pending.windowId !== void 0 && pending.windowId !== null) {
+    chrome.windows.remove(pending.windowId).catch(() => {
+    });
+  }
+}
+chrome.runtime.onConnect.addListener((port) => {
+  if (!port || port.name !== "perscope-approval") return;
+  port.onMessage.addListener(async (msg) => {
+    if (!msg || msg.action !== "APPROVAL_REQUEST" || typeof msg.id !== "string") return;
+    const { id, tool, label, text, reasons } = msg;
+    try {
+      const query = new URLSearchParams({
+        id,
+        tool: String(tool || ""),
+        label: String(label || ""),
+        text: String(text || ""),
+        reasons: Array.isArray(reasons) ? reasons.join("; ") : String(reasons || "")
+      });
+      const win = await chrome.windows.create({
+        url: chrome.runtime.getURL("approval.html") + "?" + query.toString(),
+        type: "popup",
+        focused: true,
+        width: 440,
+        height: 560
+      });
+      const timer = setTimeout(() => {
+        resolveApproval(id, { approved: false, error: "approval-timed-out" });
+      }, APPROVAL_WINDOW_MS);
+      approvalPending.set(id, { port, windowId: win && win.id, timer });
+    } catch (err) {
+      try {
+        port.postMessage({ action: "APPROVAL_RESULT", id, approved: false, error: err.message });
+      } catch {
+      }
+    }
+  });
+  port.onDisconnect.addListener(() => {
+    for (const [id, pending] of approvalPending) {
+      if (pending.port === port) {
+        approvalPending.delete(id);
+        try {
+          clearTimeout(pending.timer);
+        } catch {
+        }
+        if (pending.windowId !== void 0 && pending.windowId !== null) {
+          chrome.windows.remove(pending.windowId).catch(() => {
+          });
+        }
+      }
+    }
+  });
+});
+chrome.runtime.onMessage.addListener((message) => {
+  if (!message || message.target !== "background" || message.action !== "APPROVAL_RESOLVE") return false;
+  if (typeof message.id !== "string") return false;
+  resolveApproval(message.id, { approved: !!message.approved, dismissed: !message.approved && !!message.dismissed });
+  return false;
+});
+chrome.windows.onRemoved.addListener((windowId) => {
+  for (const [id, pending] of approvalPending) {
+    if (pending.windowId === windowId) {
+      resolveApproval(id, { approved: false, dismissed: true });
+      break;
+    }
+  }
 });
 async function updateBridgeBadge(s) {
   const paired = !!(s && s.connected && s.paired);

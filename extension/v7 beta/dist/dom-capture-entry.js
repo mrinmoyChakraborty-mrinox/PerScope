@@ -1546,6 +1546,219 @@ function enumerateInteractive(rootDoc) {
   }
   return out;
 }
+function resolveRef(rootDoc, ref) {
+  const record = registry.get(ref);
+  if (!record) return { stale: true, reason: "unknown-ref" };
+  const element = walkDomPath(rootDoc, record.domPath);
+  if (!element || element.nodeType !== 1) {
+    return { stale: true, reason: "stale_element" };
+  }
+  if (String(element.tagName || "").toLowerCase() !== record.tag) {
+    return { stale: true, reason: "stale_element" };
+  }
+  const current = identityOf(element);
+  if (record.idAttr != null && current.idAttr !== record.idAttr) {
+    return { stale: true, reason: "stale_element" };
+  }
+  if (record.nameAttr != null && current.nameAttr !== record.nameAttr) {
+    return { stale: true, reason: "stale_element" };
+  }
+  return { element };
+}
+function childElements(node) {
+  const out = [];
+  for (const child of node.childNodes || []) {
+    if (child && child.nodeType === 1) out.push(child);
+  }
+  return out;
+}
+function walkDomPath(rootDoc, domPath) {
+  const parts = String(domPath ?? "").split("/");
+  if (!parts.length) return null;
+  let node = rootDoc && rootDoc.nodeType === 9 ? rootDoc.documentElement || rootDoc : rootDoc;
+  if (!node) return null;
+  let startIndex = 0;
+  const first = parts[0].match(/^([a-z0-9]+)\[(\d+)\]$/i);
+  if (first && node.tagName && String(node.tagName).toLowerCase() === first[1].toLowerCase()) {
+    startIndex = 1;
+  }
+  for (let i = startIndex; i < parts.length; i++) {
+    const m = parts[i].match(/^([a-z0-9]+)\[(\d+)\]$/i);
+    if (!m) {
+      if (parts[i].startsWith("#text")) return null;
+      return null;
+    }
+    const [, tag, indexStr] = m;
+    const siblings = childElements(node).filter(
+      (c) => String(c.tagName || "").toLowerCase() === tag.toLowerCase()
+    );
+    node = siblings[Number(indexStr) - 1] ?? null;
+    if (!node) return null;
+  }
+  return node;
+}
+
+// src/content/actions.js
+var REF_TOOLS = /* @__PURE__ */ new Set(["click", "type", "select_option", "submit"]);
+function visibleText(el, maxLen = 120) {
+  try {
+    const t = String(el.textContent ?? "").replace(/\s+/g, " ").trim();
+    return t.length > maxLen ? t.slice(0, maxLen) : t;
+  } catch {
+    return "";
+  }
+}
+function inputTypeOf(el) {
+  try {
+    const tag = String(el.tagName || "").toLowerCase();
+    if (tag === "input") {
+      return String(
+        el.getAttribute && el.getAttribute("type") || el.type || "text"
+      ).trim().toLowerCase();
+    }
+    if (tag === "textarea") return "textarea";
+    if (tag === "select") return "select";
+  } catch {
+  }
+  return "";
+}
+function isSubmitControl(el) {
+  try {
+    const tag = String(el.tagName || "").toLowerCase();
+    if (tag === "input") {
+      const t = inputTypeOf(el);
+      return t === "submit" || t === "image";
+    }
+    if (tag === "button") {
+      const t = String(el.getAttribute && el.getAttribute("type") || "").trim().toLowerCase();
+      if (!t) return !!owningForm(el);
+      return t === "submit";
+    }
+  } catch {
+  }
+  return false;
+}
+function owningForm(el) {
+  try {
+    if (el && typeof el.form !== "undefined" && el.form) return el.form;
+    let node = el ? el.parentNode : null;
+    while (node) {
+      if (node.nodeType === 1 && String(node.tagName || "").toLowerCase() === "form") return node;
+      node = node.parentNode;
+    }
+  } catch {
+  }
+  return null;
+}
+function setFieldValue(el, value) {
+  const text = String(value ?? "");
+  try {
+    const proto = String(el.tagName || "").toLowerCase() === "textarea" ? Object.getPrototypeOf(el) || null : null;
+    const setter = proto && Object.getOwnPropertyDescriptor(proto, "value")?.set || Object.getOwnPropertyDescriptor(Object.getPrototypeOf(el) || {}, "value")?.set;
+    if (setter) setter.call(el, text);
+    else el.value = text;
+  } catch {
+    try {
+      el.value = text;
+    } catch {
+      return false;
+    }
+  }
+  for (const type of ["input", "change"]) {
+    try {
+      if (typeof el.dispatchEvent === "function") {
+        const Ctor = typeof window !== "undefined" && window.Event || (typeof Event !== "undefined" ? Event : null);
+        if (Ctor) el.dispatchEvent(new Ctor(type, { bubbles: true }));
+      }
+    } catch {
+    }
+  }
+  return true;
+}
+function previewAction(rootDoc, { tool, ref } = {}) {
+  if (tool === "scroll") {
+    return { ok: true, signals: { tool, ref: null, tag: "", label: "", text: "", inputType: "", isFormSubmit: false } };
+  }
+  if (!REF_TOOLS.has(tool)) return { ok: false, reason: "unsupported-tool" };
+  if (typeof ref !== "string" || !ref) return { ok: false, reason: "unknown-ref" };
+  const resolved = resolveRef(rootDoc, ref);
+  if (!resolved || !resolved.element) {
+    return { ok: false, reason: resolved && resolved.reason || "stale_element" };
+  }
+  const el = resolved.element;
+  const tag = String(el.tagName || "").toLowerCase();
+  return {
+    ok: true,
+    signals: {
+      tool,
+      ref,
+      tag,
+      label: elementLabel(el),
+      text: tag === "input" || tag === "textarea" || tag === "select" ? "" : visibleText(el),
+      inputType: inputTypeOf(el),
+      isFormSubmit: tool === "submit" || isSubmitControl(el)
+    }
+  };
+}
+function executeAction(rootDoc, win, { tool, ref, text, value, direction, amount } = {}) {
+  if (tool === "scroll") {
+    if (direction !== "up" && direction !== "down") return { ok: false, reason: "bad-arguments" };
+    const dy = Number.isInteger(amount) && amount > 0 ? amount : 800;
+    try {
+      const target = win || (typeof window !== "undefined" ? window : null);
+      if (!target || typeof target.scrollBy !== "function") return { ok: false, reason: "unsupported-tool" };
+      target.scrollBy({ top: direction === "down" ? dy : -dy, behavior: "auto" });
+      return { ok: true };
+    } catch {
+      return { ok: false, reason: "unsupported-tool" };
+    }
+  }
+  if (!REF_TOOLS.has(tool)) return { ok: false, reason: "unsupported-tool" };
+  if (typeof ref !== "string" || !ref) return { ok: false, reason: "unknown-ref" };
+  const resolved = resolveRef(rootDoc, ref);
+  if (!resolved || !resolved.element) {
+    return { ok: false, reason: resolved && resolved.reason || "stale_element" };
+  }
+  const el = resolved.element;
+  const tag = String(el.tagName || "").toLowerCase();
+  try {
+    if (tool === "click") {
+      if (typeof el.click === "function") el.click();
+      else return { ok: false, reason: "unsupported-tool" };
+      return { ok: true, ref };
+    }
+    if (tool === "type") {
+      if (typeof text !== "string") return { ok: false, reason: "bad-arguments" };
+      const kind = inputTypeOf(el);
+      const typeable = tag === "textarea" || tag === "input" && ["text", "search", "email", "tel", "url", "password", "number"].includes(kind);
+      if (!typeable) return { ok: false, reason: "not-typeable" };
+      try {
+        if (typeof el.focus === "function") el.focus();
+      } catch {
+      }
+      if (!setFieldValue(el, text)) return { ok: false, reason: "not-typeable" };
+      return { ok: true, ref };
+    }
+    if (tool === "select_option") {
+      if (tag !== "select") return { ok: false, reason: "not-typeable" };
+      if (typeof value !== "string") return { ok: false, reason: "bad-arguments" };
+      if (!setFieldValue(el, value)) return { ok: false, reason: "not-typeable" };
+      if (String(el.value ?? "") !== value) return { ok: false, reason: "invalid-option" };
+      return { ok: true, ref };
+    }
+    if (tool === "submit") {
+      const form = tag === "form" ? el : owningForm(el);
+      if (!form) return { ok: false, reason: "no-form" };
+      if (typeof form.requestSubmit === "function") form.requestSubmit();
+      else if (typeof form.submit === "function") form.submit();
+      else return { ok: false, reason: "no-form" };
+      return { ok: true, ref };
+    }
+  } catch {
+    return { ok: false, reason: "unsupported-tool" };
+  }
+  return { ok: false, reason: "unsupported-tool" };
+}
 
 // src/content/dom-capture-entry.js
 var import_piidetector = __toESM(require_piidetector(), 1);
@@ -1689,7 +1902,43 @@ if (typeof chrome !== "undefined" && chrome?.runtime?.onMessage) {
       }
       return true;
     }
-    if (message.type !== "CAPTURE_DOM_TEXT") return false;
+    if (message.type !== "CAPTURE_DOM_TEXT") {
+      if (message.type === "PREVIEW_ACTION") {
+        try {
+          const preview = previewAction(
+            typeof document !== "undefined" ? document : null,
+            { tool: message.tool, ref: message.ref }
+          );
+          if (preview.ok) sendResponse({ status: "SUCCESS", preview: preview.signals });
+          else sendResponse({ status: "ERROR", error: preview.reason });
+        } catch (err) {
+          sendResponse({ status: "ERROR", error: err && err.message ? err.message : String(err) });
+        }
+        return true;
+      }
+      if (message.type === "EXECUTE_ACTION") {
+        try {
+          const result = executeAction(
+            typeof document !== "undefined" ? document : null,
+            typeof window !== "undefined" ? window : null,
+            {
+              tool: message.tool,
+              ref: message.ref,
+              text: message.text,
+              value: message.value,
+              direction: message.direction,
+              amount: message.amount
+            }
+          );
+          if (result.ok) sendResponse({ status: "SUCCESS", result: { ref: result.ref ?? null } });
+          else sendResponse({ status: "ERROR", error: result.reason });
+        } catch (err) {
+          sendResponse({ status: "ERROR", error: err && err.message ? err.message : String(err) });
+        }
+        return true;
+      }
+      return false;
+    }
     (async () => {
       try {
         if (isTopFrame()) {

@@ -22,6 +22,7 @@
 import { captureDOMSegments, runTier0OnSegments } from "../pipeline/dom-capture.js";
 import { reconstructDocument } from "../pipeline/dom-heuristics.js";
 import { enumerateInteractive } from "./refs.js";
+import { previewAction, executeAction } from "./actions.js";
 // Koyel's Tier0 engine (fixed contract — do not modify piidetector.js).
 // Bundled by build.mjs (mirrors the offscreen.js pattern); the `readline`
 // CLI branch inside piidetector.js is dead in this context (require.main is
@@ -199,7 +200,47 @@ if (typeof chrome !== "undefined" && chrome?.runtime?.onMessage) {
       }
       return true;
     }
-    if (message.type !== "CAPTURE_DOM_TEXT") return false;
+    if (message.type !== "CAPTURE_DOM_TEXT") {
+      // T6d action protocol (preview = read-only signals for isDestructive;
+      // execute = the approved/no-gate action itself). Mutating by design —
+      // unlike capture/list above, these run only after the bridge-side
+      // approval gate (or no-gate verdict for inherently safe tools).
+      if (message.type === "PREVIEW_ACTION") {
+        try {
+          const preview = previewAction(
+            typeof document !== "undefined" ? document : null,
+            { tool: message.tool, ref: message.ref }
+          );
+          if (preview.ok) sendResponse({ status: "SUCCESS", preview: preview.signals });
+          else sendResponse({ status: "ERROR", error: preview.reason });
+        } catch (err) {
+          sendResponse({ status: "ERROR", error: err && err.message ? err.message : String(err) });
+        }
+        return true;
+      }
+      if (message.type === "EXECUTE_ACTION") {
+        try {
+          const result = executeAction(
+            typeof document !== "undefined" ? document : null,
+            typeof window !== "undefined" ? window : null,
+            {
+              tool: message.tool,
+              ref: message.ref,
+              text: message.text,
+              value: message.value,
+              direction: message.direction,
+              amount: message.amount,
+            }
+          );
+          if (result.ok) sendResponse({ status: "SUCCESS", result: { ref: result.ref ?? null } });
+          else sendResponse({ status: "ERROR", error: result.reason });
+        } catch (err) {
+          sendResponse({ status: "ERROR", error: err && err.message ? err.message : String(err) });
+        }
+        return true;
+      }
+      return false;
+    }
     (async () => {
       try {
         if (isTopFrame()) {

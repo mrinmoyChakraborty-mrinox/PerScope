@@ -8,6 +8,7 @@
     "serve": "vite",
     "dev": "vite",
     "mock": "node mock/websocket-server.js",
+    "forwarder": "node forwarder/server.js",
     "test": "node --test --test-concurrency=1 tests/transport.test.mjs tests/schema.test.mjs"
   },
   "keywords": [

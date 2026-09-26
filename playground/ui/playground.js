@@ -17,6 +17,17 @@ import {
     DEFAULT_BRIDGE_URL,
 } from "./runtime-client.js";
 
+import {
+    createModelClient,
+    PROVIDER_PRESETS,
+    FORWARDER_DEFAULT_URL,
+} from "./model-client.js";
+
+import {
+    runTask,
+    fetchMcpTools,
+} from "./agent-loop.js";
+
 
 /* =========================================================
    CONFIGURATION
@@ -109,8 +120,6 @@ const wsDisconnect =
 
 const wsStatus =
     $("ws-status");
-const progressFastToggle =
-    $("progress-fast-toggle");
 // No heartbeat by design (see runtime-client note above): the bridge
 // closes sockets on unauthenticated frames, so pinging would disconnect
 // us. Connection liveness comes from the socket itself.
@@ -256,6 +265,28 @@ function updateServerStatus(
         );
 
     }
+
+
+    // Settings-panel label mirrors the same live state (never hardcoded).
+    const connectionLabels =
+        document.querySelectorAll(
+            ".connection-label"
+        );
+
+
+    connectionLabels.forEach(
+        (node) => {
+
+            node.textContent =
+                label ||
+                (
+                    connected
+                        ? "Connected"
+                        : "Disconnected"
+                );
+
+        }
+    );
 
 
     if (wsStatus) {
@@ -528,6 +559,12 @@ if (response.status === "ok") {
    NORMAL RESPONSE
 ----------------------------------------- */
 
+// Record as the latest tool traffic so Screen State, privacy details,
+// and the inspector render from real data on every path (manual buttons
+// and chat alike), not just the chat flow.
+updateTool(tool, request, response);
+updatePrivacySummary();
+
 resolve(response);
 
                 },
@@ -702,17 +739,6 @@ function hideThinkingCard() {
     );
 
 }
-function progressDelay() {
-
-    if (
-        progressFastToggle &&
-        progressFastToggle.checked
-    ) {
-        return 700;
-    }
-
-    return 1600;
-}
 function handleToolResponseError(
     tool,
     response
@@ -842,321 +868,136 @@ updateNextActionUI(
 
 
     /* -----------------------------------------
-       PERCEPTION
-    ----------------------------------------- */
+       AGENTIC LOOP (real model, real tools)
+    -----------------------------------------
+       Replaces (deleted 2026-09-16): keyword task routing, hardcoded
+       reasoning strings, scripted el_8 action, delay-simulated thinking,
+       and the "Local sanitization complete" event that fired without
+       runtime evidence. Everything below is event-driven by runTask
+       (agent-loop.js): the configured provider reasons, executes through
+       runtime.callTool, and the UI renders each event. */
+
+    try {
 
     setChatStep(
         "perception",
         "active"
     );
-if (chatStatus) {
+    if (chatStatus) {
 
-    chatStatus.textContent =
-        "Perception...";
+        chatStatus.textContent =
+            "Reasoning with model...";
 
-}
-
-  const normalizedTask =
-    task.toLowerCase();
-
-const isDeleteAccountTask =
-    normalizedTask.includes("delete my account") ||
-    normalizedTask.includes("delete account") ||
-    normalizedTask.includes("remove my account");
-
-addUIEvent(
-    "Chat task received",
-    "success",
-    "User"
-);
-
-const reasoningText =
-    isDeleteAccountTask
-        ? "The agent identified a Delete Account action and is checking whether confirmation is required."
-        : "The agent is analyzing the request and determining the appropriate next action.";
-
-if (agentReasoning) {
-    agentReasoning.textContent =
-        reasoningText;
-}
-const reasoningElement =
-    document.querySelector("#agent-reasoning");
-
-if (reasoningElement) {
-    reasoningElement.textContent =
-        reasoningText;
-}
-
-await delay(progressDelay());
-
-
-    /* -----------------------------------------
-       READ PAGE
-    ----------------------------------------- */
-
-    try {
-
-        addUIEvent(
-            "Calling tool: read_page",
-            "success",
-            "Agent"
-        );
-
-
-const pageResponse =
-    await sendRequest("read_page");
-
-handleToolResponseError(
-    "read_page",
-    pageResponse
-);
-
-updatePage(
-    pageResponse.result
-);
-
-updateToolUI(
-    "read_page",
-    {},
-    pageResponse
-);
-
-renderScreenState();
-
-setChatStep(
-    "perception",
-    "done"
-);
-
-
-        /* -------------------------------------
-           PROTECT
-        ------------------------------------- */
-
-        setChatStep(
-            "redacting",
-            "active"
-        );
-if (chatStatus) {
-
-    chatStatus.textContent =
-        "Redacting...";
-
-}
-
-        await delay(progressDelay());
-
-
-        addUIEvent(
-            "Local sanitization complete",
-            "success",
-            "Local Extension"
-        );
-
-
-        setChatStep(
-            "redacting",
-            "done"
-        );
-/* -------------------------------------
-   READ INTERACTIVE ELEMENTS
-------------------------------------- */
-
-addUIEvent(
-    "Calling tool: list_interactive_elements",
-    "success",
-    "Agent"
-);
-
-const elementsResponse =
-    await sendRequest(
-        "list_interactive_elements"
-    );
-
-handleToolResponseError(
-    "list_interactive_elements",
-    elementsResponse
-);
-updateToolUI(
-    "list_interactive_elements",
-    {},
-    elementsResponse
-);
-
-renderScreenState();
-const interactiveElements =
-    elementsResponse.result?.elements || [];
-
-const screenSummary =
-    document.querySelectorAll(
-        ".state-summary strong"
-    );
-
-if (screenSummary.length >= 3) {
-    screenSummary[2].textContent =
-        interactiveElements.length;
-}
-
-        /* -------------------------------------
-           REASON
-        ------------------------------------- */
-
-        setChatStep(
-            "reasoning",
-            "active"
-        );
-if (chatStatus) {
-
-    chatStatus.textContent =
-        "Reasoning...";
-
-}
-
-        await delay(progressDelay());
-
-
-        addUIEvent(
-            "Agent reasoning complete",
-            "success",
-            "Agent"
-        );
-
-
-        setChatStep(
-            "reasoning",
-            "done"
-        );
-
-
- /* -------------------------------------
-   ACT
-------------------------------------- */
-
-setChatStep(
-    "acting",
-    "active"
-);
-if (chatStatus) {
-
-    chatStatus.textContent =
-        "Acting...";
-
-}
-if (isDeleteAccountTask) {
-
-    addUIEvent(
-        "Agent selected Delete Account",
-        "warning",
-        "Agent"
-    );
-    setNextAction(
-    "Click Delete Account"
-);
-
-updateNextActionUI(
-    "click",
-    "el_8"
-);
-   await delay(progressDelay());
-
-  const actionResponse =
-        await sendRequest(
-            "click",
-            {
-                ref: "el_8"
-            }
-        );
-    // Terminal verdicts arrive here directly (blocking contract) —
-    // there is no follow-up push, so denied/timeout end the turn now.
-    if (
-        actionResponse.status ===
-        "denied" ||
-        actionResponse.status ===
-        "timeout"
-    ) {
-
-        setChatStep(
-            "acting",
-            "blocked"
-        );
-          updateValidatorUI(
-            "BLOCKED",
-            actionResponse.status === "denied"
-                ? "Denied in the extension — not executed"
-                : "Approval timed out in the extension — not executed"
-        );
-        addUIEvent(
-            "Validator verdict: " + actionResponse.status,
-            "blocked",
-            "Extension Validator"
-        );
-
-        if (
-            chatStatus
-        ) {chatStatus.textContent
-             =
-                actionResponse.status === "denied"
-                    ? "Action denied"
-                    : "Approval timed out";
-        }
-
-        return;
     }
 
-    if (
-        actionResponse.status !==
-        "ok"
-    ) {
-        throw new Error(
-            actionResponse.reason ||
-            "Action failed"
-        );
-    }
-
-    setChatStep(
-        "acting",
-        "done"
-    );
-
-} else {
-
     addUIEvent(
-        "No browser action required",
+        "Chat task received",
         "success",
-        "Agent"
+        "User"
     );
 
-await delay(300);
+    if (agentReasoning) {
+        agentReasoning.textContent =
+            "Reasoning via model…";
+    }
 
-    setChatStep(
-        "acting",
-        "done"
-    );
-}
-        /* -------------------------------------
-           DONE
-        ------------------------------------- */
-
-        setChatStep(
-            "done",
-            "done"
+    let loopTools;
+    try {
+        loopTools = await fetchMcpTools();
+    } catch (err) {
+        throw new Error(
+            "Could not load tool definitions from the bridge: " +
+            (err?.message || err)
         );
+    }
 
-
-        addChatMessage(
-            `I understood your task: "${task}". ` +
-            `The current page was successfully perceived ` +
-            `through the local WebSocket tool.`,
-            "agent"
-        );
-
-
-        if (chatStatus) {
-
-            chatStatus.textContent =
-               "Complete";
-
+    const providerConfig = modelClient.getConfig();
+    let loopImage = null;
+    if (providerConfig.vision) {
+        try {
+            const captureSrc = $("capture-img")?.src || "";
+            const marker = "base64,";
+            const at = captureSrc.indexOf(marker);
+            if (at >= 0) loopImage = captureSrc.slice(at + marker.length);
+        } catch {
+            loopImage = null;
         }
+    }
+
+    const loopFinal = await runTask({
+        task,
+        chat: (args) => modelClient.chatCompletions(args),
+        execute: (tool, params) => runtime.callTool(tool, params),
+        tools: loopTools,
+        vision: providerConfig.vision,
+        imageBase64: loopImage,
+        onEvent: (event) => {
+            if (!event || typeof event !== "object") return;
+            if (event.type === "tool_call") {
+                showToolRequest({ tool: event.tool, params: event.params });
+                if (
+                    event.tool === "read_page" ||
+                    event.tool === "list_interactive_elements" ||
+                    event.tool === "capture_tab" ||
+                    event.tool === "list_tabs"
+                ) {
+                    setChatStep("perception", "done");
+                    if (chatStatus) chatStatus.textContent = "Perceiving…";
+                } else {
+                    setChatStep("acting", "active");
+                    setNextAction(`Execute ${event.tool}`);
+                    updateNextActionUI(event.tool, event.params?.ref || "—");
+                    if (chatStatus) chatStatus.textContent = "Acting…";
+                }
+            } else if (event.type === "tool_result") {
+                const result = event.result || {};
+                showToolResponse(result);
+                updateTool(event.tool, { tool: event.tool }, result);
+                if (result.status === "denied" || result.status === "timeout") {
+                    updateValidatorUI(
+                        "BLOCKED",
+                        result.status === "denied"
+                            ? "Denied in the extension — not executed"
+                            : "Approval timed out in the extension — not executed"
+                    );
+                } else if (
+                    result.status === "ok" &&
+                    event.tool !== "read_page" &&
+                    event.tool !== "list_interactive_elements" &&
+                    event.tool !== "capture_tab" &&
+                    event.tool !== "list_tabs"
+                ) {
+                    updateValidatorUI("SAFE", "Action executed");
+                }
+                if (Array.isArray(result.findings) || Array.isArray(result.elements) || result.redactedImage) {
+                    if (!demoState.currentPage) {
+                        updatePage({ title: "(active tab)", summary: "sanitized context received" });
+                    }
+                    renderScreenState();
+                    setChatStep("redacting", "done");
+                }
+                updatePrivacySummary();
+            } else if (event.type === "repair") {
+                addUIEvent("Repairing malformed tool call: " + (event.detail || ""), "warning", "Agent");
+                if (agentReasoning) agentReasoning.textContent = "Repairing malformed tool call…";
+            } else if (event.type === "error") {
+                addUIEvent("Loop error: " + (event.reason || ""), "error", "Agent");
+            }
+        },
+    });
+
+    setChatStep("reasoning", "done");
+    setChatStep("acting", "done");
+    setChatStep("done", "done");
+
+    addChatMessage(loopFinal || "(no answer)", "agent");
+
+    if (chatStatus) {
+
+        chatStatus.textContent =
+            "Complete";
+
+    }
 
 
     } catch (error) {
@@ -1429,15 +1270,15 @@ function renderScreenState() {
 
     if (
         !table ||
-        !demoState.lastResponse ||
-        !demoState.lastResponse.result
+        !demoState.lastResponse
     ) {
         return;
     }
 
 
+    const lastResponse = demoState.lastResponse;
     const elements =
-        demoState.lastResponse.result.elements;
+        lastResponse.elements || lastResponse.result?.elements;
 
 
     if (!elements) {
@@ -1465,31 +1306,33 @@ function renderScreenState() {
             row.className =
                 "table-row";
 
+            // Real bridge shape is {ref, tag, label, role}. Everything here
+            // is live page text, so escape it — never innerHTML raw strings.
+            const escape = (value) =>
+                String(value ?? "—").replace(/[&<>"']/g, (c) => (
+                    { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]
+                ));
 
             row.innerHTML = `
 
                 <span>
-                    ${element.id}
+                    ${escape(element.ref)}
                 </span>
 
                 <span>
-                    ${element.type}
+                    ${escape(element.tag)}
                 </span>
 
                 <span>
-                    ${element.label || "—"}
+                    ${escape(element.label)}
                 </span>
 
                 <span>
-                    ${element.value ?? "—"}
+                    ${escape(element.role)}
                 </span>
 
                 <span>
-                    ${
-                        element.bbox
-                            ? `[${element.bbox.join(",")}]`
-                            : "—"
-                    }
+                    —
                 </span>
 
             `;
@@ -1644,6 +1487,144 @@ if (manualSendButton) {
 }
 
 /* =========================================================
+   MODEL PROVIDER (chat-side backend config)
+   =========================================================
+   Config persists like the bridge token (localStorage, values never
+   rendered or logged — status lines and events carry mode + outcome
+   only, never URLs, names-as-secrets, or keys). Cloud mode is present
+   but unwired pending the D8 key-handling decision. */
+
+const modelClient = createModelClient();
+
+function refreshModelForm() {
+    const config = modelClient.getConfig();
+    const modeEl = $("model-mode");
+    const endpointEl = $("model-endpoint");
+    const nameEl = $("model-name");
+    const visionEl = $("model-vision");
+    const statusEl = $("model-status");
+    if (modeEl) modeEl.value = config.mode;
+    if (endpointEl && document.activeElement !== endpointEl) endpointEl.value = config.baseUrl;
+    if (nameEl && document.activeElement !== nameEl) nameEl.value = config.model;
+    if (visionEl) visionEl.checked = config.vision;
+    if (statusEl) {
+        statusEl.textContent = config.model
+            ? `${config.mode} · ${config.model}${config.hasKey ? " · key stored" : ""}`
+            : "Not configured.";
+    }
+}
+
+function readModelForm() {
+    const modeEl = $("model-mode");
+    const endpointEl = $("model-endpoint");
+    const nameEl = $("model-name");
+    const keyEl = $("model-key");
+    const visionEl = $("model-vision");
+    const mode = modeEl?.value || "lmstudio";
+    const next = {
+        mode,
+        baseUrl: endpointEl?.value.trim() || "",
+        model: nameEl?.value.trim() || "",
+        vision: !!visionEl?.checked,
+    };
+    // Cloud keys NEVER enter model-client storage: they travel exactly once,
+    // straight to the forwarder's /config, and the field is cleared right
+    // after. Everything afterwards is keyless from the page's perspective.
+    let forwarderKey = null;
+    if (mode === "cloud") {
+        if (keyEl && keyEl.value) forwarderKey = keyEl.value;
+    } else if (keyEl && keyEl.value) {
+        // Local/custom modes talk loopback directly; empty still preserves.
+        next.apiKey = keyEl.value;
+    }
+    return { blocked: false, next, forwarderKey };
+}
+
+const modelModeEl = $("model-mode");
+if (modelModeEl) {
+    modelModeEl.addEventListener("change", () => {
+        const mode = modelModeEl.value;
+        if (mode === "lmstudio" || mode === "ollama") {
+            modelClient.setConfig({
+                mode,
+                baseUrl: PROVIDER_PRESETS[mode].baseUrl,
+            });
+        } else if (mode === "cloud") {
+            const current = modelClient.getConfig();
+            modelClient.setConfig({
+                mode,
+                baseUrl: current.baseUrl || FORWARDER_DEFAULT_URL,
+            });
+        } else {
+            modelClient.setConfig({ mode });
+        }
+        refreshModelForm();
+    });
+}
+
+const modelSaveButton = $("model-save");
+if (modelSaveButton) {
+    modelSaveButton.addEventListener("click", async () => {
+        const read = readModelForm();
+        // Cloud round-trip first: key goes to the forwarder and nowhere
+        // else; a failed save aborts before anything is persisted locally.
+        if (read.forwarderKey) {
+            const base = (read.next.baseUrl || "").replace(/\/+$/, "");
+            if (!base) {
+                addUIEvent("Cloud save needs the forwarder endpoint first.", "error", "Playground");
+                return;
+            }
+            try {
+                const res = await fetch(`${base}/config`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ apiKey: read.forwarderKey, model: read.next.model || undefined }),
+                });
+                if (!res.ok) throw new Error(`forwarder answered HTTP ${res.status}`);
+                const keyEl = $("model-key");
+                if (keyEl) keyEl.value = "";
+                addUIEvent("Cloud key saved on the local forwarder.", "success", "Playground");
+            } catch (err) {
+                addUIEvent("Cloud key save failed: " + (err?.message || err), "error", "Playground");
+                return;
+            }
+        }
+        const config = modelClient.setConfig(read.next);
+        const keyEl = $("model-key");
+        if (keyEl) keyEl.value = "";
+        refreshModelForm();
+        addUIEvent(`Model config saved (${config.mode}).`, "success", "Playground");
+    });
+}
+
+const modelTestButton = $("model-test");
+if (modelTestButton) {
+    modelTestButton.addEventListener("click", async () => {
+        const statusEl = $("model-status");
+        if (statusEl) statusEl.textContent = "Testing…";
+        try {
+            const res = await modelClient.testConnection();
+            const detail = res.models.length
+                ? ` — ${res.models.length} model(s) listed`
+                : "";
+            const config = modelClient.getConfig();
+            if (statusEl) statusEl.textContent = `Reachable (${config.mode})${detail}.`;
+            addUIEvent(`Model reachable (${config.mode})${detail}.`, "success", "Playground");
+        } catch (err) {
+            const config = modelClient.getConfig();
+            if (statusEl) statusEl.textContent = "Unreachable — check endpoint, CORS, model name.";
+            addUIEvent(
+                `Model unreachable (${config.mode}): ` + (err?.message || err),
+                "error",
+                "Playground"
+            );
+        }
+    });
+}
+
+refreshModelForm();
+
+/* =========================================================
    RAW JSON
 ========================================================= */
 
@@ -1786,6 +1767,49 @@ function updatePrivacySummary() {
 
     if (!privacyDetails) {
         return;
+    }
+
+    const last = demoState.lastResponse || {};
+    const findings = Array.isArray(last.findings)
+        ? last.findings
+        : Array.isArray(last.result?.findings)
+            ? last.result.findings
+            : null;
+    const elements = Array.isArray(last.elements)
+        ? last.elements
+        : Array.isArray(last.result?.elements)
+            ? last.result.elements
+            : null;
+
+    const content = privacyDetails.querySelector(".privacy-detail-content");
+    if (!content) {
+        return;
+    }
+
+    const escape = (value) =>
+        String(value ?? "").replace(/[&<>"']/g, (c) => (
+            { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]
+        ));
+
+    if (findings && findings.length) {
+        const counts = {};
+        for (const finding of findings) {
+            const type = finding && finding.type ? String(finding.type) : "UNKNOWN";
+            counts[type] = (counts[type] || 0) + 1;
+        }
+        content.innerHTML =
+            "<strong>Sanitized payload</strong><p>" +
+            Object.entries(counts)
+                .map(([type, count]) => `${escape(type)}: ${count}`)
+                .join("<br>") +
+            "</p>";
+    } else if (elements) {
+        content.innerHTML =
+            "<strong>Sanitized payload</strong><p>" +
+            `${elements.length} interactive element(s), values already redacted.</p>`;
+    } else {
+        content.innerHTML =
+            "<strong>Sanitized payload</strong><p>No findings yet — run a tool.</p>";
     }
 
     privacyDetails.open = false;
@@ -2213,13 +2237,75 @@ wsDisconnect.addEventListener(
 );
 
 
+// Bridge pair-error reasons are machine strings ("incorrect", "expired",
+// "locked", "missing-code"); translate each into what to do next. Expired
+// and locked both rotate the code server-side, so retrying the same code
+// can never succeed — the user must fetch a fresh one.
+function pairFailureHint(reason) {
+    switch (reason) {
+        case "incorrect":
+            return "incorrect code — retype it by hand (no pasted spaces). 5 misses lock pairing for 60s.";
+        case "expired":
+            return "code expired or already used (each pairing mints a fresh one) — fetch a new code from the bridge dashboard and use it immediately.";
+        case "locked":
+            return "too many attempts — wait 60s, fetch a fresh code from the bridge dashboard, enter it once.";
+        case "missing-code":
+            return "empty code reached the bridge — retype it into the code field.";
+        case "no-connection":
+            return "no connection — click Start and retry.";
+        case "timeout":
+            return "bridge didn't answer in 8s — check the daemon is alive and retry.";
+        default:
+            return reason + " — retry.";
+    }
+}
+
 const wsPairButton = $("ws-pair");
 if (wsPairButton) {
     wsPairButton.addEventListener("click", async () => {
         const codeEl = $("ws-pair-code");
-        const code = codeEl?.value || "";
+        // Trim: pasted codes routinely carry trailing whitespace/newlines,
+        // which fail the bridge's constant-time compare as "incorrect" and
+        // burn one of the 5 lockout attempts per try.
+        const code = (codeEl?.value || "").trim();
+        if (!code) {
+            addUIEvent(
+                "Pair needs a code first — paste it without spaces.",
+                "warning",
+                "Playground"
+            );
+            return;
+        }
         wsPairButton.disabled = true;
-        addUIEvent("Pairing with bridge…", "info", "Playground");
+        // Pairing needs a live socket; connect first instead of failing
+        // with a bare "no-connection" when Start wasn't clicked.
+        if (!runtime.getStatus().connected) {
+            const url = wsUrl?.value.trim() || serverUrl;
+            addUIEvent("Pairing with bridge… (connecting first)", "info", "Playground");
+            try {
+                serverUrl = url;
+                await runtime.connect(serverUrl);
+            } catch (err) {
+                addUIEvent(
+                    "Pair failed: bridge unreachable (" + (err?.message || err) + ") — click Start and retry.",
+                    "error",
+                    "Playground"
+                );
+                wsPairButton.disabled = false;
+                return;
+            }
+            if (!runtime.getStatus().connected) {
+                addUIEvent(
+                    "Pair failed: no connection — click Start and retry.",
+                    "error",
+                    "Playground"
+                );
+                wsPairButton.disabled = false;
+                return;
+            }
+        } else {
+            addUIEvent("Pairing with bridge…", "info", "Playground");
+        }
         try {
             const res = await runtime.pair(code);
             if (res?.ok) {
@@ -2227,7 +2313,7 @@ if (wsPairButton) {
                 if (codeEl) codeEl.value = "";
             } else {
                 addUIEvent(
-                    "Pair failed: " + (res?.reason || "unknown") + " — retry.",
+                    "Pair failed: " + pairFailureHint(res?.reason || "unknown"),
                     "error",
                     "Playground"
                 );
@@ -2245,20 +2331,6 @@ if (wsPairButton) {
 }
 
     
-
-}
-
-
-/* =========================================================
-   DELAY
-========================================================= */
-
-function delay(ms) {
-
-    return new Promise(
-        resolve =>
-            setTimeout(resolve, ms)
-    );
 
 }
 

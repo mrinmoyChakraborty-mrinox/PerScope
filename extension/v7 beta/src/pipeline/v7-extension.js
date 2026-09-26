@@ -330,7 +330,10 @@ async function loadNER(computeDevice) {
 
   _nerLoadPromise = (async () => {
     const modelId = await resolveNERModelPath();
-    const targetDevice = computeDevice.type === "webgpu" ? "webgpu" : "cpu";
+    // transformers.js only accepts device "webgpu" | "wasm" — "cpu" throws
+    // Unsupported device (seen live in offscreen). WASM single-thread is the
+    // CPU execution path; the string "cpu" must never reach from_pretrained.
+    const targetDevice = computeDevice.type === "webgpu" ? "webgpu" : "wasm";
     // Pin execution providers explicitly. The Ettin encoder takes int64 inputs,
     // which crash the threaded WASM build ("operation does not support unaligned
     // accesses" — seen in MV3 offscreen). WebGPU handles int64 natively, so it is
@@ -347,6 +350,10 @@ async function loadNER(computeDevice) {
       model = await AutoModelForTokenClassification.from_pretrained(modelId, {
         dtype: "fp32",
         model_file_name: "model",
+        // Upstream repo is flat (model.onnx at root, no onnx/ subfolder —
+        // verified via HF API siblings). The from_pretrained default
+        // subfolder "onnx" 404s here; "" resolves to the repo root.
+        subfolder: "",
         device: targetDevice,
         session_options: targetDevice === "webgpu" ? webgpuSessionOptions : wasmSessionOptions,
       });
@@ -359,7 +366,8 @@ async function loadNER(computeDevice) {
         model = await AutoModelForTokenClassification.from_pretrained(modelId, {
           dtype: "fp32",
           model_file_name: "model",
-          device: "cpu",
+          subfolder: "",
+          device: "wasm",
           session_options: wasmSessionOptions,
         });
       } else {
@@ -518,6 +526,26 @@ async function runNER(ner, ocr) {
   return findings;
 }
 
+// GPU-side ImageBitmaps and ORT tensors are not GC-prompt: a 1600px working
+// bitmap (~10MB) and per-inference vision/prefill tensors linger until a
+// major GC, so back-to-back captures stack them into the spikes users see.
+// Both helpers are no-ops on anything without the method (test stubs, already
+// released handles) and never throw into the pipeline.
+function closeBitmap(bitmap) {
+  try {
+    if (bitmap && typeof bitmap.close === "function") bitmap.close();
+  } catch {}
+}
+
+function disposeTensors(bag) {
+  if (!bag || typeof bag !== "object") return;
+  for (const value of Object.values(bag)) {
+    try {
+      value?.dispose?.();
+    } catch {}
+  }
+}
+
 let _fastvlmLoadPromise = null;
 
 /**
@@ -537,7 +565,9 @@ async function loadFastVLM(computeDevice) {
   if (_fastvlmLoadPromise) return await _fastvlmLoadPromise;
 
   _fastvlmLoadPromise = (async () => {
-    const device = computeDevice.type === "webgpu" ? "webgpu" : "cpu";
+    // Same constraint as loadNER: transformers.js accepts only
+    // "webgpu" | "wasm" — "cpu" throws Unsupported device.
+    const device = computeDevice.type === "webgpu" ? "webgpu" : "wasm";
     const sessionOptions = { executionProviders: device === "webgpu" ? ["webgpu"] : ["wasm"] };
     console.log(`[FASTVLM] Loading FastVLM 0.5B on ${computeDevice.label} (device: ${device})`);
 
@@ -580,6 +610,9 @@ async function prepareFastVLMImage(imageBlob) {
     const w = bitmap.width;
     const h = bitmap.height;
     if (!w || !h || (w <= max && h <= max)) {
+      // Sizing check is the only use of this bitmap; load_image decodes from
+      // the blob independently, so release the GPU copy before continuing.
+      closeBitmap(bitmap);
       return await load_image(imageBlob);
     }
     const scale = Math.min(max / w, max / h);
@@ -588,6 +621,8 @@ async function prepareFastVLMImage(imageBlob) {
     const canvas = new OffscreenCanvas(targetW, targetH);
     const ctx = canvas.getContext("2d");
     ctx.drawImage(bitmap, 0, 0, targetW, targetH);
+    // Full-res source no longer needed once the 448px canvas holds the pixels.
+    closeBitmap(bitmap);
     const resizedBlob = await canvas.convertToBlob({ type: "image/png" });
     console.log(`[FASTVLM] Resized image from ${w}x${h} to ${targetW}x${targetH} for stability`);
     return await load_image(resizedBlob);
@@ -623,14 +658,26 @@ async function runFastVLMAdjudication({ imageBlob, evidence, computeDevice }) {
     no_repeat_ngram_size: 3,
   });
 
+  // Prefill/input tensors (448px pixel_values + prompt ids) are the per-image
+  // spike: generate() has consumed them, so release before the decode stage
+  // rather than holding them alongside the output through adjudication.
+  // inputLength is plain JS metadata — capture it before releasing.
   const inputLength = Number(inputs?.input_ids?.dims?.at(-1) ?? 0);
+  disposeTensors(inputs);
+
   let outputText = "";
+  let generatedOnly = null;
 
   try {
-    const generatedOnly = inputLength > 0 ? generated.slice(null, [inputLength, null]) : generated;
+    generatedOnly = inputLength > 0 ? generated.slice(null, [inputLength, null]) : generated;
     outputText = fastvlm.processor.batch_decode(generatedOnly, { skip_special_tokens: true })[0] ?? "";
   } catch {
     outputText = fastvlm.processor.batch_decode(generated, { skip_special_tokens: true })[0] ?? "";
+  } finally {
+    // generatedOnly may alias generated (slice view or same ref on the
+    // fallback path) — never double-dispose the same handle.
+    if (generatedOnly && generatedOnly !== generated) disposeTensors({ generatedOnly });
+    disposeTensors({ generated });
   }
 
   outputText = String(outputText).trim();
@@ -885,14 +932,21 @@ async function _runExtensionPipelineInner(inputImage, options = {}, onProgress =
   const redactedChunks = redactChunks(rawChunks, finalTextFindings);
   const redactedOcrText = redactedChunks.map((c) => c.text).join(" ");
 
-  const imageRedaction = await redactImageOnCanvas(decoded.imageBitmap, finalFindings, {
-    style: options.redactionStyle || "blur",
-    faceStyle: options.faceRedactionStyle || options.redactionStyle || "blur",
-    padding: options.padding ?? 2,
-    facePadding: options.facePadding ?? 3,
-    textBlurSigma: options.textBlurSigma ?? 12,
-    faceBlurSigma: options.faceBlurSigma ?? 14,
-  });
+  let imageRedaction;
+  try {
+    imageRedaction = await redactImageOnCanvas(decoded.imageBitmap, finalFindings, {
+      style: options.redactionStyle || "blur",
+      faceStyle: options.faceRedactionStyle || options.redactionStyle || "blur",
+      padding: options.padding ?? 2,
+      facePadding: options.facePadding ?? 3,
+      textBlurSigma: options.textBlurSigma ?? 12,
+      faceBlurSigma: options.faceBlurSigma ?? 14,
+    });
+  } finally {
+    // Same release as the success path: a redaction throw must not leave a
+    // GPU bitmap behind on top of the failed capture.
+    closeBitmap(decoded.imageBitmap);
+  }
   emit("REDACT", "DONE", {
     textRegions: imageRedaction.textRegionsRedacted,
     faceRegions: imageRedaction.faceRegionsRedacted,

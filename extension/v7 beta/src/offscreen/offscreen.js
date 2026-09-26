@@ -13,6 +13,7 @@
 import { resolveComputeDevice } from "../pipeline/gpu.js";
 import { runExtensionPipeline } from "../pipeline/v7-extension.js";
 import { mapDomCaptureToReadPage } from "../shared/read-page-mapping.js";
+import { isDestructive } from "../shared/is-destructive.js";
 import { startBridgeLink } from "./bridge-link.js";
 
 console.log("[PerScope Offscreen] Initialized and listening for pipeline tasks.");
@@ -78,16 +79,53 @@ async function runPipelineJob({ jobId, imageBytes, options, onProgress }) {
 // SW REQUEST_DOM_CAPTURE path (content script + Tier0, active tab) and maps
 // it to the bridge {sanitizedText, findings} shape. list_interactive_elements
 // reuses SW REQUEST_ELEMENT_LIST (content registry [{ref,tag,label,role}],
-// active tab). Remaining action tools (click/type/select_option/submit and
-// scroll execution) still need T6d — they answer with an explicit error,
-// never silence and never fake data.
-const DOM_DEFERRED = new Set([
-  "click",
-  "type",
-  "select_option",
-  "submit",
-  "scroll",
-]);
+// active tab). Action tools (click/type/select_option/submit/scroll) run the
+// T6d gated path below: preview signals -> isDestructive() -> execute
+// directly (safe) or D7 popup approval (destructive). Deny/timeout are
+// terminal verdicts, returned verbatim for the agent loop.
+const APPROVAL_WAIT_MS = 60000; // SW owns the 55s window; this is the backstop, still under the 70s bridge ceiling
+
+/**
+ * Ask the service worker to show the D7 approval popup and await the
+ * human verdict. The open Port keeps the worker alive across think-time.
+ * Never throws: every failure mode resolves approved:false.
+ */
+function approvalVerdict({ tool, label, text, reasons }) {
+  let port;
+  try {
+    port = chrome.runtime.connect({ name: "perscope-approval" });
+  } catch (err) {
+    return Promise.resolve({ approved: false, error: err?.message || "approval-channel-failed" });
+  }
+  const id = `appr_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (value) => {
+      if (done) return;
+      done = true;
+      try {
+        port.disconnect();
+      } catch {}
+      resolve(value);
+    };
+    const timer = setTimeout(() => finish({ approved: false, timeout: true }), APPROVAL_WAIT_MS);
+    port.onMessage.addListener((msg) => {
+      if (!msg || msg.id !== id || msg.action !== "APPROVAL_RESULT") return;
+      clearTimeout(timer);
+      finish({ approved: !!msg.approved, dismissed: !!msg.dismissed, error: msg.error });
+    });
+    port.onDisconnect.addListener(() => {
+      clearTimeout(timer);
+      finish({ approved: false, error: "approval-channel-closed" });
+    });
+    try {
+      port.postMessage({ action: "APPROVAL_REQUEST", id, tool, label, text, reasons });
+    } catch (err) {
+      clearTimeout(timer);
+      finish({ approved: false, error: err?.message || "approval-channel-failed" });
+    }
+  });
+}
 
 async function handleBridgeTool({ tool, params }) {
   if (tool === "capture_tab") {
@@ -183,12 +221,94 @@ async function handleBridgeTool({ tool, params }) {
       return { status: "error", reason: err?.message || "element-listing-failed" };
     }
   }
-  if (DOM_DEFERRED.has(tool)) {
-    return {
-      status: "error",
-      reason: "dom-not-implemented-in-beta",
-      detail: `${tool} needs action execution (T6d scope). This beta serves capture_tab + read_page + list_interactive_elements only.`,
-    };
+  if (tool === "scroll" || tool === "click" || tool === "type" || tool === "select_option" || tool === "submit") {
+    // Beta scope: active-tab actions only (same rule as the read path).
+    if (params && params.tabId !== undefined && params.tabId !== null) {
+      return { status: "error", reason: "tab-targeting-requires-tabs-permission" };
+    }
+    // Early arg validation: malformed calls never reach the page.
+    if (tool === "type" && typeof params?.text !== "string") {
+      return { status: "error", reason: "bad-arguments" };
+    }
+    if (tool === "select_option" && typeof params?.value !== "string") {
+      return { status: "error", reason: "bad-arguments" };
+    }
+    if (tool === "scroll" && params?.direction !== "up" && params?.direction !== "down") {
+      return { status: "error", reason: "bad-arguments" };
+    }
+    if ((tool === "click" || tool === "submit") && (typeof params?.ref !== "string" || !params.ref)) {
+      return { status: "error", reason: "bad-arguments" };
+    }
+    if ((tool === "type" || tool === "select_option") && (typeof params?.ref !== "string" || !params.ref)) {
+      return { status: "error", reason: "bad-arguments" };
+    }
+    try {
+      if (tool === "scroll") {
+        // Never gated: page scroll cannot destroy data.
+        const res = await chrome.runtime.sendMessage({
+          target: "background",
+          action: "REQUEST_EXECUTE",
+          tool,
+          direction: params.direction,
+          amount: params.amount,
+        });
+        if (!res || res.status !== "SUCCESS") {
+          return { status: "error", reason: res?.error || "scroll-failed" };
+        }
+        return { status: "ok" };
+      }
+      // Preview first: resolve the ref registry-side and judge what the
+      // action WOULD do from live element signals (never caller identity).
+      const preview = await chrome.runtime.sendMessage({
+        target: "background",
+        action: "REQUEST_PREVIEW",
+        tool,
+        ref: params.ref,
+      });
+      if (!preview || preview.status !== "SUCCESS" || !preview.preview) {
+        return { status: "error", reason: preview?.error || "preview-failed" };
+      }
+      const signals = preview.preview;
+      const execute = async () => {
+        const res = await chrome.runtime.sendMessage({
+          target: "background",
+          action: "REQUEST_EXECUTE",
+          tool,
+          ref: params.ref,
+          text: params.text,
+          value: params.value,
+        });
+        if (!res || res.status !== "SUCCESS") {
+          return { status: "error", reason: res?.error || "action-failed" };
+        }
+        return { status: "ok", ref: params.ref };
+      };
+      const verdict = isDestructive({
+        tool,
+        label: signals.label || "",
+        text: signals.text || "",
+        inputType: signals.inputType || "",
+        isFormSubmit: !!signals.isFormSubmit,
+      });
+      if (!verdict.destructive) return await execute();
+      // Destructive: D7 popup. Deny/timeout are terminal for the agent
+      // turn — never retried or worked around here.
+      const decision = await approvalVerdict({
+        tool,
+        label: signals.label || "",
+        text: signals.text || "",
+        reasons: verdict.reasons,
+      });
+      if (!decision.approved) {
+        if (decision.timeout || decision.error === "approval-timed-out") {
+          return { status: "timeout", reason: "Approval timed out in the extension — not executed" };
+        }
+        return { status: "denied", reason: "Denied in the extension — not executed" };
+      }
+      return await execute();
+    } catch (err) {
+      return { status: "error", reason: err?.message || "action-failed" };
+    }
   }
   return { status: "error", reason: `unknown-tool:${tool}` };
 }

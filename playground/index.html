@@ -224,20 +224,6 @@ WEBSOCKET CONNECTION
         </button>
 
     </div>
-    <div class="progress-speed-control">
-
-    <label>
-        <input
-            type="checkbox"
-            id="progress-fast-toggle">
-        Fast mode
-    </label>
-
-    <small>
-        Fast ≈ 3s · Normal ≈ 6.5s
-    </small>
-
-</div>
     <div class="ws-status-row">
 
         <span
@@ -426,6 +412,117 @@ WEBSOCKET CONNECTION
                     agent would see them. The selected tab is injected
                     as tabId (except list_tabs); pick Active tab to omit
                     it. Destructive tools still gate in the extension.
+                </small>
+
+            </section>
+
+
+            <!-- =================================================
+                 MODEL PROVIDER (chat-side reasoning backend)
+            ================================================== -->
+
+            <section class="model-panel">
+
+                <h3>
+                    Model
+                </h3>
+
+
+                <label for="model-mode">
+                    Provider
+                </label>
+
+                <select id="model-mode">
+                    <option value="lmstudio">LM Studio (local)</option>
+                    <option value="ollama">Ollama (local)</option>
+                    <option value="custom">Custom URL (local)</option>
+                    <option value="cloud">Cloud API (via local forwarder)</option>
+                </select>
+
+
+                <label for="model-endpoint">
+                    Endpoint
+                </label>
+
+                <input
+                    id="model-endpoint"
+                    type="text"
+                    autocomplete="off"
+                    spellcheck="false">
+
+
+                <label for="model-name">
+                    Model name
+                </label>
+
+                <input
+                    id="model-name"
+                    type="text"
+                    autocomplete="off"
+                    spellcheck="false"
+                    placeholder="e.g. llama-3.1-8b-instruct">
+
+
+                <label for="model-key">
+                    API key (optional, stored locally, never displayed)
+                </label>
+
+                <input
+                    id="model-key"
+                    type="password"
+                    autocomplete="off"
+                    spellcheck="false"
+                    placeholder="leave empty for LM Studio / Ollama">
+
+
+                <div class="setting-item-row">
+                    <label class="switch-label">
+                        <input type="checkbox" id="model-vision">
+                        <span>Vision-capable (send capture images)</span>
+                    </label>
+                </div>
+
+
+                <div class="manual-row">
+
+                    <button
+                        id="model-save"
+                        class="secondary-button"
+                        type="button">
+                        Save
+                    </button>
+
+                    <button
+                        id="model-test"
+                        class="secondary-button"
+                        type="button">
+                        Test
+                    </button>
+
+                </div>
+
+
+                <small class="ws-hint" id="model-status">
+                    Not configured.
+                </small>
+
+                <small class="ws-hint">
+                    Ollama in a browser needs CORS enabled
+                    (OLLAMA_ORIGINS) or requests fail silently —
+                    use Test to confirm. LM Studio allows local
+                    origins by default. Keys are stored locally and
+                    never shown or logged.
+                </small>
+
+                <small class="ws-hint">
+                    Cloud API never talks to the provider from this
+                    page: start the local forwarder
+                    (<span class="mono">npm run forwarder</span>,
+                    <span class="mono">127.0.0.1:7339</span>), keep the
+                    endpoint field pointed at it, and put the key here
+                    once — it is posted straight to the forwarder and
+                    never kept in the page afterwards. The provider URL
+                    itself lives on the forwarder (env/file), not here.
                 </small>
 
             </section>
@@ -628,7 +725,7 @@ WEBSOCKET CONNECTION
                                 </small>
 
                                 <strong>
-                                    Browser Page
+                                    —
                                 </strong>
 
                             </div>
@@ -641,7 +738,7 @@ WEBSOCKET CONNECTION
                                 </small>
 
                                 <strong>
-                                    Current browser page
+                                    —
                                 </strong>
 
                             </div>
@@ -654,7 +751,7 @@ WEBSOCKET CONNECTION
                                 </small>
 
                                 <strong>
-                                    1
+                                    —
                                 </strong>
 
                             </div>
@@ -698,34 +795,20 @@ WEBSOCKET CONNECTION
 
 </details>
                         <!-- Elements table -->
+
 <div class="elements-table">
 
     <div class="table-header">
 
-        <span>ID</span>
-        <span>Type</span>
+        <span>Ref</span>
+        <span>Tag</span>
         <span>Label / Text</span>
-        <span>Value</span>
+        <span>Role</span>
         <span>BBox</span>
 
     </div>
 
-
-    <div class="table-row">
-
-        <span>el_8</span>
-
-        <span>button</span>
-
-        <span>Delete Account</span>
-
-        <span>—</span>
-
-        <span>
-            [620,350,180,48]
-        </span>
-
-    </div>
+    <!-- Rows render here from real list_interactive_elements responses only. -->
 
 </div>
 
@@ -951,11 +1034,11 @@ WEBSOCKET CONNECTION
                         </div>
 
                         <strong>
-                            SAFE
+                            —
                         </strong>
 
                         <small>
-                            This action is allowed
+                            No action evaluated yet
                         </small>
 
                     </div>
@@ -1180,7 +1263,7 @@ WEBSOCKET CONNECTION
 
 
                         <span class="connection-label">
-                            ● Connected
+                            ○ Disconnected
                         </span>
 
                     </div>

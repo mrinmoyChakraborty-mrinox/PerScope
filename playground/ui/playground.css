@@ -616,46 +616,6 @@ body.light-theme .secondary-button:hover {
     color: var(--text-strong);
 }
 
-.progress-speed-control {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 8px 10px;
-    background: var(--bg-subtle);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-    margin-top: 4px;
-}
-
-body.light-theme .progress-speed-control {
-    background: #f8fafc;
-}
-
-.progress-speed-control label {
-    margin: 0;
-    display: flex;
-    align-items: center;
-    gap: 7px;
-    cursor: pointer;
-    font-size: 11px;
-    color: var(--text-soft);
-    font-weight: 500;
-}
-
-.progress-speed-control input[type="checkbox"] {
-    accent-color: var(--accent);
-    cursor: pointer;
-    width: 14px;
-    height: 14px;
-    margin: 0;
-}
-
-.progress-speed-control small {
-    color: var(--text-muted);
-    font-size: 10px;
-    font-family: var(--font-mono);
-}
-
 .ws-status-row {
     display: flex;
     align-items: center;
@@ -703,21 +663,49 @@ body.light-theme .ws-status-row {
 }
 
 /* MANUAL PANEL */
-.manual-panel h3 {
+.manual-panel h3,
+.model-panel h3 {
     margin-bottom: 8px;
 }
 
-.manual-panel label {
+.manual-panel label,
+.model-panel label {
     display: block;
     font-size: 12px;
     margin: 8px 0 4px;
 }
 
 .manual-panel select,
-.manual-panel textarea {
+.manual-panel textarea,
+.model-panel select,
+.model-panel input,
+.model-panel textarea {
     width: 100%;
     box-sizing: border-box;
     margin-bottom: 4px;
+    padding: 8px 10px;
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius-sm);
+    background: var(--bg-input);
+    color: var(--text-strong);
+    font-size: 12px;
+    outline: none;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.manual-panel select:focus,
+.manual-panel textarea:focus,
+.model-panel select:focus,
+.model-panel input:focus,
+.model-panel textarea:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px var(--accent-glow);
+}
+
+.manual-panel textarea::placeholder,
+.model-panel input::placeholder,
+.model-panel textarea::placeholder {
+    color: var(--text-muted);
 }
 
 .manual-panel textarea {
@@ -1042,129 +1030,9 @@ body.light-theme .chat-message.agent {
    ACTION APPROVAL CARD
    ========================================================= */
 
-.approval-card {
-    margin: 4px 18px 14px;
-    padding: 14px 16px;
-    border: 1px solid var(--orange-border);
-    border-radius: var(--radius);
-    background: linear-gradient(180deg, var(--orange-subtle), rgba(15, 23, 42, 0.72));
-    box-shadow: 0 8px 20px rgba(0, 0, 0, 0.24);
-    animation: approvalEnter 0.2s ease-out;
-}
-
-body.light-theme .approval-card {
-    background: linear-gradient(180deg, #fffbeb, #ffffff);
-    border-color: #fde68a;
-    box-shadow: 0 4px 16px rgba(217, 119, 6, 0.12);
-}
-
-.approval-title {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-bottom: 8px;
-    color: var(--orange);
-    font-size: 12px;
-    font-weight: 700;
-    letter-spacing: 0.01em;
-}
-
-.approval-action {
-    margin-bottom: 12px;
-    padding: 8px 10px;
-    border-radius: 7px;
-    background: rgba(0, 0, 0, 0.18);
-    border: 1px solid rgba(255, 255, 255, 0.06);
-    color: var(--text-soft);
-    font-family: var(--font-mono);
-    font-size: 11px;
-}
-
-body.light-theme .approval-action {
-    background: #f8fafc;
-    border-color: #e2e8f0;
-    color: #1e293b;
-}
-
-.approval-buttons {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 8px;
-}
-
-.approval-buttons button {
-    min-height: 36px;
-    padding: 8px 12px;
-    border-radius: var(--radius-sm);
-    font-size: 11.5px;
-    font-weight: 700;
-    border: 1px solid transparent;
-    transition: transform 0.15s ease, background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease;
-}
-
-.approval-approve {
-    background: var(--green-subtle);
-    border-color: var(--green-border) !important;
-    color: var(--green);
-}
-
-.approval-approve:hover:not(:disabled) {
-    background: rgba(16, 185, 129, 0.22);
-    border-color: var(--green) !important;
-    box-shadow: 0 0 12px var(--green-glow);
-    transform: translateY(-1px);
-}
-
-body.light-theme .approval-approve {
-    background: #ecfdf5;
-    border-color: #a7f3d0 !important;
-    color: #047857;
-}
-
-body.light-theme .approval-approve:hover:not(:disabled) {
-    background: #d1fae5;
-    border-color: #34d399 !important;
-}
-
-.approval-deny {
-    background: var(--red-subtle);
-    border-color: var(--red-border) !important;
-    color: var(--red);
-}
-
-.approval-deny:hover:not(:disabled) {
-    background: rgba(239, 68, 68, 0.2);
-    border-color: var(--red) !important;
-    box-shadow: 0 0 12px var(--red-glow);
-    transform: translateY(-1px);
-}
-
-body.light-theme .approval-deny {
-    background: #fef2f2;
-    border-color: #fecaca !important;
-    color: #b91c1c;
-}
-
-body.light-theme .approval-deny:hover:not(:disabled) {
-    background: #fee2e2;
-    border-color: #f87171 !important;
-}
-
-.approval-buttons button:active:not(:disabled) {
-    transform: translateY(0);
-}
-
-.approval-buttons button:disabled {
-    opacity: 0.55;
-    cursor: not-allowed;
-    transform: none;
-    box-shadow: none;
-}
-
-@keyframes approvalEnter {
-    from { opacity: 0; transform: translateY(5px); }
-    to { opacity: 1; transform: translateY(0); }
-}
+/* Approval-card styles removed with the push protocol (2026-09-16): approval
+   happens in the extension's own UI (D7 popup window), which playground CSS
+   can never style — kept deleted rather than repurposed. */
 
 /* CHAT COMPOSER */
 .chat-composer {

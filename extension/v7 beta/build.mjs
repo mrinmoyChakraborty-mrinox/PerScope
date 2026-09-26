@@ -13,6 +13,7 @@ mkdirSync(dist, { recursive: true });
 // 1. Bundle JavaScript entry points for browser
 const entries = [
   { in: resolve(src, "popup/popup.js"), out: "popup.js" },
+  { in: resolve(src, "approval/approval.js"), out: "approval.js" },
   { in: resolve(src, "background/service-worker.js"), out: "background.js" },
   { in: resolve(src, "offscreen/offscreen.js"), out: "offscreen.js" },
   { in: resolve(src, "app/dashboard.js"), out: "dashboard.js" },
@@ -73,6 +74,7 @@ function copyIfExists(srcPath, destPath) {
 
 copyIfExists(resolve(src, "popup/popup.html"), resolve(dist, "popup.html"));
 copyIfExists(resolve(src, "popup/popup.css"), resolve(dist, "popup.css"));
+copyIfExists(resolve(src, "approval/approval.html"), resolve(dist, "approval.html"));
 copyIfExists(resolve(src, "offscreen/offscreen.html"), resolve(dist, "offscreen.html"));
 copyIfExists(resolve(src, "app/dashboard.html"), resolve(dist, "dashboard.html"));
 copyIfExists(resolve(src, "app/dashboard.css"), resolve(dist, "dashboard.css"));
