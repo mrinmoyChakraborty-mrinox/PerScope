@@ -87,7 +87,8 @@ function updateDeviceTelemetry(device) {
   }
 }
 
-D.dashSelectDevice.addEventListener("change", initDashboardDevice);
+// (Device-select change is wired in the prefs block at the bottom,
+// which both saves prefs and re-queries the device â€” one listener.)
 
 // File upload
 D.dashBtnUpload.addEventListener("click", () => D.dashFileInput.click());
@@ -292,9 +293,14 @@ D.dashBtnDownloadJSON.addEventListener("click", () => {
 initDashboardDevice();
 
 // -- Bridge Connection (agent mode; optional for Human Mode) -----------------
+let bridgeFirstPoll = true;
 async function refreshBridgeStatus() {
   const el = document.getElementById('dashBridgeStatus');
   const msg = document.getElementById('dashBridgeMsg');
+  // First paint after a (re)load shows the in-between honestly: the
+  // background waits up to ~6s for the offscreen link to restore the
+  // stored pairing before answering. Interval polls update silently.
+  if (bridgeFirstPoll && el) el.textContent = 'Connectingâ€¦';
   try {
     const res = await chrome.runtime.sendMessage({ target: 'background', action: 'BRIDGE_STATUS' });
     const b = res?.bridge;
@@ -302,20 +308,22 @@ async function refreshBridgeStatus() {
     if (msg && !msg.dataset.sticky) msg.textContent = '';
   } catch {
     if (el) el.textContent = 'Bridge not running';
+  } finally {
+    bridgeFirstPoll = false;
   }
 }
 
 async function submitBridgePair() {
   const codeEl = document.getElementById('dashBridgeCode');
   const msg = document.getElementById('dashBridgeMsg');
-  if (msg) { msg.dataset.sticky = '1'; msg.textContent = 'Pairing…'; }
+  if (msg) { msg.dataset.sticky = '1'; msg.textContent = 'Pairingï¿½'; }
   try {
     const res = await chrome.runtime.sendMessage({ target: 'background', action: 'BRIDGE_PAIR', code: codeEl?.value || '' });
     if (res?.ok) {
       if (msg) msg.textContent = 'Paired. Token stored for reconnects.';
       if (codeEl) codeEl.value = '';
     } else {
-      if (msg) msg.textContent = 'Pair failed: ' + (res?.reason || 'unknown') + ' — retry.';
+      if (msg) msg.textContent = 'Pair failed: ' + (res?.reason || 'unknown') + ' ï¿½ retry.';
     }
   } catch (err) {
     if (msg) msg.textContent = 'Pair failed: ' + err.message;
@@ -328,3 +336,64 @@ async function submitBridgePair() {
 document.getElementById('dashBridgePair')?.addEventListener('click', submitBridgePair);
 refreshBridgeStatus();
 setInterval(refreshBridgeStatus, 5000);
+// Refocus re-checks: the offscreen link may have restored (or dropped)
+// while the tab was in the background.
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) refreshBridgeStatus();
+});
+
+// -- Dashboard prefs (stateful across reloads) -------------------------------
+// Small UI state only: device tier, redaction style, toggles, active tab.
+// Results/evidence are per-run and intentionally not persisted.
+const DASH_PREFS_KEY = 'perscope.dashboard.prefs';
+async function saveDashboardPrefs() {
+  try {
+    await chrome.storage.local.set({
+      [DASH_PREFS_KEY]: {
+        device: D.dashSelectDevice?.value || 'auto',
+        style: D.dashSelectStyle?.value || null,
+        fastvlm: !!D.dashCheckFastVLM?.checked,
+        face: !!D.dashCheckFace?.checked,
+        tab: D.tabBtnEvidence?.classList.contains('active')
+          ? 'evidence'
+          : D.tabBtnPrompts?.classList.contains('active')
+            ? 'prompts'
+            : 'caption',
+      },
+    });
+  } catch {
+    // Storage unavailable: prefs stay session-only.
+  }
+}
+async function restoreDashboardPrefs() {
+  try {
+    const stored = await chrome.storage.local.get([DASH_PREFS_KEY]);
+    const prefs = stored?.[DASH_PREFS_KEY];
+    if (!prefs || typeof prefs !== 'object') return;
+    let deviceRestored = false;
+    if (D.dashSelectDevice && typeof prefs.device === 'string') {
+      D.dashSelectDevice.value = prefs.device;
+      deviceRestored = true;
+    }
+    if (D.dashSelectStyle && typeof prefs.style === 'string') D.dashSelectStyle.value = prefs.style;
+    if (D.dashCheckFastVLM) D.dashCheckFastVLM.checked = prefs.fastvlm !== false;
+    if (D.dashCheckFace) D.dashCheckFace.checked = prefs.face !== false;
+    if (prefs.tab === 'evidence' || prefs.tab === 'prompts' || prefs.tab === 'caption') setTab(prefs.tab);
+    // Prefs load after the initial device query above â€” re-query so a
+    // restored tier actually drives telemetry.
+    if (deviceRestored) initDashboardDevice();
+  } catch {
+    // Corrupt or absent storage starts with defaults.
+  }
+}
+[D.dashSelectDevice, D.dashSelectStyle, D.dashCheckFastVLM, D.dashCheckFace].forEach((el) => {
+  el?.addEventListener('change', () => {
+    saveDashboardPrefs();
+    if (el === D.dashSelectDevice) initDashboardDevice();
+  });
+});
+// Tab switching itself is wired above; this only persists the choice.
+[D.tabBtnCaption, D.tabBtnEvidence, D.tabBtnPrompts].forEach((el) => {
+  el?.addEventListener('click', () => saveDashboardPrefs());
+});
+restoreDashboardPrefs();

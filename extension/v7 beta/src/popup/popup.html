@@ -206,6 +206,13 @@
         </div>
 
         <div class="action-buttons">
+          <button id="btnCopyDomText" class="btn btn-secondary" title="Copy redacted page text">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+            </svg>
+            Copy text
+          </button>
           <button id="btnDownloadDomEvidence" class="btn btn-ghost" title="Download DOM Evidence JSON">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <polyline points="16 18 22 12 16 6"/>
@@ -270,12 +277,26 @@
             </svg>
             Download PNG
           </button>
-          <button id="btnCopyClipboard" class="btn btn-secondary">
+          <button id="btnCopyClipboard" class="btn btn-secondary" title="Copy redacted image">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
               <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
             </svg>
-            Copy
+            Copy image
+          </button>
+          <button id="btnCopyCaption" class="btn btn-secondary" title="Copy image caption text">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+            </svg>
+            Copy caption
+          </button>
+          <button id="btnCopyAll" class="btn btn-secondary" title="Copy caption + redacted text + redacted image together">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+            </svg>
+            Copy all
           </button>
           <button id="btnDownloadEvidence" class="btn btn-ghost" title="Download Evidence JSON">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">

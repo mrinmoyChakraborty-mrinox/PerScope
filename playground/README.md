@@ -10,6 +10,8 @@ renders — it never decides, never executes, never validates.
    `npx @perscope/bridge mcp` once `0.2.0` ships) — note the pairing code.
 2. Extension paired (its dashboard card) — see `extension/v7 beta/BRIDGE-WIRING-LOG.md`.
 3. Playground paired (connection card → code → Pair).
+4. Cloud API only: `npm run forwarder` (local key-holder on `127.0.0.1:7339`;
+   key via env or the UI's one-time save — never lives in the page).
 4. Run: Manual card (tab picker + tool sender), Screen State `capture_tab`,
    or chat (scripted flows only — model loop deferred, see below).
 
@@ -29,4 +31,4 @@ renders — it never decides, never executes, never validates.
 
 ## Status
 
-Built: WS leg, pairing UI, tab picker (`list_tabs`), generic sender, `capture_tab` rendering, mock retirement. Deferred: chat-side model loop (T6, PS-required), MCP-show demos (T4), action execution paths (need T6d). Honest beta errors (`dom-not-implemented-in-beta`, `extension-busy`) display verbatim.
+Built: WS leg, pairing UI, tab picker (`list_tabs`), generic sender, `capture_tab` rendering, mock retirement, chat-side model loop (T6), action execution paths (T6d: gated click/type/select_option/submit + ungated scroll, D7 popup approval in the extension). Deferred: MCP-show demos (T4). Honest errors (`extension-busy`, content-script-absent tabs) display verbatim.

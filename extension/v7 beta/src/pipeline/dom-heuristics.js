@@ -520,18 +520,37 @@ function nextSameBlockValue(segments, fromIndex) {
   const scope = scopeKey(labelSeg);
   let skippedNav = 0;
   let skippedLabel = 0;
+  // Cross-scope state (the custom-password-component leak): a bare secret
+  // label in one container with its value rendered as plain text in a
+  // sibling container. Tracked — never assumed — and only ever resolved
+  // through the dots-adjacency gate at the bottom, so greetings/prose
+  // after a secret header are still left alone.
+  let crossedScope = false;
+  let afterCross = 0;
+  let seenDots = false;
   for (let j = fromIndex + 1; j < segments.length; j++) {
     const cand = segments[j];
     if (!cand || typeof cand !== "object") continue;
     if (scopeKey(cand) !== scope) {
-      // Different container: only a directly-linked form value still counts.
+      // Different container: a directly-linked form value still counts
+      // immediately (strongly typed association, scope-immune).
       if (cand.kind === "form_value") return { seg: cand, index: j };
-      break;
+      crossedScope = true;
+    } else if (crossedScope) {
+      // Bounded reach past the boundary: the value must be NEAR the label.
+      afterCross += 1;
+      if (afterCross > 6) return null;
     }
     if (cand.kind === "form_value") return { seg: cand, index: j };
     if (cand.kind === "text" || cand.kind === "attribute") {
       const candText = String(cand.text ?? "").trim();
       if (!candText) continue;
+      // Mask-dot runs (custom password components render •/*** next to a
+      // shown value) are recorded, never taken as values themselves.
+      if (/[•*]{4,}/.test(candText)) {
+        seenDots = true;
+        continue;
+      }
       const candTag = String(cand.tag || "");
       // Navigational elements (links/buttons) are UI chrome, never secret
       // values: step over them (cap the gap). This is the reported login
@@ -556,12 +575,30 @@ function nextSameBlockValue(segments, fromIndex) {
       // (strong pairing signal), or when stepping over navigational chrome
       // only to reach it — never across another bare label (that is a
       // different, valueless field, not our value). Form values need no colon.
-      if (!colonTerminated && (skippedNav === 0 || skippedLabel > 0)) return null;
+      // Cross-scope rescue: custom password components render the shown value
+      // as plain text in a sibling container next to a •/*** mask run. Take
+      // the first plausible value ONLY with that dots adjacency (behind or
+      // ahead within 3) — greetings/prose have no mask run and stay untouched.
+      if (!colonTerminated && (skippedNav === 0 || skippedLabel > 0)) {
+        if (!(crossedScope && (seenDots || dotsAhead(segments, j)))) return null;
+      }
       return { seg: cand, index: j };
     }
     return null;
   }
   return null;
+}
+
+/**
+ * Mask-run peek for the cross-scope rescue: is there a •/*** run within 3
+ * segments ahead of index (the custom-component password signature)?
+ */
+function dotsAhead(segments, fromIndex) {
+  for (let k = fromIndex; k <= fromIndex + 3 && k < segments.length; k++) {
+    const seg = segments[k];
+    if (seg && typeof seg === "object" && /[•*]{4,}/.test(String(seg.text ?? ""))) return true;
+  }
+  return false;
 }
 
 function scopeKey(seg) {

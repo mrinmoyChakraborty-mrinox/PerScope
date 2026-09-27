@@ -494,7 +494,8 @@ body:not(.light-theme) .nav-item.active span {
 
 /* SESSION CONTROLS PANEL */
 .session-controls,
-.tools-panel {
+.tools-panel,
+.chats-panel {
     padding: 14px;
     background: var(--bg-card);
     border: 1px solid var(--border);
@@ -503,13 +504,15 @@ body:not(.light-theme) .nav-item.active span {
 }
 
 body.light-theme .session-controls,
-body.light-theme .tools-panel {
+body.light-theme .tools-panel,
+body.light-theme .chats-panel {
     background: #ffffff;
     border-color: var(--border);
 }
 
 .session-controls h3,
-.tools-panel h3 {
+.tools-panel h3,
+.chats-panel h3 {
     margin: 0 0 12px;
     font-size: 11px;
     font-weight: 700;
@@ -519,6 +522,70 @@ body.light-theme .tools-panel {
     display: flex;
     align-items: center;
     justify-content: space-between;
+}
+
+/* Previous-chat threads */
+#chat-threads {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 10px;
+    max-height: 220px;
+    overflow-y: auto;
+}
+
+.thread-empty {
+    font-size: 11px;
+    color: var(--text-muted);
+}
+
+.thread-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+    padding: 7px 9px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg-subtle);
+    color: var(--text-soft);
+    font-size: 11.5px;
+    cursor: pointer;
+    text-align: left;
+    transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.thread-item:hover {
+    border-color: var(--accent);
+}
+
+.thread-item.active {
+    border-color: var(--accent);
+    background: var(--accent-subtle);
+    color: var(--text-strong);
+}
+
+.thread-item span {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.thread-del {
+    flex: none;
+    border: 0;
+    background: transparent;
+    color: var(--text-muted);
+    font-size: 13px;
+    line-height: 1;
+    cursor: pointer;
+    padding: 0 2px;
+}
+
+.thread-del:hover {
+    color: var(--red);
 }
 
 .ws-controls {
@@ -616,46 +683,6 @@ body.light-theme .secondary-button:hover {
     color: var(--text-strong);
 }
 
-.progress-speed-control {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 8px 10px;
-    background: var(--bg-subtle);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-    margin-top: 4px;
-}
-
-body.light-theme .progress-speed-control {
-    background: #f8fafc;
-}
-
-.progress-speed-control label {
-    margin: 0;
-    display: flex;
-    align-items: center;
-    gap: 7px;
-    cursor: pointer;
-    font-size: 11px;
-    color: var(--text-soft);
-    font-weight: 500;
-}
-
-.progress-speed-control input[type="checkbox"] {
-    accent-color: var(--accent);
-    cursor: pointer;
-    width: 14px;
-    height: 14px;
-    margin: 0;
-}
-
-.progress-speed-control small {
-    color: var(--text-muted);
-    font-size: 10px;
-    font-family: var(--font-mono);
-}
-
 .ws-status-row {
     display: flex;
     align-items: center;
@@ -703,21 +730,49 @@ body.light-theme .ws-status-row {
 }
 
 /* MANUAL PANEL */
-.manual-panel h3 {
+.manual-panel h3,
+.model-panel h3 {
     margin-bottom: 8px;
 }
 
-.manual-panel label {
+.manual-panel label,
+.model-panel label {
     display: block;
     font-size: 12px;
     margin: 8px 0 4px;
 }
 
 .manual-panel select,
-.manual-panel textarea {
+.manual-panel textarea,
+.model-panel select,
+.model-panel input,
+.model-panel textarea {
     width: 100%;
     box-sizing: border-box;
     margin-bottom: 4px;
+    padding: 8px 10px;
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius-sm);
+    background: var(--bg-input);
+    color: var(--text-strong);
+    font-size: 12px;
+    outline: none;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.manual-panel select:focus,
+.manual-panel textarea:focus,
+.model-panel select:focus,
+.model-panel input:focus,
+.model-panel textarea:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px var(--accent-glow);
+}
+
+.manual-panel textarea::placeholder,
+.model-panel input::placeholder,
+.model-panel textarea::placeholder {
+    color: var(--text-muted);
 }
 
 .manual-panel textarea {
@@ -835,10 +890,101 @@ body.light-theme .tool-row {
 }
 
 .workspace-grid {
-    display: grid;
-    grid-template-columns: minmax(420px, 1.25fr) minmax(360px, 1fr) minmax(290px, 0.85fr);
+    display: flex;
+    flex-direction: column;
     gap: 16px;
-    align-items: stretch;
+    min-width: 0;
+}
+
+/* =========================================================
+   PAGE ROUTER (one visible page at a time)
+   ========================================================= */
+
+.page {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    min-width: 0;
+    animation: fadeIn 0.25s ease;
+}
+
+#page-chat {
+    max-width: 900px;
+    width: 100%;
+    margin: 0 auto;
+}
+
+#page-manual-model {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    align-items: start;
+}
+
+.manual-page-body {
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.manual-page-body .primary-button {
+    align-self: flex-start;
+}
+
+#page-logs .event-log-panel {
+    max-width: 1100px;
+    width: 100%;
+    margin: 0 auto;
+}
+
+/* =========================================================
+   TOOL INSPECTOR DRAWER (Chat page, per-turn context)
+   ========================================================= */
+
+.inspector-drawer {
+    padding: 0 0 6px;
+}
+
+.inspector-summary {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    padding: 12px 16px;
+    cursor: pointer;
+    list-style: none;
+    user-select: none;
+}
+
+.inspector-summary::-webkit-details-marker {
+    display: none;
+}
+
+.inspector-summary::before {
+    content: "▸";
+    color: var(--text-muted);
+    font-size: 11px;
+    transition: transform 0.15s ease;
+}
+
+.inspector-drawer[open] .inspector-summary::before {
+    transform: rotate(90deg);
+}
+
+.inspector-summary span {
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--text-strong);
+}
+
+.inspector-summary small {
+    font-size: 11px;
+    color: var(--text-muted);
+}
+
+.inspector-drawer .inspector-panel {
+    border-top: 1px solid var(--border-subtle);
+    padding-top: 4px;
 }
 
 /* GENERIC PANEL CARDS */
@@ -1042,129 +1188,9 @@ body.light-theme .chat-message.agent {
    ACTION APPROVAL CARD
    ========================================================= */
 
-.approval-card {
-    margin: 4px 18px 14px;
-    padding: 14px 16px;
-    border: 1px solid var(--orange-border);
-    border-radius: var(--radius);
-    background: linear-gradient(180deg, var(--orange-subtle), rgba(15, 23, 42, 0.72));
-    box-shadow: 0 8px 20px rgba(0, 0, 0, 0.24);
-    animation: approvalEnter 0.2s ease-out;
-}
-
-body.light-theme .approval-card {
-    background: linear-gradient(180deg, #fffbeb, #ffffff);
-    border-color: #fde68a;
-    box-shadow: 0 4px 16px rgba(217, 119, 6, 0.12);
-}
-
-.approval-title {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-bottom: 8px;
-    color: var(--orange);
-    font-size: 12px;
-    font-weight: 700;
-    letter-spacing: 0.01em;
-}
-
-.approval-action {
-    margin-bottom: 12px;
-    padding: 8px 10px;
-    border-radius: 7px;
-    background: rgba(0, 0, 0, 0.18);
-    border: 1px solid rgba(255, 255, 255, 0.06);
-    color: var(--text-soft);
-    font-family: var(--font-mono);
-    font-size: 11px;
-}
-
-body.light-theme .approval-action {
-    background: #f8fafc;
-    border-color: #e2e8f0;
-    color: #1e293b;
-}
-
-.approval-buttons {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 8px;
-}
-
-.approval-buttons button {
-    min-height: 36px;
-    padding: 8px 12px;
-    border-radius: var(--radius-sm);
-    font-size: 11.5px;
-    font-weight: 700;
-    border: 1px solid transparent;
-    transition: transform 0.15s ease, background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease;
-}
-
-.approval-approve {
-    background: var(--green-subtle);
-    border-color: var(--green-border) !important;
-    color: var(--green);
-}
-
-.approval-approve:hover:not(:disabled) {
-    background: rgba(16, 185, 129, 0.22);
-    border-color: var(--green) !important;
-    box-shadow: 0 0 12px var(--green-glow);
-    transform: translateY(-1px);
-}
-
-body.light-theme .approval-approve {
-    background: #ecfdf5;
-    border-color: #a7f3d0 !important;
-    color: #047857;
-}
-
-body.light-theme .approval-approve:hover:not(:disabled) {
-    background: #d1fae5;
-    border-color: #34d399 !important;
-}
-
-.approval-deny {
-    background: var(--red-subtle);
-    border-color: var(--red-border) !important;
-    color: var(--red);
-}
-
-.approval-deny:hover:not(:disabled) {
-    background: rgba(239, 68, 68, 0.2);
-    border-color: var(--red) !important;
-    box-shadow: 0 0 12px var(--red-glow);
-    transform: translateY(-1px);
-}
-
-body.light-theme .approval-deny {
-    background: #fef2f2;
-    border-color: #fecaca !important;
-    color: #b91c1c;
-}
-
-body.light-theme .approval-deny:hover:not(:disabled) {
-    background: #fee2e2;
-    border-color: #f87171 !important;
-}
-
-.approval-buttons button:active:not(:disabled) {
-    transform: translateY(0);
-}
-
-.approval-buttons button:disabled {
-    opacity: 0.55;
-    cursor: not-allowed;
-    transform: none;
-    box-shadow: none;
-}
-
-@keyframes approvalEnter {
-    from { opacity: 0; transform: translateY(5px); }
-    to { opacity: 1; transform: translateY(0); }
-}
+/* Approval-card styles removed with the push protocol (2026-09-16): approval
+   happens in the extension's own UI (D7 popup window), which playground CSS
+   can never style — kept deleted rather than repurposed. */
 
 /* CHAT COMPOSER */
 .chat-composer {
@@ -1489,8 +1515,8 @@ body.light-theme .raw-json {
     letter-spacing: 0.02em;
 }
 
-/* MOVED AGENT THINKING CARD */
-.agent-state-panel .thinking-card {
+/* AGENT THINKING CARD (shared: Agent State page + live in chat flow) */
+.thinking-card {
     margin: 12px 14px;
     padding: 14px;
     background: linear-gradient(180deg, var(--bg-card) 0%, rgba(9, 17, 31, 0.96) 100%);
@@ -1500,10 +1526,119 @@ body.light-theme .raw-json {
     flex-shrink: 0;
 }
 
-body.light-theme .agent-state-panel .thinking-card {
+body.light-theme .thinking-card {
     background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
     border: 1px solid #cbd5e1;
     box-shadow: 0 4px 14px rgba(15, 23, 42, 0.06);
+}
+
+/* In-flow chat appearance: full-width turn block. */
+#chat .thinking-card {
+    margin: 0;
+    width: 100%;
+    align-self: stretch;
+    animation: fadeIn 0.5s ease;
+}
+
+/* Thinking word cycler + shimmer (ported from process-chat mock,
+   re-tinted from bronze to the PerScope indigo accent). */
+.thinking-wordline {
+    margin: 0 0 2px 38px;
+    height: 22px;
+    position: relative;
+    overflow: hidden;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-muted);
+}
+
+#thinkingWord {
+    position: absolute;
+    left: 0;
+    top: 0;
+    will-change: transform, opacity, filter;
+    animation: thinkWord 3.2s cubic-bezier(.22, .61, .36, 1) infinite;
+}
+
+@keyframes thinkWord {
+    0% { opacity: 0; transform: translateY(10px); filter: blur(6px); }
+    16% { opacity: 0.9; transform: translateY(0); filter: blur(0); }
+    62% { opacity: 1; transform: translateY(0); filter: blur(0); }
+    78% { opacity: 0; transform: translateY(-9px); filter: blur(5px); }
+    100% { opacity: 0; transform: translateY(-9px); filter: blur(5px); }
+}
+
+.thinking-shimmer {
+    height: 1px;
+    width: 200px;
+    margin: 6px 0 10px 38px;
+    border-radius: 999px;
+    overflow: hidden;
+    background: linear-gradient(90deg, transparent, rgba(99, 102, 241, 0.12), transparent);
+    position: relative;
+}
+
+.thinking-shimmer::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    width: 30%;
+    background: linear-gradient(90deg, transparent, rgba(129, 140, 248, 0.8), transparent);
+    filter: blur(1px);
+    animation: thinkShimmer 2s ease-in-out infinite;
+}
+
+@keyframes thinkShimmer {
+    0% { transform: translateX(-140%); }
+    100% { transform: translateX(470%); }
+}
+
+body.light-theme .thinking-shimmer {
+    background: linear-gradient(90deg, transparent, rgba(79, 70, 229, 0.10), transparent);
+}
+
+body.light-theme .thinking-shimmer::before {
+    background: linear-gradient(90deg, transparent, rgba(99, 102, 241, 0.65), transparent);
+}
+
+/* Animated glyph only in the live chat flow; the Agent State page keeps
+   the static badge. */
+#chat .thinking-icon {
+    position: relative;
+    font-size: 0;
+    overflow: visible;
+}
+
+#chat .thinking-icon::before {
+    content: "";
+    position: absolute;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #e0e7ff;
+    box-shadow: 0 0 10px 2px rgba(129, 140, 248, 0.6);
+    animation: glyphCore 2.2s ease-in-out infinite;
+}
+
+#chat .thinking-icon::after {
+    content: "✦";
+    position: absolute;
+    color: var(--accent);
+    font-size: 20px;
+    line-height: 1;
+    filter: drop-shadow(0 0 8px rgba(99, 102, 241, 0.7));
+    animation: glyphMorph 2.2s cubic-bezier(.4, 0, .2, 1) infinite;
+}
+
+@keyframes glyphCore {
+    0%, 100% { transform: scale(.8); opacity: .7; }
+    50% { transform: scale(1.2); opacity: 1; }
+}
+
+@keyframes glyphMorph {
+    0%, 100% { transform: rotate(0deg) scale(.75); opacity: .72; }
+    35% { transform: rotate(45deg) scale(1.08); opacity: 1; }
+    70% { transform: rotate(90deg) scale(.84); opacity: .82; }
 }
 
 .thinking-header {
@@ -1566,6 +1701,19 @@ body.light-theme .thinking-icon {
     align-items: flex-start;
     gap: 12px;
     padding: 8px 0;
+    opacity: 0;
+    transform: translateY(8px);
+    max-height: 0;
+    overflow: hidden;
+    transition: opacity 0.45s ease, transform 0.45s ease, max-height 0.55s ease;
+}
+
+/* Staggered reveal (ported from process-chat mock): JS adds .revealed
+   when a step first activates via setChatStep(). */
+.process-node.revealed {
+    opacity: 1;
+    transform: none;
+    max-height: 240px;
 }
 
 .process-node:not(:last-child)::after {
@@ -1826,15 +1974,6 @@ body.light-theme .validator small {
    Observability Console layout
    ========================================================= */
 
-.bottom-content {
-    display: grid;
-    grid-column: 1 / -1;
-    grid-template-columns: minmax(0, 1.6fr) minmax(420px, 1fr);
-    gap: 16px;
-    width: 100%;
-    min-width: 0;
-}
-
 /* EVENT LOG */
 .event-log-panel {
     min-width: 0;
@@ -2089,26 +2228,8 @@ body.light-theme #agent-reasoning {
    RESPONSIVE OPTIMIZATIONS
    ========================================================= */
 
-@media (max-width: 1400px) {
-    .workspace-grid {
-        grid-template-columns: minmax(360px, 1.2fr) minmax(300px, 1fr) minmax(250px, 0.8fr);
-    }
-}
-
 @media (max-width: 1180px) {
-    .workspace-grid {
-        grid-template-columns: 1fr 1fr;
-    }
-    .chat-panel {
-        grid-column: 1 / 3;
-    }
-    .screen-state-panel {
-        grid-column: 1;
-    }
-    .agent-state-panel {
-        grid-column: 2;
-    }
-    .bottom-content {
+    #page-manual-model {
         grid-template-columns: 1fr;
     }
 }
@@ -2138,15 +2259,8 @@ body.light-theme #agent-reasoning {
     }
     .session-controls,
     .tools-panel,
+    .chats-panel,
     .version {
         display: none;
-    }
-    .workspace-grid {
-        grid-template-columns: 1fr;
-    }
-    .chat-panel,
-    .screen-state-panel,
-    .agent-state-panel {
-        grid-column: 1;
     }
 }

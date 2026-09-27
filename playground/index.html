@@ -102,18 +102,29 @@
 
 
             <!-- NAVIGATION -->
-
             <nav class="sidebar-nav">
 
                 <button
                     class="nav-item active"
-                    data-section="playground">
+                    data-section="chat">
 
-                    <span>⌂</span>
+                    <span>💬</span>
 
-                    Playground
+                    Chat
 
                 </button>
+
+
+                <button
+                    class="nav-item"
+                    data-section="manual-model">
+
+                    <span>🛠</span>
+
+                    Manual & Model
+
+                </button>
+
 
                 <button
                     class="nav-item"
@@ -138,11 +149,11 @@
 
                 <button
                     class="nav-item"
-                    data-section="action-logs">
+                    data-section="logs">
 
                     <span>☷</span>
 
-                    Action Logs
+                    Logs
 
                 </button>
 
@@ -224,20 +235,6 @@ WEBSOCKET CONNECTION
         </button>
 
     </div>
-    <div class="progress-speed-control">
-
-    <label>
-        <input
-            type="checkbox"
-            id="progress-fast-toggle">
-        Fast mode
-    </label>
-
-    <small>
-        Fast ≈ 3s · Normal ≈ 6.5s
-    </small>
-
-</div>
     <div class="ws-status-row">
 
         <span
@@ -356,79 +353,33 @@ WEBSOCKET CONNECTION
 
 
             <!-- =================================================
-                 MANUAL SIDE (T5: tab picker + generic tool sender)
+                 PREVIOUS CHATS (archived conversations)
             ================================================== -->
 
-            <section class="manual-panel">
+            <section class="chats-panel">
 
                 <h3>
-                    Manual
+                    Chats
                 </h3>
 
-
-                <label for="manual-tab-picker">
-                    Tab
-                </label>
-
-                <div class="manual-row">
-
-                    <select id="manual-tab-picker">
-                        <option value="">Active tab</option>
-                    </select>
-
-                    <button
-                        id="manual-refresh-tabs"
-                        class="secondary-button"
-                        type="button">
-                        Refresh
-                    </button>
-
+                <div id="chat-threads">
+                    <div class="thread-empty">No saved chats yet.</div>
                 </div>
 
-
-                <label for="manual-tool">
-                    Tool
-                </label>
-
-                <select id="manual-tool">
-                    <option value="capture_tab">capture_tab</option>
-                    <option value="read_page">read_page</option>
-                    <option value="list_interactive_elements">list_interactive_elements</option>
-                    <option value="list_tabs">list_tabs</option>
-                    <option value="click">click</option>
-                    <option value="type">type</option>
-                    <option value="select_option">select_option</option>
-                    <option value="submit">submit</option>
-                    <option value="scroll">scroll</option>
-                </select>
-
-
-                <label for="manual-params">
-                    Params (JSON)
-                </label>
-
-                <textarea
-                    id="manual-params"
-                    rows="3"
-                    spellcheck="false">{}</textarea>
-
-
-                <button
-                    id="manual-send"
-                    class="primary-button"
-                    type="button">
-                    Send
-                </button>
-
-
                 <small class="ws-hint">
-                    Results land in the Tool inspector, exactly as an
-                    agent would see them. The selected tab is injected
-                    as tabId (except list_tabs); pick Active tab to omit
-                    it. Destructive tools still gate in the extension.
+                    New chat archives the current one here.
                 </small>
 
             </section>
+
+
+            <!-- MANUAL + MODEL now live on their own page (page-manual-model).
+                 Kept out of the sidebar so the forms are no longer squished. -->
+
+
+            <!-- =================================================
+                 MODEL PROVIDER moved to page-manual-model too.
+            ================================================== -->
 
 
             <div class="version">
@@ -450,8 +401,12 @@ WEBSOCKET CONNECTION
             ================================================== -->
 
             <section class="workspace-grid">
- <!-- =================================================
-     CHAT PLAYGROUND
+
+            <!-- PAGE: CHAT (main landing page) -->
+            <div id="page-chat" class="page" data-page="chat">
+
+  <!-- =================================================
+      CHAT PLAYGROUND
 ================================================== -->
 
 <section
@@ -475,6 +430,14 @@ WEBSOCKET CONNECTION
     </div>
 
     <div class="chat-header-right">
+
+        <button
+            id="chat-new"
+            class="outline-button"
+            type="button"
+            title="Clear this conversation and start fresh">
+            + New chat
+        </button>
 
         <span
             id="privacy-chip"
@@ -547,6 +510,300 @@ WEBSOCKET CONNECTION
     </div>
 
 </section>
+
+            <!-- TOOL INSPECTOR (per-turn drawer on the Chat page) -->
+            <details id="inspector-drawer" class="panel inspector-drawer">
+
+                <summary class="inspector-summary">
+                    <span>Tool inspector</span>
+                    <small>per-turn request / response / reasoning</small>
+                </summary>
+
+                <section class="inspector-panel">
+
+
+                    <div class="inspector-tabs">
+
+
+                        <button
+                            class="inspector-tab active"
+                            data-tab="tool-request">
+
+                            Tool Request
+
+                        </button>
+
+
+                        <button
+                            class="inspector-tab"
+                            data-tab="tool-response">
+
+                            Tool Response
+
+                        </button>
+
+
+                        <button
+                            class="inspector-tab"
+                            data-tab="agent-reasoning">
+
+                            Agent Reasoning
+
+                        </button>
+
+                    </div>
+
+
+                    <!-- TOOL REQUEST -->
+
+                  <pre
+                      id="tool-request"
+                      class="inspector-content">Waiting for tool request...</pre>
+                    <!-- TOOL RESPONSE -->
+                    <pre
+                      id="tool-response"
+                      class="inspector-content hidden">Waiting for tool response...</pre>
+
+
+                    <!-- AGENT REASONING -->
+
+                    <div
+                        id="agent-reasoning"
+                        class="inspector-content hidden">
+
+                        <h3>
+                            Agent Decision
+                        </h3>
+
+                        <p>
+                            Waiting for the agent to determine
+                            the next action.
+                        </p>
+
+                    </div>
+
+                </section>
+
+            </details>
+
+            </div>
+            <!-- /PAGE: CHAT -->
+
+            <!-- PAGE: MANUAL & MODEL (un-squished two-card layout) -->
+            <div id="page-manual-model" class="page hidden" data-page="manual-model">
+
+            <section class="panel manual-page-card manual-panel">
+
+                <div class="panel-header">
+
+                    <div>
+
+                        <h2>
+                            Manual Tool Sender
+                        </h2>
+
+                        <span>
+                            Call any bridge tool directly
+                        </span>
+
+                    </div>
+
+                </div>
+
+                <div class="manual-page-body">
+
+                <label for="manual-tab-picker">
+                    Tab
+                </label>
+
+                <div class="manual-row">
+
+                    <select id="manual-tab-picker">
+                        <option value="">Active tab</option>
+                    </select>
+
+                    <button
+                        id="manual-refresh-tabs"
+                        class="secondary-button"
+                        type="button">
+                        Refresh
+                    </button>
+
+                </div>
+
+
+                <label for="manual-tool">
+                    Tool
+                </label>
+
+                <select id="manual-tool">
+                    <option value="capture_tab">capture_tab</option>
+                    <option value="read_page">read_page</option>
+                    <option value="list_interactive_elements">list_interactive_elements</option>
+                    <option value="list_tabs">list_tabs</option>
+                    <option value="click">click</option>
+                    <option value="type">type</option>
+                    <option value="select_option">select_option</option>
+                    <option value="submit">submit</option>
+                    <option value="scroll">scroll</option>
+                </select>
+
+
+                <label for="manual-params">
+                    Params (JSON)
+                </label>
+
+                <textarea
+                    id="manual-params"
+                    rows="6"
+                    spellcheck="false">{}</textarea>
+
+
+                <button
+                    id="manual-send"
+                    class="primary-button"
+                    type="button">
+                    Send
+                </button>
+
+
+                <small class="ws-hint">
+                    Results land in the Tool inspector, exactly as an
+                    agent would see them. The selected tab is injected
+                    as tabId (except list_tabs); pick Active tab to omit
+                    it. Destructive tools still gate in the extension.
+                </small>
+
+                </div>
+
+            </section>
+
+            <section class="panel model-page-card model-panel">
+
+                <div class="panel-header">
+
+                    <div>
+
+                        <h2>
+                            Model Provider
+                        </h2>
+
+                        <span>
+                            Chat-side reasoning backend
+                        </span>
+
+                    </div>
+
+                </div>
+
+                <div class="manual-page-body">
+
+                <label for="model-mode">
+                    Provider
+                </label>
+
+                <select id="model-mode">
+                    <option value="lmstudio">LM Studio (local)</option>
+                    <option value="ollama">Ollama (local)</option>
+                    <option value="custom">Custom URL (local)</option>
+                    <option value="cloud">Cloud API (via local forwarder)</option>
+                </select>
+
+
+                <label for="model-endpoint">
+                    Endpoint
+                </label>
+
+                <input
+                    id="model-endpoint"
+                    type="text"
+                    autocomplete="off"
+                    spellcheck="false">
+
+
+                <label for="model-name">
+                    Model name
+                </label>
+
+                <input
+                    id="model-name"
+                    type="text"
+                    autocomplete="off"
+                    spellcheck="false"
+                    placeholder="e.g. llama-3.1-8b-instruct">
+
+
+                <label for="model-key">
+                    API key (optional, stored locally, never displayed)
+                </label>
+
+                <input
+                    id="model-key"
+                    type="password"
+                    autocomplete="off"
+                    spellcheck="false"
+                    placeholder="leave empty for LM Studio / Ollama">
+
+
+                <div class="setting-item-row">
+                    <label class="switch-label">
+                        <input type="checkbox" id="model-vision">
+                        <span>Vision-capable (send capture images)</span>
+                    </label>
+                </div>
+
+
+                <div class="manual-row">
+
+                    <button
+                        id="model-save"
+                        class="secondary-button"
+                        type="button">
+                        Save
+                    </button>
+
+                    <button
+                        id="model-test"
+                        class="secondary-button"
+                        type="button">
+                        Test
+                    </button>
+
+                </div>
+
+
+                <small class="ws-hint" id="model-status">
+                    Not configured.
+                </small>
+
+                <small class="ws-hint">
+                    Ollama in a browser needs CORS enabled
+                    (OLLAMA_ORIGINS) or requests fail silently —
+                    use Test to confirm. LM Studio allows local
+                    origins by default. Keys are stored locally and
+                    never shown or logged.
+                </small>
+
+                <small class="ws-hint">
+                    Cloud API never talks to the provider from this
+                    page: start the local forwarder
+                    (<span class="mono">npm run forwarder</span>,
+                    <span class="mono">127.0.0.1:7339</span>), keep the
+                    endpoint field pointed at it, and put the key here
+                    once — it is posted straight to the forwarder and
+                    never kept in the page afterwards. The provider URL
+                    itself lives on the forwarder (env/file), not here.
+                </small>
+
+                </div>
+
+            </section>
+
+            </div>
+            <!-- /PAGE: MANUAL & MODEL -->
+
+            <!-- PAGE: SCREEN STATE -->
+            <div id="page-screen" class="page hidden" data-page="screen-state">
                 <!-- =================================================
                      SCREEN STATE
                 ================================================== -->
@@ -628,7 +885,7 @@ WEBSOCKET CONNECTION
                                 </small>
 
                                 <strong>
-                                    Browser Page
+                                    —
                                 </strong>
 
                             </div>
@@ -641,7 +898,7 @@ WEBSOCKET CONNECTION
                                 </small>
 
                                 <strong>
-                                    Current browser page
+                                    —
                                 </strong>
 
                             </div>
@@ -654,7 +911,7 @@ WEBSOCKET CONNECTION
                                 </small>
 
                                 <strong>
-                                    1
+                                    —
                                 </strong>
 
                             </div>
@@ -698,34 +955,20 @@ WEBSOCKET CONNECTION
 
 </details>
                         <!-- Elements table -->
+
 <div class="elements-table">
 
     <div class="table-header">
 
-        <span>ID</span>
-        <span>Type</span>
+        <span>Ref</span>
+        <span>Tag</span>
         <span>Label / Text</span>
-        <span>Value</span>
+        <span>Role</span>
         <span>BBox</span>
 
     </div>
 
-
-    <div class="table-row">
-
-        <span>el_8</span>
-
-        <span>button</span>
-
-        <span>Delete Account</span>
-
-        <span>—</span>
-
-        <span>
-            [620,350,180,48]
-        </span>
-
-    </div>
+    <!-- Rows render here from real list_interactive_elements responses only. -->
 
 </div>
 
@@ -734,10 +977,13 @@ WEBSOCKET CONNECTION
                     <pre
                         id="raw-json"
                         class="raw-json hidden"></pre>
-
                 </section>
 
+            </div>
+            <!-- /PAGE: SCREEN STATE -->
 
+            <!-- PAGE: AGENT STATE -->
+            <div id="page-agent" class="page hidden" data-page="agent-input">
                 <!-- =================================================
                      AGENT STATE
                 ================================================== -->
@@ -792,6 +1038,10 @@ WEBSOCKET CONNECTION
             </div>
 
         </div>
+
+
+        <div class="thinking-wordline"><span id="thinkingWord">Thinking…</span></div>
+        <div class="thinking-shimmer" aria-hidden="true"></div>
 
 
         <div
@@ -951,11 +1201,11 @@ WEBSOCKET CONNECTION
                         </div>
 
                         <strong>
-                            SAFE
+                            —
                         </strong>
 
                         <small>
-                            This action is allowed
+                            No action evaluated yet
                         </small>
 
                     </div>
@@ -963,15 +1213,11 @@ WEBSOCKET CONNECTION
                 </section>
 
 
-         
-            <!-- =================================================
-                 EVENT LOG + TOOL INSPECTOR
-            ================================================== -->
+            </div>
+            <!-- /PAGE: AGENT STATE -->
 
-            <section
-                id="action-logs"
-                class="bottom-content">
-
+            <!-- PAGE: LOGS (event log lives here now, off the main page) -->
+            <div id="page-logs" class="page hidden" data-page="logs">
 
                 <!-- EVENT LOG -->
 
@@ -1046,74 +1292,11 @@ WEBSOCKET CONNECTION
                 </section>
 
 
-                <!-- TOOL INSPECTOR -->
+            </div>
+            <!-- /PAGE: LOGS -->
 
-                <section class="panel inspector-panel">
-
-
-                    <div class="inspector-tabs">
-
-
-                        <button
-                            class="inspector-tab active"
-                            data-tab="tool-request">
-
-                            Tool Request
-
-                        </button>
-
-
-                        <button
-                            class="inspector-tab"
-                            data-tab="tool-response">
-
-                            Tool Response
-
-                        </button>
-
-
-                        <button
-                            class="inspector-tab"
-                            data-tab="agent-reasoning">
-
-                            Agent Reasoning
-
-                        </button>
-
-                    </div>
-
-
-                    <!-- TOOL REQUEST -->
-
-                  <pre
-                      id="tool-request"
-                      class="inspector-content">Waiting for tool request...</pre>
-                    <!-- TOOL RESPONSE -->
-                    <pre
-                      id="tool-response"
-                      class="inspector-content hidden">Waiting for tool response...</pre>
-
-
-                    <!-- AGENT REASONING -->
-
-                    <div
-                        id="agent-reasoning"
-                        class="inspector-content hidden">
-
-                        <h3>
-                            Agent Decision
-                        </h3>
-
-                        <p>
-                            Waiting for the agent to determine
-                            the next action.
-                        </p>
-
-                    </div>
-
-                </section>
-
-            </section>
+            <!-- PAGE: SETTINGS -->
+            <div id="page-settings" class="page hidden" data-page="settings">
 
             <!-- =================================================
                  SETTINGS WORKSPACE
@@ -1121,7 +1304,7 @@ WEBSOCKET CONNECTION
 
             <section
                 id="settings"
-                class="panel workspace-section hidden">
+                class="panel workspace-section">
 
 
                 <div class="panel-header">
@@ -1180,7 +1363,7 @@ WEBSOCKET CONNECTION
 
 
                         <span class="connection-label">
-                            ● Connected
+                            ○ Disconnected
                         </span>
 
                     </div>
@@ -1188,6 +1371,9 @@ WEBSOCKET CONNECTION
                 </div>
 
             </section>
+
+            </div>
+            <!-- /PAGE: SETTINGS -->
 
         </main>
 

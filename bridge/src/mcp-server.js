@@ -157,6 +157,30 @@ export async function startHttpServer(
   { port, host = "127.0.0.1", toolTimeoutMs, getPairing, getStatus } = {},
 ) {
   const app = express();
+  // Browser callers (the playground page) hit /mcp with a JSON POST, which
+  // triggers a CORS preflight. Without ACAO headers + an OPTIONS answer the
+  // browser blocks the call as "Failed to fetch" while curl/Node work fine —
+  // exactly the confusing split this middleware removes. Same localhost-only
+  // shape as the playground forwarder (D8): reflect local origins, answer
+  // preflights, add nothing for anyone else (non-browser callers unaffected).
+  // Strictly additive: no previously working caller changes behavior.
+  app.use((req, res, next) => {
+    const origin = req.headers.origin;
+    const local =
+      !origin || /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
+    if (local && origin) {
+      res.setHeader("Access-Control-Allow-Origin", origin);
+      res.setHeader("Vary", "Origin");
+    }
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Accept");
+    res.setHeader("Access-Control-Max-Age", "86400");
+    if (req.method === "OPTIONS") {
+      res.status(204).end();
+      return;
+    }
+    next();
+  });
   app.use(express.json({ limit: "50mb" }));
 
   app.get("/", (_req, res) => {

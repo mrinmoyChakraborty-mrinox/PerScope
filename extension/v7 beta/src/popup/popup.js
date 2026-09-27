@@ -61,6 +61,9 @@ const UI = {
   statTotalTime: document.getElementById("statTotalTime"),
   btnDownloadImage: document.getElementById("btnDownloadImage"),
   btnCopyClipboard: document.getElementById("btnCopyClipboard"),
+  btnCopyCaption: document.getElementById("btnCopyCaption"),
+  btnCopyAll: document.getElementById("btnCopyAll"),
+  btnCopyDomText: document.getElementById("btnCopyDomText"),
   btnDownloadEvidence: document.getElementById("btnDownloadEvidence"),
 };
 
@@ -487,13 +490,98 @@ UI.btnCopyClipboard.addEventListener("click", async () => {
     await navigator.clipboard.write([
       new ClipboardItem({ "image/png": redactedImageBlob }),
     ]);
-    const oldText = UI.btnCopyClipboard.textContent;
-    UI.btnCopyClipboard.textContent = "Copied!";
-    setTimeout(() => (UI.btnCopyClipboard.textContent = oldText), 1500);
+    flashCopied(UI.btnCopyClipboard);
   } catch (err) {
     alert("Clipboard copy error: " + err.message);
   }
 });
+
+// Single source for the displayed caption (same fallback chain as render).
+function currentCaption() {
+  return (
+    currentEvidence?.fastvlm_adjudication?.caption ||
+    currentEvidence?.global_description?.caption ||
+    (UI.captionText ? UI.captionText.textContent : "") ||
+    ""
+  ).trim();
+}
+
+function currentRedactedOcrText() {
+  return String(currentEvidence?.redaction?.redacted_ocr_text || "").trim();
+}
+
+function flashCopied(btn) {
+  if (!btn) return;
+  const oldText = btn.textContent;
+  btn.textContent = "Copied!";
+  setTimeout(() => (btn.textContent = oldText), 1500);
+}
+
+async function copyPlainText(text, btn) {
+  const value = String(text || "").trim();
+  if (!value) {
+    alert("Nothing to copy yet — run a capture first.");
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(value);
+    flashCopied(btn);
+  } catch (err) {
+    alert("Clipboard copy error: " + err.message);
+  }
+}
+
+if (UI.btnCopyCaption) {
+  UI.btnCopyCaption.addEventListener("click", () => copyPlainText(currentCaption(), UI.btnCopyCaption));
+}
+
+if (UI.btnCopyDomText) {
+  UI.btnCopyDomText.addEventListener("click", () =>
+    copyPlainText(UI.domRedactedText ? UI.domRedactedText.textContent : "", UI.btnCopyDomText)
+  );
+}
+
+// Combined copy: one clipboard item carrying the caption + redacted text as
+// text/plain AND the redacted image as image/png. Pasting into a text field
+// yields the text; pasting into an image target yields the image. Falls back
+// to text-only if the combined write is rejected.
+if (UI.btnCopyAll) {
+  UI.btnCopyAll.addEventListener("click", async () => {
+    const parts = [currentCaption(), currentRedactedOcrText()].filter(Boolean);
+    const text = parts.join("\n\n");
+    if (!text && !redactedImageBlob) {
+      alert("Nothing to copy yet — run a capture first.");
+      return;
+    }
+    try {
+      if (text && redactedImageBlob) {
+        await navigator.clipboard.write([
+          new ClipboardItem({
+            "text/plain": new Blob([text], { type: "text/plain" }),
+            "image/png": redactedImageBlob,
+          }),
+        ]);
+      } else if (redactedImageBlob) {
+        await navigator.clipboard.write([new ClipboardItem({ "image/png": redactedImageBlob })]);
+      } else {
+        await navigator.clipboard.writeText(text);
+      }
+      flashCopied(UI.btnCopyAll);
+    } catch (err) {
+      // Combined items can be picky per target — never leave the click empty.
+      try {
+        if (text) {
+          await navigator.clipboard.writeText(text);
+          flashCopied(UI.btnCopyAll);
+          return;
+        }
+        throw err;
+      } catch (fallbackErr) {
+        alert("Clipboard copy error: " + fallbackErr.message);
+      }
+    }
+  });
+}
 
 UI.btnDownloadEvidence.addEventListener("click", () => {
   if (!currentEvidence) return;
@@ -514,6 +602,9 @@ refreshBridgeLabel();
 async function refreshBridgeLabel() {
   const el = document.getElementById("bridgeStatusLabel");
   if (!el) return;
+  // The background waits for the restored pairing before answering,
+  // so show the in-between instead of a phantom "not running".
+  el.textContent = "connecting…";
   try {
     const res = await chrome.runtime.sendMessage({ target: "background", action: "BRIDGE_STATUS" });
     const b = res?.bridge;

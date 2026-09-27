@@ -48043,7 +48043,7 @@ async function loadNER(computeDevice) {
   if (_nerLoadPromise) return await _nerLoadPromise;
   _nerLoadPromise = (async () => {
     const modelId = await resolveNERModelPath();
-    const targetDevice = computeDevice.type === "webgpu" ? "webgpu" : "cpu";
+    const targetDevice = computeDevice.type === "webgpu" ? "webgpu" : "wasm";
     const webgpuSessionOptions = { executionProviders: ["webgpu"] };
     const wasmSessionOptions = { executionProviders: ["wasm"], intraOpNumThreads: 1, interOpNumThreads: 1 };
     console.log(`[NER] Loading Ettin NER: ${modelId} (${targetDevice})`);
@@ -48054,6 +48054,10 @@ async function loadNER(computeDevice) {
       model = await AutoModelForTokenClassification.from_pretrained(modelId, {
         dtype: "fp32",
         model_file_name: "model",
+        // Upstream repo is flat (model.onnx at root, no onnx/ subfolder —
+        // verified via HF API siblings). The from_pretrained default
+        // subfolder "onnx" 404s here; "" resolves to the repo root.
+        subfolder: "",
         device: targetDevice,
         session_options: targetDevice === "webgpu" ? webgpuSessionOptions : wasmSessionOptions
       });
@@ -48066,7 +48070,8 @@ async function loadNER(computeDevice) {
         model = await AutoModelForTokenClassification.from_pretrained(modelId, {
           dtype: "fp32",
           model_file_name: "model",
-          device: "cpu",
+          subfolder: "",
+          device: "wasm",
           session_options: wasmSessionOptions
         });
       } else {
@@ -48197,11 +48202,26 @@ async function runNER(ner, ocr) {
   }
   return findings;
 }
+function closeBitmap(bitmap) {
+  try {
+    if (bitmap && typeof bitmap.close === "function") bitmap.close();
+  } catch {
+  }
+}
+function disposeTensors(bag) {
+  if (!bag || typeof bag !== "object") return;
+  for (const value of Object.values(bag)) {
+    try {
+      value?.dispose?.();
+    } catch {
+    }
+  }
+}
 async function loadFastVLM(computeDevice) {
   if (_fastvlmCache) return _fastvlmCache;
   if (_fastvlmLoadPromise) return await _fastvlmLoadPromise;
   _fastvlmLoadPromise = (async () => {
-    const device = computeDevice.type === "webgpu" ? "webgpu" : "cpu";
+    const device = computeDevice.type === "webgpu" ? "webgpu" : "wasm";
     const sessionOptions = { executionProviders: device === "webgpu" ? ["webgpu"] : ["wasm"] };
     console.log(`[FASTVLM] Loading FastVLM 0.5B on ${computeDevice.label} (device: ${device})`);
     const processor = await AutoProcessor.from_pretrained(FASTVLM_MODEL);
@@ -48234,6 +48254,7 @@ async function prepareFastVLMImage(imageBlob) {
     const w = bitmap.width;
     const h = bitmap.height;
     if (!w || !h || w <= max2 && h <= max2) {
+      closeBitmap(bitmap);
       return await load_image(imageBlob);
     }
     const scale = Math.min(max2 / w, max2 / h);
@@ -48242,6 +48263,7 @@ async function prepareFastVLMImage(imageBlob) {
     const canvas = new OffscreenCanvas(targetW, targetH);
     const ctx = canvas.getContext("2d");
     ctx.drawImage(bitmap, 0, 0, targetW, targetH);
+    closeBitmap(bitmap);
     const resizedBlob = await canvas.convertToBlob({ type: "image/png" });
     console.log(`[FASTVLM] Resized image from ${w}x${h} to ${targetW}x${targetH} for stability`);
     return await load_image(resizedBlob);
@@ -48270,12 +48292,17 @@ async function runFastVLMAdjudication({ imageBlob, evidence, computeDevice }) {
     no_repeat_ngram_size: 3
   });
   const inputLength = Number(inputs?.input_ids?.dims?.at(-1) ?? 0);
+  disposeTensors(inputs);
   let outputText = "";
+  let generatedOnly = null;
   try {
-    const generatedOnly = inputLength > 0 ? generated.slice(null, [inputLength, null]) : generated;
+    generatedOnly = inputLength > 0 ? generated.slice(null, [inputLength, null]) : generated;
     outputText = fastvlm.processor.batch_decode(generatedOnly, { skip_special_tokens: true })[0] ?? "";
   } catch {
     outputText = fastvlm.processor.batch_decode(generated, { skip_special_tokens: true })[0] ?? "";
+  } finally {
+    if (generatedOnly && generatedOnly !== generated) disposeTensors({ generatedOnly });
+    disposeTensors({ generated });
   }
   outputText = String(outputText).trim();
   if (!outputText) throw new Error("FastVLM generated an empty response");
@@ -48333,18 +48360,61 @@ async function runExtensionPipeline(inputImage, options = {}, onProgress = null)
     _pipelineRunning = false;
   }
 }
+function heapSample() {
+  try {
+    const mem = performance.memory;
+    if (mem && typeof mem.usedJSHeapSize === "number") {
+      return { usedJSHeap: mem.usedJSHeapSize, totalJSHeap: mem.totalJSHeapSize };
+    }
+  } catch {
+  }
+  return null;
+}
+function buildStagePerf(marks) {
+  const starts = /* @__PURE__ */ new Map();
+  const out = [];
+  for (const m of marks) {
+    if (m.status === "START") {
+      if (!starts.has(m.stage)) starts.set(m.stage, m.at);
+    } else if (m.status === "SKIPPED") {
+      out.push({ stage: m.stage, status: "skipped", ms: null });
+      starts.delete(m.stage);
+    } else if (m.status === "DONE" || m.status === "ERROR") {
+      const s = starts.get(m.stage);
+      out.push({
+        stage: m.stage,
+        status: m.status === "DONE" ? "done" : "error",
+        ms: s !== void 0 ? Math.round(m.at - s) : null,
+        info: typeof m.info === "string" ? m.info : null
+      });
+      starts.delete(m.stage);
+    }
+  }
+  for (const [stage] of starts) out.push({ stage, status: "open", ms: null });
+  return out;
+}
 async function _runExtensionPipelineInner(inputImage, options = {}, onProgress = null) {
   const tTotalStart = performance.now();
+  const memBefore = heapSample();
+  const stageMarks = [];
   const emit = (stage, status, extra = {}) => {
     try {
+      let info;
+      try {
+        info = JSON.stringify(extra || {}).slice(0, 500);
+      } catch {
+        info = null;
+      }
+      stageMarks.push({ stage, status, at: performance.now(), info });
       onProgress?.({ stage, status, ...extra });
     } catch {
     }
   };
   emit("INIT", "START");
+  emit("DEVICE", "START");
   const computeDevice = await resolveComputeDevice(options.forceDeviceTier || null);
   configureOrtEnvironment(ort_bundle_min_exports, env2, computeDevice);
-  emit("DEVICE", "RESOLVED", { device: computeDevice });
+  emit("DEVICE", "DONE", { tier: computeDevice.tier });
   emit("IMAGE_DECODE", "START");
   let decoded = await decodeImageInput(inputImage);
   decoded = await capWorkingResolution(decoded);
@@ -48366,6 +48436,8 @@ async function _runExtensionPipelineInner(inputImage, options = {}, onProgress =
       emit("FACE", "ERROR", { error: err.message });
       faceFindings = [];
     }
+  } else {
+    emit("FACE", "SKIPPED", { reason: "Face disabled by user" });
   }
   emit("OCR", "START");
   const ocr = await runOCR(decoded.arrayBuffer);
@@ -48444,6 +48516,9 @@ async function _runExtensionPipelineInner(inputImage, options = {}, onProgress =
       emit("FASTVLM", "ERROR", { error: err.message });
     }
   } else {
+    emit("FASTVLM", "SKIPPED", {
+      reason: fastvlmEnabled ? "No candidates found" : "FastVLM disabled by user"
+    });
     fastvlmResult = {
       status: "skipped",
       reason: fastvlmEnabled ? "No candidates found" : "FastVLM disabled by user",
@@ -48477,19 +48552,25 @@ async function _runExtensionPipelineInner(inputImage, options = {}, onProgress =
   }));
   const redactedChunks = redactChunks(rawChunks, finalTextFindings);
   const redactedOcrText = redactedChunks.map((c) => c.text).join(" ");
-  const imageRedaction = await redactImageOnCanvas(decoded.imageBitmap, finalFindings, {
-    style: options.redactionStyle || "blur",
-    faceStyle: options.faceRedactionStyle || options.redactionStyle || "blur",
-    padding: options.padding ?? 2,
-    facePadding: options.facePadding ?? 3,
-    textBlurSigma: options.textBlurSigma ?? 12,
-    faceBlurSigma: options.faceBlurSigma ?? 14
-  });
+  let imageRedaction;
+  try {
+    imageRedaction = await redactImageOnCanvas(decoded.imageBitmap, finalFindings, {
+      style: options.redactionStyle || "blur",
+      faceStyle: options.faceRedactionStyle || options.redactionStyle || "blur",
+      padding: options.padding ?? 2,
+      facePadding: options.facePadding ?? 3,
+      textBlurSigma: options.textBlurSigma ?? 12,
+      faceBlurSigma: options.faceBlurSigma ?? 14
+    });
+  } finally {
+    closeBitmap(decoded.imageBitmap);
+  }
   emit("REDACT", "DONE", {
     textRegions: imageRedaction.textRegionsRedacted,
     faceRegions: imageRedaction.faceRegionsRedacted
   });
   const totalTimeMs = Math.round(performance.now() - tTotalStart);
+  const memAfter = heapSample();
   const _rawFallback = fastvlmResult?.raw && !String(fastvlmResult.raw).trim().startsWith("{") ? sanitizeCaption(String(fastvlmResult.raw).trim(), fastvlmEvidence) : null;
   const safeCaption = sanitizeCaption(fastvlmResult?.parsed?.caption || _rawFallback || "", fastvlmEvidence) || null;
   const evidenceOutput = {
@@ -48571,7 +48652,9 @@ async function _runExtensionPipelineInner(inputImage, options = {}, onProgress =
       redaction_complete: adjudication.redaction_complete
     },
     pipeline_perf: {
-      totalTimeMs
+      totalTimeMs,
+      stages: buildStagePerf(stageMarks),
+      memory: { before: memBefore, after: memAfter }
     }
   };
   const perceptionPrompt = buildPerceptionPrompt(evidenceOutput);
@@ -48647,6 +48730,47 @@ function mapDomCaptureToReadPage(capture) {
     sanitizedText: String(capture.redactedDocument ?? ""),
     findings
   };
+}
+
+// src/shared/is-destructive.js
+var DESTRUCTIVE_PATTERNS = [
+  /delete|remove|erase|destroy|wipe/i,
+  /buy|purchase|checkout|pay\b|payment|order\b/i,
+  /\bsend\b|\bsubmit\b|confirm|irreversible|permanent/i,
+  /cancel (order|subscription|account)|close account|deactivate/i,
+  /transfer|withdraw/i
+];
+var EXPLICITLY_SAFE_INPUT_TYPES = /* @__PURE__ */ new Set([
+  "text",
+  "search",
+  "email",
+  "tel",
+  "url",
+  "password",
+  "number"
+]);
+function isDestructive(action = {}) {
+  const reasons = [];
+  const { tool = "", label = "", text = "", inputType = "", isFormSubmit = false } = action;
+  const haystack = `${label} ${text}`.trim();
+  if (tool === "submit" || isFormSubmit) {
+    reasons.push("form-submit");
+  }
+  for (const re of DESTRUCTIVE_PATTERNS) {
+    if (re.test(haystack)) {
+      reasons.push(`keyword:${re.source.slice(0, 32)}`);
+      break;
+    }
+  }
+  if (tool === "type" || tool === "select_option") {
+    if (inputType && !EXPLICITLY_SAFE_INPUT_TYPES.has(String(inputType).toLowerCase())) {
+      reasons.push(`unknown-input-type:${inputType}`);
+    }
+  }
+  if (tool !== "click" && tool !== "type" && tool !== "select_option" && tool !== "submit") {
+    reasons.push(`unknown-tool:${tool || "(missing)"}`);
+  }
+  return { destructive: reasons.length > 0, reasons };
 }
 
 // src/offscreen/bridge-link.js
@@ -48895,13 +49019,44 @@ async function runPipelineJob({ jobId, imageBytes, options, onProgress }) {
     totalTimeMs: Math.round(performance.now() - t0)
   };
 }
-var DOM_DEFERRED = /* @__PURE__ */ new Set([
-  "click",
-  "type",
-  "select_option",
-  "submit",
-  "scroll"
-]);
+var APPROVAL_WAIT_MS = 6e4;
+function approvalVerdict({ tool, label, text, reasons }) {
+  let port;
+  try {
+    port = chrome.runtime.connect({ name: "perscope-approval" });
+  } catch (err) {
+    return Promise.resolve({ approved: false, error: err?.message || "approval-channel-failed" });
+  }
+  const id2 = `appr_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (value) => {
+      if (done) return;
+      done = true;
+      try {
+        port.disconnect();
+      } catch {
+      }
+      resolve(value);
+    };
+    const timer = setTimeout(() => finish({ approved: false, timeout: true }), APPROVAL_WAIT_MS);
+    port.onMessage.addListener((msg) => {
+      if (!msg || msg.id !== id2 || msg.action !== "APPROVAL_RESULT") return;
+      clearTimeout(timer);
+      finish({ approved: !!msg.approved, dismissed: !!msg.dismissed, error: msg.error });
+    });
+    port.onDisconnect.addListener(() => {
+      clearTimeout(timer);
+      finish({ approved: false, error: "approval-channel-closed" });
+    });
+    try {
+      port.postMessage({ action: "APPROVAL_REQUEST", id: id2, tool, label, text, reasons });
+    } catch (err) {
+      clearTimeout(timer);
+      finish({ approved: false, error: err?.message || "approval-channel-failed" });
+    }
+  });
+}
 async function handleBridgeTool({ tool, params }) {
   if (tool === "capture_tab") {
     if (params && params.tabId !== void 0 && params.tabId !== null) {
@@ -48981,12 +49136,87 @@ async function handleBridgeTool({ tool, params }) {
       return { status: "error", reason: err?.message || "element-listing-failed" };
     }
   }
-  if (DOM_DEFERRED.has(tool)) {
-    return {
-      status: "error",
-      reason: "dom-not-implemented-in-beta",
-      detail: `${tool} needs action execution (T6d scope). This beta serves capture_tab + read_page + list_interactive_elements only.`
-    };
+  if (tool === "scroll" || tool === "click" || tool === "type" || tool === "select_option" || tool === "submit") {
+    if (params && params.tabId !== void 0 && params.tabId !== null) {
+      return { status: "error", reason: "tab-targeting-requires-tabs-permission" };
+    }
+    if (tool === "type" && typeof params?.text !== "string") {
+      return { status: "error", reason: "bad-arguments" };
+    }
+    if (tool === "select_option" && typeof params?.value !== "string") {
+      return { status: "error", reason: "bad-arguments" };
+    }
+    if (tool === "scroll" && params?.direction !== "up" && params?.direction !== "down") {
+      return { status: "error", reason: "bad-arguments" };
+    }
+    if ((tool === "click" || tool === "submit") && (typeof params?.ref !== "string" || !params.ref)) {
+      return { status: "error", reason: "bad-arguments" };
+    }
+    if ((tool === "type" || tool === "select_option") && (typeof params?.ref !== "string" || !params.ref)) {
+      return { status: "error", reason: "bad-arguments" };
+    }
+    try {
+      if (tool === "scroll") {
+        const res = await chrome.runtime.sendMessage({
+          target: "background",
+          action: "REQUEST_EXECUTE",
+          tool,
+          direction: params.direction,
+          amount: params.amount
+        });
+        if (!res || res.status !== "SUCCESS") {
+          return { status: "error", reason: res?.error || "scroll-failed" };
+        }
+        return { status: "ok" };
+      }
+      const preview = await chrome.runtime.sendMessage({
+        target: "background",
+        action: "REQUEST_PREVIEW",
+        tool,
+        ref: params.ref
+      });
+      if (!preview || preview.status !== "SUCCESS" || !preview.preview) {
+        return { status: "error", reason: preview?.error || "preview-failed" };
+      }
+      const signals = preview.preview;
+      const execute = async () => {
+        const res = await chrome.runtime.sendMessage({
+          target: "background",
+          action: "REQUEST_EXECUTE",
+          tool,
+          ref: params.ref,
+          text: params.text,
+          value: params.value
+        });
+        if (!res || res.status !== "SUCCESS") {
+          return { status: "error", reason: res?.error || "action-failed" };
+        }
+        return { status: "ok", ref: params.ref };
+      };
+      const verdict = isDestructive({
+        tool,
+        label: signals.label || "",
+        text: signals.text || "",
+        inputType: signals.inputType || "",
+        isFormSubmit: !!signals.isFormSubmit
+      });
+      if (!verdict.destructive) return await execute();
+      const decision = await approvalVerdict({
+        tool,
+        label: signals.label || "",
+        text: signals.text || "",
+        reasons: verdict.reasons
+      });
+      if (!decision.approved) {
+        if (decision.timeout || decision.error === "approval-timed-out") {
+          return { status: "timeout", reason: "Approval timed out in the extension \u2014 not executed" };
+        }
+        return { status: "denied", reason: "Denied in the extension \u2014 not executed" };
+      }
+      return await execute();
+    } catch (err) {
+      return { status: "error", reason: err?.message || "action-failed" };
+    }
   }
   return { status: "error", reason: `unknown-tool:${tool}` };
 }

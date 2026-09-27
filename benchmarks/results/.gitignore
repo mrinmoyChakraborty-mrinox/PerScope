@@ -1,0 +1,5 @@
+# Raw per-run dumps are bulky and machine-oriented — they stay on disk
+# (and in backups) but out of git. benchmarks/latest.md is the tracked,
+# human-readable, cross-commit-diffable summary.
+*.json
+!fixtures/**/*.json
