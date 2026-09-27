@@ -1049,6 +1049,9 @@ var SECRET_LABEL_VOCABULARY = [
   { match: ["aadhaar", "aadhar", "uidai"], type: "AADHAAR" },
   { match: ["passport number", "passport no"], type: "PASSPORT_NUMBER" }
 ];
+function normalizeSecretLabel(text) {
+  return String(text ?? "").toLowerCase().replace(/[.\-_:;\/\\]+/g, " ").replace(/\s+/g, " ").trim();
+}
 function escapeRegExp(s) {
   return String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -1056,6 +1059,221 @@ var SECRET_LABEL_PATTERNS = SECRET_LABEL_VOCABULARY.map((entry) => {
   const alts = [...entry.match].sort((a, b) => b.length - a.length).map(escapeRegExp);
   return { type: entry.type, re: new RegExp(`\\b(?:${alts.join("|")})\\b`) };
 });
+function findSecretLabelMatch(text) {
+  const norm = normalizeSecretLabel(text);
+  if (!norm) return null;
+  for (const { type, re } of SECRET_LABEL_PATTERNS) {
+    const m = norm.match(re);
+    if (m) return { label: m[0], type };
+  }
+  return null;
+}
+function isPlausibleValueDom(text) {
+  const v = String(text ?? "").trim();
+  if (!v || v.length < 2 || v.length > 80) return false;
+  if (!/[a-z0-9]/i.test(v)) return false;
+  if (/^[.,:;\/\-_]+$/.test(v)) return false;
+  const words = v.split(/\s+/).filter(Boolean);
+  if (words.length > 8) return false;
+  if (words.length > 4 && /^[a-z\s.,?()'""]+$/i.test(v) && !/[\d@/_-]/.test(v)) return false;
+  return true;
+}
+function isBareLabelSegment(text) {
+  const norm = normalizeSecretLabel(text);
+  if (!norm || norm.length > 60) return null;
+  const hit = findSecretLabelMatch(norm);
+  if (!hit) return null;
+  const remainder = norm.replace(hit.label, "").replace(/[:\s]+/g, " ").trim();
+  if (remainder && isPlausibleValueDom(remainder)) return null;
+  return hit;
+}
+function hintTexts(hint) {
+  if (!hint || typeof hint !== "object") return [];
+  return [hint.labelText, hint.fieldName].filter((s) => typeof s === "string" && s.trim());
+}
+function associateLabelValues(segments) {
+  const input = Array.isArray(segments) ? segments : [];
+  const out = [];
+  const consumed = /* @__PURE__ */ new Set();
+  const pushValue = (seg, index, forcedType, forceReason) => {
+    consumed.add(index);
+    out.push({ ...seg, forceRedact: true, forceReason, forcedType });
+  };
+  for (let i = 0; i < input.length; i++) {
+    const seg = input[i];
+    if (!seg || typeof seg !== "object") continue;
+    if (consumed.has(i)) continue;
+    if (seg.kind === "form_value" && !seg.forceRedact && seg.structuralHint) {
+      const hintHit = findSecretLabelMatch(hintTexts(seg.structuralHint).join(" ")) || null;
+      if (hintHit) {
+        pushValue(seg, i, hintHit.type, `label-hint-${hintHit.label.replace(/\s+/g, "-")}`);
+        continue;
+      }
+      out.push(seg);
+      continue;
+    }
+    if (seg.kind !== "text" && seg.kind !== "attribute") {
+      out.push(seg);
+      continue;
+    }
+    const split = splitLabelValueSegment(seg);
+    if (split) {
+      out.push(split.labelSeg, split.valueSeg);
+      continue;
+    }
+    const bare = isBareLabelSegment(String(seg.text ?? ""));
+    if (bare) {
+      const target = nextSameBlockValue(input, i);
+      if (target) {
+        out.push(seg);
+        pushValue(target.seg, target.index, bare.type, `label-associated-neighbor:${bare.label.replace(/\s+/g, "-")}`);
+        continue;
+      }
+      out.push(seg);
+      continue;
+    }
+    out.push(seg);
+  }
+  return associateTableGroups(out);
+}
+function splitLabelValueSegment(seg) {
+  const text = String(seg.text ?? "");
+  const m = text.match(/^(.+?)\s*[:\uFF1A]\s*(.+)$/) || text.match(/^(.+?)\s{2,}(.+)$/);
+  if (!m) return null;
+  const labelPart = m[1].trim();
+  const valuePart = m[2].trim();
+  if (!labelPart || !valuePart) return null;
+  if (labelPart.length > 60) return null;
+  const hit = findSecretLabelMatch(labelPart);
+  if (!hit) return null;
+  if (!isPlausibleValueDom(valuePart)) return null;
+  const valueLabelHit = findSecretLabelMatch(valuePart);
+  if (valueLabelHit && !isPlausibleValueDom(valuePart.replace(valueLabelHit.label, ""))) {
+    return null;
+  }
+  return {
+    labelSeg: { ...seg, id: `${seg.id}~label`, text: labelPart },
+    valueSeg: {
+      ...seg,
+      id: `${seg.id}~value`,
+      text: valuePart,
+      forceRedact: true,
+      forceReason: `label-associated-split:${hit.label.replace(/\s+/g, "-")}`,
+      forcedType: hit.type
+    }
+  };
+}
+function nextSameBlockValue(segments, fromIndex) {
+  const labelSeg = segments[fromIndex];
+  const labelText = String(labelSeg.text ?? "");
+  const colonTerminated = /[:\uFF1A]\s*$/.test(labelText.trim());
+  const scope = scopeKey(labelSeg);
+  let skippedNav = 0;
+  let skippedLabel = 0;
+  let crossedScope = false;
+  let afterCross = 0;
+  let seenDots = false;
+  for (let j = fromIndex + 1; j < segments.length; j++) {
+    const cand = segments[j];
+    if (!cand || typeof cand !== "object") continue;
+    if (scopeKey(cand) !== scope) {
+      if (cand.kind === "form_value") return { seg: cand, index: j };
+      crossedScope = true;
+    } else if (crossedScope) {
+      afterCross += 1;
+      if (afterCross > 6) return null;
+    }
+    if (cand.kind === "form_value") return { seg: cand, index: j };
+    if (cand.kind === "text" || cand.kind === "attribute") {
+      const candText = String(cand.text ?? "").trim();
+      if (!candText) continue;
+      if (/[•*]{4,}/.test(candText)) {
+        seenDots = true;
+        continue;
+      }
+      const candTag = String(cand.tag || "");
+      if (candTag === "a" || candTag === "button") {
+        skippedNav += 1;
+        if (skippedNav + skippedLabel > 3) return null;
+        continue;
+      }
+      if (isBareLabelSegment(candText)) {
+        skippedLabel += 1;
+        if (skippedNav + skippedLabel > 3) return null;
+        continue;
+      }
+      if (!isPlausibleValueDom(candText)) {
+        if (candText.length <= 20) continue;
+        return null;
+      }
+      if (!colonTerminated && (skippedNav === 0 || skippedLabel > 0)) {
+        if (!(crossedScope && (seenDots || dotsAhead(segments, j)))) return null;
+      }
+      return { seg: cand, index: j };
+    }
+    return null;
+  }
+  return null;
+}
+function dotsAhead(segments, fromIndex) {
+  for (let k = fromIndex; k <= fromIndex + 3 && k < segments.length; k++) {
+    const seg = segments[k];
+    if (seg && typeof seg === "object" && /[•*]{4,}/.test(String(seg.text ?? ""))) return true;
+  }
+  return false;
+}
+function scopeKey(seg) {
+  const parts = String(seg.domPath ?? "").split("/");
+  if (parts.length <= 2) return parts.join("/");
+  return parts.slice(0, -2).join("/");
+}
+function associateTableGroups(segments) {
+  const forced = /* @__PURE__ */ new Set();
+  const forceTypeAt = /* @__PURE__ */ new Map();
+  const force = (index, type, label) => {
+    const seg = segments[index];
+    if (!seg || seg.forceRedact || forced.has(index)) return;
+    if (!isPlausibleValueDom(String(seg.text ?? ""))) return;
+    forced.add(index);
+    forceTypeAt.set(index, { type, label });
+  };
+  segments.forEach((seg, index) => {
+    if (!seg || typeof seg !== "object" || seg.forceRedact) return;
+    const header = seg.structuralHint && typeof seg.structuralHint.tableHeader === "string" ? seg.structuralHint.tableHeader : "";
+    if (header) {
+      const hit = findSecretLabelMatch(header);
+      if (hit && seg.tag !== "th" && String(seg.text ?? "").trim() !== header.trim()) {
+        force(index, hit.type, hit.label);
+        return;
+      }
+    }
+    if (seg.tag === "th") {
+      const hit = findSecretLabelMatch(String(seg.text ?? ""));
+      if (!hit) return;
+      const rowPrefix = trPrefix(seg.domPath);
+      if (!rowPrefix) return;
+      for (let j = index + 1; j < segments.length; j++) {
+        const cand = segments[j];
+        if (!cand || typeof cand !== "object") continue;
+        if (trPrefix(cand.domPath) !== rowPrefix) break;
+        if (cand.tag === "td" || cand.kind === "form_value") {
+          force(j, hit.type, hit.label);
+          break;
+        }
+      }
+    }
+  });
+  if (!forced.size) return segments;
+  return segments.map((seg, index) => {
+    if (!forced.has(index)) return seg;
+    const { type, label } = forceTypeAt.get(index);
+    return { ...seg, forceRedact: true, forceReason: `label-associated-table:${label.replace(/\s+/g, "-")}`, forcedType: type };
+  });
+}
+function trPrefix(domPath) {
+  const m = String(domPath ?? "").match(/^(.*\/tr\[\d+\])/);
+  return m ? m[1] : null;
+}
 
 // src/pipeline/dom-capture.js
 var IGNORED_TAGS = /* @__PURE__ */ new Set([
@@ -1778,7 +1996,8 @@ function captureThisFrame() {
   const { segments, skipped } = captureDOMSegments(rootDoc, {
     collectCrossOriginFrames: false
   });
-  const { segmentResults, findings } = runTier0OnSegments(segments, DETECTOR);
+  const associated = associateLabelValues(segments);
+  const { segmentResults, findings } = runTier0OnSegments(associated, DETECTOR);
   const redactedDocument = reconstructDocument(
     segmentResults.map((r) => ({ blockRole: r.segment.blockRole, redactedText: r.redactedText }))
   );

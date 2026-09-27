@@ -112,6 +112,38 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     ensureOffscreenDocument().then(() => sendResponse({ status: "SUCCESS" })).catch((err) => sendResponse({ status: "ERROR", error: err.message }));
     return true;
   }
+  const BRIDGE_READY_POLL_MS = 500;
+  const BRIDGE_READY_TIMEOUT_MS = 6e3;
+  async function queryOffscreenBridge() {
+    const res = await chrome.runtime.sendMessage({ target: "offscreen", action: "BRIDGE_STATUS" });
+    return res?.bridge || { connected: false, paired: false };
+  }
+  async function waitForBridgeReady() {
+    const deadline = Date.now() + BRIDGE_READY_TIMEOUT_MS;
+    let last = { connected: false, paired: false };
+    for (; ; ) {
+      try {
+        last = await queryOffscreenBridge();
+      } catch {
+        last = { connected: false, paired: false };
+      }
+      if (last.connected || Date.now() >= deadline) {
+        if (last.connected && !last.paired && Date.now() < deadline) {
+          const settleUntil = Math.min(Date.now() + 1500, deadline);
+          while (!last.paired && Date.now() < settleUntil) {
+            await new Promise((resolve) => setTimeout(resolve, BRIDGE_READY_POLL_MS));
+            try {
+              last = await queryOffscreenBridge();
+            } catch {
+              break;
+            }
+          }
+        }
+        return last;
+      }
+      await new Promise((resolve) => setTimeout(resolve, BRIDGE_READY_POLL_MS));
+    }
+  }
   if (message.action === "BRIDGE_STATUS_UPDATE") {
     updateBridgeBadge(message.status).catch(() => {
     });
@@ -121,10 +153,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     (async () => {
       try {
         await ensureOffscreenDocument();
-        const res = await chrome.runtime.sendMessage({ target: "offscreen", action: "BRIDGE_STATUS" });
-        if (res?.bridge) updateBridgeBadge(res.bridge).catch(() => {
+        const bridge = await waitForBridgeReady();
+        updateBridgeBadge(bridge).catch(() => {
         });
-        sendResponse({ status: "SUCCESS", bridge: res?.bridge || { connected: false, paired: false } });
+        sendResponse({ status: "SUCCESS", bridge });
       } catch (err) {
         sendResponse({ status: "SUCCESS", bridge: { connected: false, paired: false, error: err.message } });
       }
@@ -135,6 +167,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     (async () => {
       try {
         await ensureOffscreenDocument();
+        const ready = await waitForBridgeReady();
+        if (!ready.connected) {
+          sendResponse({ status: "SUCCESS", ok: false, reason: "no-connection" });
+          return;
+        }
         const res = await chrome.runtime.sendMessage({ target: "offscreen", action: "BRIDGE_PAIR", code: message.code });
         if (res?.ok) {
           updateBridgeBadge({ connected: true, paired: true }).catch(() => {

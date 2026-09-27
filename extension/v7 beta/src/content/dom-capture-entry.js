@@ -20,6 +20,7 @@
  */
 
 import { captureDOMSegments, runTier0OnSegments } from "../pipeline/dom-capture.js";
+import { associateLabelValues } from "../pipeline/dom-heuristics.js";
 import { reconstructDocument } from "../pipeline/dom-heuristics.js";
 import { enumerateInteractive } from "./refs.js";
 import { previewAction, executeAction } from "./actions.js";
@@ -45,15 +46,21 @@ function isTopFrame() {
 
 /**
  * Single-frame capture: walk this frame's document only (no iframe recursion
- * — the top frame coordinates), run Tier0, rebuild. Shared by the top frame
- * (for its own document) and child frames answering the collect channel.
+ * — the top frame coordinates), associate labels with values, run Tier0,
+ * rebuild. Shared by the top frame (for its own document) and child frames
+ * answering the collect channel.
+ *
+ * Association MUST run before Tier0 (same order as captureDOM()): random
+ * secrets carry no pattern signature, so without this step only
+ * pattern-matchable PII is caught and label-adjacent values leak verbatim.
  */
 function captureThisFrame() {
   const rootDoc = typeof document !== "undefined" ? document : null;
   const { segments, skipped } = captureDOMSegments(rootDoc, {
     collectCrossOriginFrames: false,
   });
-  const { segmentResults, findings } = runTier0OnSegments(segments, DETECTOR);
+  const associated = associateLabelValues(segments);
+  const { segmentResults, findings } = runTier0OnSegments(associated, DETECTOR);
   const redactedDocument = reconstructDocument(
     segmentResults.map((r) => ({ blockRole: r.segment.blockRole, redactedText: r.redactedText }))
   );

@@ -77,7 +77,6 @@ function updateDeviceTelemetry(device) {
     D.dashPulseDot.style.background = "#f59e0b";
   }
 }
-D.dashSelectDevice.addEventListener("change", initDashboardDevice);
 D.dashBtnUpload.addEventListener("click", () => D.dashFileInput.click());
 D.dashDropZone.addEventListener("click", () => D.dashFileInput.click());
 D.dashFileInput.addEventListener("change", () => {
@@ -237,9 +236,11 @@ D.dashBtnDownloadJSON.addEventListener("click", () => {
   URL.revokeObjectURL(url);
 });
 initDashboardDevice();
+var bridgeFirstPoll = true;
 async function refreshBridgeStatus() {
   const el = document.getElementById("dashBridgeStatus");
   const msg = document.getElementById("dashBridgeMsg");
+  if (bridgeFirstPoll && el) el.textContent = "Connecting\u2026";
   try {
     const res = await chrome.runtime.sendMessage({ target: "background", action: "BRIDGE_STATUS" });
     const b = res?.bridge;
@@ -247,6 +248,8 @@ async function refreshBridgeStatus() {
     if (msg && !msg.dataset.sticky) msg.textContent = "";
   } catch {
     if (el) el.textContent = "Bridge not running";
+  } finally {
+    bridgeFirstPoll = false;
   }
 }
 async function submitBridgePair() {
@@ -274,3 +277,49 @@ async function submitBridgePair() {
 document.getElementById("dashBridgePair")?.addEventListener("click", submitBridgePair);
 refreshBridgeStatus();
 setInterval(refreshBridgeStatus, 5e3);
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) refreshBridgeStatus();
+});
+var DASH_PREFS_KEY = "perscope.dashboard.prefs";
+async function saveDashboardPrefs() {
+  try {
+    await chrome.storage.local.set({
+      [DASH_PREFS_KEY]: {
+        device: D.dashSelectDevice?.value || "auto",
+        style: D.dashSelectStyle?.value || null,
+        fastvlm: !!D.dashCheckFastVLM?.checked,
+        face: !!D.dashCheckFace?.checked,
+        tab: D.tabBtnEvidence?.classList.contains("active") ? "evidence" : D.tabBtnPrompts?.classList.contains("active") ? "prompts" : "caption"
+      }
+    });
+  } catch {
+  }
+}
+async function restoreDashboardPrefs() {
+  try {
+    const stored = await chrome.storage.local.get([DASH_PREFS_KEY]);
+    const prefs = stored?.[DASH_PREFS_KEY];
+    if (!prefs || typeof prefs !== "object") return;
+    let deviceRestored = false;
+    if (D.dashSelectDevice && typeof prefs.device === "string") {
+      D.dashSelectDevice.value = prefs.device;
+      deviceRestored = true;
+    }
+    if (D.dashSelectStyle && typeof prefs.style === "string") D.dashSelectStyle.value = prefs.style;
+    if (D.dashCheckFastVLM) D.dashCheckFastVLM.checked = prefs.fastvlm !== false;
+    if (D.dashCheckFace) D.dashCheckFace.checked = prefs.face !== false;
+    if (prefs.tab === "evidence" || prefs.tab === "prompts" || prefs.tab === "caption") setTab(prefs.tab);
+    if (deviceRestored) initDashboardDevice();
+  } catch {
+  }
+}
+[D.dashSelectDevice, D.dashSelectStyle, D.dashCheckFastVLM, D.dashCheckFace].forEach((el) => {
+  el?.addEventListener("change", () => {
+    saveDashboardPrefs();
+    if (el === D.dashSelectDevice) initDashboardDevice();
+  });
+});
+[D.tabBtnCaption, D.tabBtnEvidence, D.tabBtnPrompts].forEach((el) => {
+  el?.addEventListener("click", () => saveDashboardPrefs());
+});
+restoreDashboardPrefs();

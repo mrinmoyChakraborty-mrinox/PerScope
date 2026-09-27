@@ -27,7 +27,9 @@
     "perception": "node v3.mjs",
     "redact": "node v3.mjs",
     "redact:pure-test": "node qwen_redaction_pure.mjs",
-    "pii": "node piidetector.js"
+    "pii": "node piidetector.js",
+    "benchmark": "node benchmarks/run.mjs",
+    "benchmark:self-test": "node benchmarks/run.mjs --self-test"
   },
   "dependencies": {
     "@huggingface/tokenizers": "^0.1.3",

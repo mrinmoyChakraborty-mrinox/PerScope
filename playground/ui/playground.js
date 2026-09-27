@@ -15,6 +15,7 @@ import {
 import {
     createRuntimeClient,
     DEFAULT_BRIDGE_URL,
+    TOKEN_KEY,
 } from "./runtime-client.js";
 
 import {
@@ -59,6 +60,205 @@ const runtime = createRuntimeClient({
 ========================================================= */
 
 const $ = (id) => document.getElementById(id);
+
+
+/* =========================================================
+   SESSION PERSISTENCE (survive page refresh)
+   =========================================================
+   One snapshot in localStorage; the bridge token and the model
+   config already persist in their own clients, this covers the
+   rest: bridge URL + autoconnect flag, active page, theme, manual
+   params, chat history, event log, and the demoState the screens
+   render from. Secrets discipline: the pairing code is one-time and
+   is never persisted; the model key stays inside model-client.
+   Heavy image blobs (redactedImage data URLs) are stripped before
+   writing so a capture can never blow the ~5MB storage quota. */
+
+const SESSION_KEY = "perscope.playground.session.v1";
+
+const MAX_STORED_EVENTS = 200;
+
+const MAX_STORED_CHAT = 100;
+
+let restoringSession = false;
+
+let activePage = "chat";
+
+let autoconnect = null;
+
+let chatHistory = [];
+
+/* Archived conversations (previous chats). The live transcript stays in
+   chatHistory; New chat / switching archives it here first. */
+let chatThreads = [];
+
+let activeThreadId = null;
+
+const MAX_STORED_THREADS = 20;
+
+const MAX_THREAD_MESSAGES = 50;
+
+let persistTimer = null;
+
+function stripHeavyResponse(response) {
+    if (!response || typeof response !== "object") {
+        return response;
+    }
+
+    const copy = Array.isArray(response)
+        ? [...response]
+        : { ...response };
+
+    delete copy.redactedImage;
+    delete copy.redacted_image;
+    delete copy.imageBase64;
+
+    if (copy.result && typeof copy.result === "object") {
+        copy.result = { ...copy.result };
+        delete copy.result.redactedImage;
+        delete copy.result.redacted_image;
+        delete copy.result.imageBase64;
+    }
+
+    return copy;
+}
+
+function readSession() {
+    try {
+        const raw = localStorage.getItem(SESSION_KEY);
+        if (!raw) {
+            return null;
+        }
+
+        const parsed = JSON.parse(raw);
+        return parsed && typeof parsed === "object"
+            ? parsed
+            : null;
+    } catch {
+        return null;
+    }
+}
+
+function persistSession() {
+    if (restoringSession) {
+        return;
+    }
+
+    try {
+        const paramsEl = $("manual-params");
+
+        syncActiveThread();
+
+        const snapshot = {
+            v: 1,
+            url: wsUrl?.value.trim() || serverUrl,
+            autoconnect,
+            page: activePage,
+            theme: document.body.classList.contains("light-theme")
+                ? "light"
+                : "dark",
+            manualParams: paramsEl ? paramsEl.value : "",
+            events: Array.isArray(demoState.events)
+                ? demoState.events.slice(-MAX_STORED_EVENTS)
+                : [],
+            chat: chatHistory.slice(-MAX_STORED_CHAT),
+            threads: chatThreads
+                .slice(0, MAX_STORED_THREADS)
+                .map((thread) => ({
+                    id: thread.id,
+                    title: thread.title,
+                    updatedAt: thread.updatedAt,
+                    messages: Array.isArray(thread.messages)
+                        ? thread.messages.slice(-MAX_THREAD_MESSAGES)
+                        : [],
+                })),
+            activeThreadId,
+            currentPage: demoState.currentPage || null,
+            lastTool: demoState.lastTool || null,
+            lastRequest: demoState.lastRequest || null,
+            lastResponse: stripHeavyResponse(demoState.lastResponse),
+            nextAction: demoState.nextAction || null,
+            latency: demoState.latency ?? null,
+        };
+
+        localStorage.setItem(
+            SESSION_KEY,
+            JSON.stringify(snapshot)
+        );
+    } catch {
+        // Storage full or unavailable: retry once with the heavy
+        // demoState dropped so at least chat + log + connection survive.
+        try {
+            const paramsEl = $("manual-params");
+
+            localStorage.setItem(
+                SESSION_KEY,
+                JSON.stringify({
+                    v: 1,
+                    url: wsUrl?.value.trim() || serverUrl,
+                    autoconnect,
+                    page: activePage,
+                    theme: document.body.classList.contains("light-theme")
+                        ? "light"
+                        : "dark",
+                    manualParams: paramsEl ? paramsEl.value : "",
+                    events: Array.isArray(demoState.events)
+                        ? demoState.events.slice(-MAX_STORED_EVENTS)
+                        : [],
+                    chat: chatHistory.slice(-MAX_STORED_CHAT),
+                    threads: [],
+                    activeThreadId: null,
+                    currentPage: null,
+                    lastTool: null,
+                    lastRequest: null,
+                    lastResponse: null,
+                    nextAction: null,
+                    latency: null,
+                })
+            );
+        } catch {
+            // Private mode / disabled storage: run memory-only.
+        }
+    }
+}
+
+function schedulePersist() {
+    if (restoringSession) {
+        return;
+    }
+
+    if (persistTimer) {
+        clearTimeout(persistTimer);
+    }
+
+    persistTimer = setTimeout(
+        () => {
+            persistTimer = null;
+            persistSession();
+        },
+        300
+    );
+}
+
+/* Keep the open thread's stored copy in step with the live transcript
+   so every checkpoint persists all conversations, not just the open one. */
+function syncActiveThread() {
+    if (!activeThreadId) {
+        return;
+    }
+
+    const thread = chatThreads.find(
+        (item) => item.id === activeThreadId
+    );
+
+    if (thread) {
+        thread.messages = chatHistory
+            .filter((item) => item && typeof item.message === "string")
+            .slice(-MAX_THREAD_MESSAGES);
+
+        thread.updatedAt = new Date().toISOString();
+    }
+}
 
 
 /* =========================================================
@@ -108,6 +308,26 @@ const chatStatus =
 const thinkingCard =
     $("thinkingCard");
 
+const thinkingWord =
+    $("thinkingWord");
+
+/* Thinking card home (Agent State page) + chat word cycler.
+   The card is reparented into #chat for the live turn — same trick as
+   the process-chat mock — then restored so Agent State keeps working. */
+const thinkingHome = {
+    parent: null,
+    next: null,
+};
+
+let thinkingWordTimer = null;
+
+const THINKING_WORDS = [
+    "Thinking…",
+    "Reasoning…",
+    "Planning…",
+    "Refining…",
+];
+
 
 const wsUrl =
     $("ws-url");
@@ -127,7 +347,7 @@ const wsStatus =
    BRIDGE CONNECTION (via runtime-client)
 ========================================================= */
 
-function connectToServer() {
+function connectToServer(auto = false) {
 
     const current = runtime.getStatus();
     if (current.connected) {
@@ -150,6 +370,11 @@ function connectToServer() {
 
     serverUrl = url;
 
+    /* A manual Start (or an auto-reconnect attempt) means "stay
+       connected across reloads" until the user presses Stop. */
+    autoconnect = true;
+    persistSession();
+
 
     console.log(
         `[UI] Connecting to ${serverUrl}...`
@@ -170,13 +395,27 @@ function connectToServer() {
             );
 
 
-            addEvent(
-                status.paired
-                    ? "Connected to bridge (paired)"
-                    : "Connected to bridge (not paired — enter a pairing code)",
-                status.paired ? "success" : "warning",
-                "Playground"
-            );
+            if (auto) {
+                addUIEvent(
+                    status.paired
+                        ? "Session restored — reconnected to bridge (paired)."
+                        : "Bridge reachable after reload, but pairing lapsed — enter a fresh code.",
+                    status.paired ? "success" : "warning",
+                    "Playground"
+                );
+            }
+
+            /* Manual connects render the generic line; auto-reconnects
+               already logged their own equivalent above. */
+            if (!auto) {
+                addUIEvent(
+                    status.paired
+                        ? "Connected to bridge (paired)"
+                        : "Connected to bridge (not paired — enter a pairing code)",
+                    status.paired ? "success" : "warning",
+                    "Playground"
+                );
+            }
 
         },
         (error) => {
@@ -228,6 +467,10 @@ function closeWebSocket() {
 
 
     runtime.disconnect();
+
+    /* Explicit Stop opts out of auto-reconnect on reload. */
+    autoconnect = false;
+    persistSession();
 
 
     updateServerStatus(
@@ -658,6 +901,11 @@ function addChatMessage(
         messageElement
     );
 
+    if (!restoringSession) {
+        chatHistory.push({ type, message });
+        schedulePersist();
+    }
+
     const chatWrap =
         $("chatWrap");
 
@@ -693,6 +941,12 @@ function setChatStep(step, state = "active") {
     );
 
     node.classList.add(state);
+
+    /* Staggered reveal (process-chat mock): a node only becomes visible
+       when it first activates; the CSS animates opacity/translate. */
+    node.classList.add(
+        "revealed"
+    );
 }
 function resetChatProcess() {
 
@@ -708,7 +962,8 @@ function resetChatProcess() {
                 "active",
                 "done",
                 "error",
-                "blocked"
+                "blocked",
+                "revealed"
             );
 
         }
@@ -721,9 +976,28 @@ function showThinkingCard() {
         return;
     }
 
+    /* Live turn: move the card into the chat stream under the latest
+       user message. */
+    if (
+        chat &&
+        thinkingCard.parentElement !== chat
+    ) {
+        thinkingHome.parent =
+            thinkingCard.parentElement;
+
+        thinkingHome.next =
+            thinkingCard.nextSibling;
+
+        chat.appendChild(
+            thinkingCard
+        );
+    }
+
     thinkingCard.classList.remove(
         "hidden"
     );
+
+    startThinkingWords();
 
 }
 
@@ -734,9 +1008,91 @@ function hideThinkingCard() {
         return;
     }
 
+    stopThinkingWords();
+
     thinkingCard.classList.add(
         "hidden"
     );
+
+}
+
+
+function restoreThinkingHome() {
+
+    stopThinkingWords();
+
+    if (
+        !thinkingCard ||
+        !thinkingHome.parent
+    ) {
+        return;
+    }
+
+    thinkingHome.parent.insertBefore(
+        thinkingCard,
+        thinkingHome.next
+    );
+
+    thinkingHome.parent = null;
+
+    thinkingHome.next = null;
+
+    /* Preserve the long-standing behavior: the card stays visible on
+       the Agent State page after a run (hide was never called). */
+    thinkingCard.classList.remove(
+        "hidden"
+    );
+
+}
+
+
+function startThinkingWords() {
+
+    stopThinkingWords();
+
+    if (!thinkingWord) {
+        return;
+    }
+
+    let index = 0;
+
+    const restart = () => {
+        thinkingWord.textContent =
+            THINKING_WORDS[index];
+
+        thinkingWord.style.animation =
+            "none";
+
+        void thinkingWord.offsetWidth;
+
+        thinkingWord.style.animation = "";
+    };
+
+    restart();
+
+    thinkingWordTimer = setInterval(
+        () => {
+            index =
+                (index + 1) %
+                THINKING_WORDS.length;
+
+            restart();
+        },
+        1200
+    );
+
+}
+
+
+function stopThinkingWords() {
+
+    if (thinkingWordTimer) {
+        clearInterval(
+            thinkingWordTimer
+        );
+
+        thinkingWordTimer = null;
+    }
 
 }
 function handleToolResponseError(
@@ -999,6 +1355,8 @@ updateNextActionUI(
 
     }
 
+    restoreThinkingHome();
+
 
     } catch (error) {
 
@@ -1040,6 +1398,8 @@ updateNextActionUI(
 
         }
 
+        restoreThinkingHome();
+
     } finally {
 
         chatSend.disabled =
@@ -1051,6 +1411,265 @@ updateNextActionUI(
 /* =========================================================
    CHAT CONTROLS
    ========================================================= */
+
+/* =========================================================
+   CHAT THREADS (previous conversations)
+   =========================================================
+   The live transcript stays in chatHistory; archived threads live in
+   chatThreads (newest first) and render in the sidebar Chats panel.
+   New chat / switching archives the open transcript first, so no
+   conversation is ever lost by starting another. */
+
+function threadTitleFor(messages) {
+    const firstUser = messages.find(
+        (item) => item && item.type === "user" && item.message
+    ) || messages.find((item) => item && item.message);
+
+    const text = String(firstUser?.message || "Chat").replace(/\s+/g, " ").trim();
+
+    return text.length > 42
+        ? text.slice(0, 42) + "…"
+        : text || "Chat";
+}
+
+function archiveCurrentThread() {
+    const clean = chatHistory.filter(
+        (item) => item && typeof item.message === "string"
+    );
+
+    if (clean.length === 0) {
+        return;
+    }
+
+    if (activeThreadId) {
+        /* Already an archived thread: update it in place, no duplicate. */
+        const thread = chatThreads.find(
+            (item) => item.id === activeThreadId
+        );
+
+        if (thread) {
+            thread.messages = clean.slice(-MAX_THREAD_MESSAGES);
+            thread.updatedAt = new Date().toISOString();
+        }
+
+        return;
+    }
+
+    chatThreads.unshift({
+        id: `t_${Date.now()}`,
+        title: threadTitleFor(clean),
+        updatedAt: new Date().toISOString(),
+        messages: clean.slice(-MAX_THREAD_MESSAGES),
+    });
+
+    chatThreads = chatThreads.slice(0, MAX_STORED_THREADS);
+}
+
+function renderChatStream() {
+    if (!chat) {
+        return;
+    }
+
+    const wasRestoring = restoringSession;
+    restoringSession = true;
+
+    try {
+        chat.innerHTML = "";
+
+        chatHistory.forEach((item) => {
+            addChatMessage(
+                item.message,
+                item.type === "user" ? "user" : "agent"
+            );
+        });
+    } finally {
+        restoringSession = wasRestoring;
+    }
+}
+
+function renderThreadList() {
+    const list = $("chat-threads");
+
+    if (!list) {
+        return;
+    }
+
+    list.innerHTML = "";
+
+    if (chatThreads.length === 0) {
+        const empty = document.createElement("div");
+        empty.className = "thread-empty";
+        empty.textContent = "No saved chats yet.";
+        list.appendChild(empty);
+        return;
+    }
+
+    chatThreads.forEach((thread) => {
+        const item = document.createElement("div");
+        item.className =
+            "thread-item" +
+            (thread.id === activeThreadId ? " active" : "");
+
+        const label = document.createElement("span");
+        label.textContent = thread.title || "Chat";
+        label.title = thread.title || "Chat";
+
+        const del = document.createElement("button");
+        del.className = "thread-del";
+        del.type = "button";
+        del.title = "Delete this chat";
+        del.textContent = "×";
+        del.dataset.threadDelete = thread.id;
+
+        item.appendChild(label);
+        item.appendChild(del);
+
+        item.dataset.threadLoad = thread.id;
+
+        list.appendChild(item);
+    });
+}
+
+function loadThread(id) {
+    if (!id || id === activeThreadId) {
+        return;
+    }
+
+    const thread = chatThreads.find((item) => item.id === id);
+
+    if (!thread) {
+        return;
+    }
+
+    archiveCurrentThread();
+
+    activeThreadId = id;
+
+    chatHistory = (Array.isArray(thread.messages) ? thread.messages : [])
+        .filter((item) => item && typeof item.message === "string")
+        .map((item) => ({
+            type: item.type === "user" ? "user" : "agent",
+            message: item.message,
+        }));
+
+    renderChatStream();
+    resetTurnSurfaces();
+    renderThreadList();
+
+    addUIEvent(
+        `Switched to chat: ${thread.title || "Chat"}.`,
+        "info",
+        "Playground"
+    );
+}
+
+function deleteThread(id) {
+    if (!id) {
+        return;
+    }
+
+    chatThreads = chatThreads.filter((item) => item.id !== id);
+
+    if (activeThreadId === id) {
+        activeThreadId = null;
+        chatHistory = [];
+        renderChatStream();
+        resetTurnSurfaces();
+    }
+
+    renderThreadList();
+    schedulePersist();
+}
+
+function resetTurnSurfaces() {
+
+    /* Thinking card back home (stops the word cycler); a turn that
+       is still running keeps its loop and lands its final answer in
+       the fresh stream — never a hang, never an orphan node. */
+    restoreThinkingHome();
+
+    resetChatProcess();
+
+    setNextAction(
+        "Waiting for agent..."
+    );
+
+    updateNextActionUI(
+        "-",
+        "-"
+    );
+
+    const validatorTitle =
+        document.querySelector(
+            ".validator > strong"
+        );
+
+    if (validatorTitle) {
+        validatorTitle.textContent = "—";
+        validatorTitle.style.color = "";
+    }
+
+    const validatorMessage =
+        document.querySelector(
+            ".validator > small"
+        );
+
+    if (validatorMessage) {
+        validatorMessage.textContent =
+            "No action evaluated yet";
+    }
+
+    if (toolRequest) {
+        toolRequest.textContent =
+            "Waiting for tool request...";
+    }
+
+    if (toolResponse) {
+        toolResponse.textContent =
+            "Waiting for tool response...";
+    }
+
+    if (agentReasoning) {
+        agentReasoning.innerHTML =
+            "<h3>Agent Decision</h3><p>Waiting for the agent to determine the next action.</p>";
+    }
+
+    document
+        .querySelector(
+            '.inspector-tab[data-tab="tool-request"]'
+        )
+        ?.click();
+
+    if (chatInput) {
+        chatInput.value = "";
+    }
+
+    if (chatStatus) {
+        chatStatus.textContent =
+            "Ready";
+    }
+
+}
+
+function clearChat() {
+
+    archiveCurrentThread();
+
+    activeThreadId = null;
+
+    chatHistory = [];
+
+    renderChatStream();
+    resetTurnSurfaces();
+    renderThreadList();
+
+    addUIEvent(
+        "Chat cleared — previous chat saved under Chats.",
+        "info",
+        "Playground"
+    );
+
+}
 
 function setupChat() {
 
@@ -1073,6 +1692,17 @@ function setupChat() {
 
         }
     );
+
+
+    const chatNew =
+        $("chat-new");
+
+    if (chatNew) {
+        chatNew.addEventListener(
+            "click",
+            clearChat
+        );
+    }
 
 
     chatInput.addEventListener(
@@ -1226,6 +1856,10 @@ function renderEventLog() {
             eventLog.parentElement.scrollHeight;
 
     }
+
+    /* Every rendered log mutation checkpoints the session (events +
+       the demoState the screens render from). */
+    schedulePersist();
 
 }
 
@@ -1493,6 +2127,26 @@ if (manualSendButton) {
    rendered or logged — status lines and events carry mode + outcome
    only, never URLs, names-as-secrets, or keys). Cloud mode is present
    but unwired pending the D8 key-handling decision. */
+
+/* Thread list clicks (delegated — rows re-render on every change). */
+const threadListEl = $("chat-threads");
+if (threadListEl) {
+    threadListEl.addEventListener("click", (event) => {
+        const del = event.target.closest("[data-thread-delete]");
+
+        if (del) {
+            event.stopPropagation();
+            deleteThread(del.dataset.threadDelete);
+            return;
+        }
+
+        const load = event.target.closest("[data-thread-load]");
+
+        if (load) {
+            loadThread(load.dataset.threadLoad);
+        }
+    });
+}
 
 const modelClient = createModelClient();
 
@@ -2125,87 +2779,78 @@ function setupNavigation() {
 
 
 /* =========================================================
-   NAVIGATION LOGIC
+   NAVIGATION LOGIC (real page router — one visible page)
 ========================================================= */
 
-function navigateToSection(section) {
-    const settingsPanel =
-        $("settings");
+const PAGE_IDS = [
+    "page-chat",
+    "page-manual-model",
+    "page-screen",
+    "page-agent",
+    "page-logs",
+    "page-settings",
+];
 
-    /* Main dashboard sections */
+function syncNavActive(key) {
+    document
+        .querySelectorAll(".nav-item")
+        .forEach((item) => {
+            const itemKey = item.dataset.section;
+            const normalized =
+                itemKey === "playground"
+                    ? "chat"
+                    : itemKey === "action-logs"
+                      ? "logs"
+                      : itemKey;
 
-    if (
-        section === "playground"
-    ) {
-
-        window.scrollTo({
-            top: 0,
-            behavior: "smooth"
+            item.classList.toggle(
+                "active",
+                normalized === key
+            );
         });
-
-        return;
-
-    }
-    if (
-        section === "screen-state"
-    ) {
-
-        scrollToElement(
-            $("screen-state")
-        );
-
-        return;
-
-    }
-
-
-    if (
-        section === "action-logs"
-    ) {
-
-        scrollToElement(
-            $("action-logs")
-        );
-
-        return;
-
-    }
-
-    if (
-        section === "settings"
-    ) {
-
-        settingsPanel.classList.remove(
-            "hidden"
-        );
-
-        scrollToElement(
-            settingsPanel
-        );
-
-        return;
-
-    }
-
 }
 
+function navigateToSection(section) {
+    /* Legacy aliases from the scroll era. */
+    const key =
+        section === "playground"
+            ? "chat"
+            : section === "action-logs"
+              ? "logs"
+              : section;
 
-/* =========================================================
-   SCROLL HELPER
-========================================================= */
+    const target =
+        document.querySelector(
+            `.page[data-page="${key}"]`
+        ) || $("page-chat");
 
-function scrollToElement(element) {
-
-    if (!element) {
-        return;
-    }
-
-
-    element.scrollIntoView({
-        behavior: "smooth",
-        block: "start"
+    PAGE_IDS.forEach((id) => {
+        const page = $(id);
+        if (page) {
+            page.classList.toggle(
+                "hidden",
+                page !== target
+            );
+        }
     });
 
+    activePage =
+        target.dataset.page || key;
+
+    syncNavActive(key);
+
+    schedulePersist();
+
+    const chatWrap = $("chatWrap");
+    if (chatWrap) {
+        chatWrap.scrollTop =
+            chatWrap.scrollHeight;
+    }
+
+    window.scrollTo({
+        top: 0,
+        behavior: "smooth"
+    });
 }
 /* =========================================================
    BUTTON EVENTS
@@ -2223,6 +2868,11 @@ function setupButtons() {
     themeToggle.addEventListener(
         "click",
         toggleTheme
+    );
+
+    themeToggle.addEventListener(
+        "click",
+        () => schedulePersist()
     );
 
   wsConnect.addEventListener(
@@ -2285,6 +2935,8 @@ if (wsPairButton) {
             try {
                 serverUrl = url;
                 await runtime.connect(serverUrl);
+                autoconnect = true;
+                persistSession();
             } catch (err) {
                 addUIEvent(
                     "Pair failed: bridge unreachable (" + (err?.message || err) + ") — click Start and retry.",
@@ -2311,6 +2963,8 @@ if (wsPairButton) {
             if (res?.ok) {
                 addUIEvent("Paired. Token stored for reconnects.", "success", "Playground");
                 if (codeEl) codeEl.value = "";
+                autoconnect = true;
+                persistSession();
             } else {
                 addUIEvent(
                     "Pair failed: " + pairFailureHint(res?.reason || "unknown"),
@@ -2336,6 +2990,134 @@ if (wsPairButton) {
 
 
 /* =========================================================
+   SESSION RESTORE (runs once at page load)
+   ========================================================= */
+
+const KNOWN_PAGES = [
+    "chat",
+    "manual-model",
+    "screen-state",
+    "agent-input",
+    "logs",
+    "settings",
+];
+
+function restoreSession() {
+    const saved = readSession();
+
+    if (!saved) {
+        return null;
+    }
+
+    restoringSession = true;
+
+    try {
+        if (typeof saved.url === "string" && saved.url && wsUrl) {
+            wsUrl.value = saved.url;
+            serverUrl = saved.url;
+        }
+
+        autoconnect = saved.autoconnect === true;
+
+        if (
+            saved.theme === "light" &&
+            !document.body.classList.contains("light-theme")
+        ) {
+            toggleTheme();
+        }
+
+        if (typeof saved.page === "string" && KNOWN_PAGES.includes(saved.page)) {
+            activePage = saved.page;
+        }
+
+        const paramsEl = $("manual-params");
+        if (paramsEl && typeof saved.manualParams === "string" && saved.manualParams) {
+            paramsEl.value = saved.manualParams;
+        }
+
+        if (Array.isArray(saved.events)) {
+            demoState.events = saved.events
+                .filter((event) => event && typeof event.message === "string")
+                .slice(-MAX_STORED_EVENTS);
+        }
+
+        if (saved.currentPage && typeof saved.currentPage === "object") {
+            demoState.currentPage = saved.currentPage;
+        }
+
+        if (saved.lastTool) {
+            demoState.lastTool = saved.lastTool;
+        }
+
+        if (saved.lastRequest && typeof saved.lastRequest === "object") {
+            demoState.lastRequest = saved.lastRequest;
+        }
+
+        if (saved.lastResponse && typeof saved.lastResponse === "object") {
+            demoState.lastResponse = saved.lastResponse;
+        }
+
+        if (Array.isArray(saved.threads)) {
+            chatThreads = saved.threads
+                .filter((thread) =>
+                    thread &&
+                    typeof thread.id === "string" &&
+                    Array.isArray(thread.messages)
+                )
+                .slice(0, MAX_STORED_THREADS)
+                .map((thread) => ({
+                    id: thread.id,
+                    title: String(thread.title || "Chat"),
+                    updatedAt: thread.updatedAt || null,
+                    messages: thread.messages
+                        .filter((item) => item && typeof item.message === "string")
+                        .slice(-MAX_THREAD_MESSAGES)
+                        .map((item) => ({
+                            type: item.type === "user" ? "user" : "agent",
+                            message: item.message,
+                        })),
+                }));
+        }
+
+        const savedActive = typeof saved.activeThreadId === "string"
+            ? saved.activeThreadId
+            : null;
+
+        activeThreadId = savedActive &&
+            chatThreads.some((thread) => thread.id === savedActive)
+            ? savedActive
+            : null;
+
+        /* Open transcript = the active thread if there is one, else the
+           legacy snapshot.chat fallback. */
+        const openMessages = activeThreadId
+            ? (chatThreads.find((thread) => thread.id === activeThreadId)?.messages || [])
+            : (Array.isArray(saved.chat) ? saved.chat : []);
+
+        chatHistory = openMessages
+            .filter((item) => item && typeof item.message === "string")
+            .slice(-MAX_STORED_CHAT)
+            .map((item) => ({
+                type: item.type === "user" ? "user" : "agent",
+                message: item.message,
+            }));
+
+        chatHistory.forEach((item) => {
+            addChatMessage(
+                item.message,
+                item.type
+            );
+        });
+
+        renderThreadList();
+    } finally {
+        restoringSession = false;
+    }
+
+    return saved;
+}
+
+/* =========================================================
    INITIALIZE
 ========================================================= */
 
@@ -2354,28 +3136,99 @@ function initialize() {
     );
 
 
+    /* Restore pre-existing snapshot BEFORE any render or placeholder
+       writes, so revived chat / log / screen state is not wiped. */
+    const savedSession = restoreSession();
+
+    /* "Session restored" only when real content came back (chat,
+       a tool result, a screen snapshot) — bare event history plus
+       the auto-reconnect line below already imply a reload. */
+    const hadContent =
+        !!savedSession &&
+        ((Array.isArray(savedSession.chat) &&
+            savedSession.chat.length > 0) ||
+            (Array.isArray(savedSession.threads) &&
+                savedSession.threads.length > 0) ||
+            !!savedSession.lastTool ||
+            !!(savedSession.currentPage &&
+                (savedSession.currentPage.title ||
+                    savedSession.currentPage.summary)));
+
     setupInspectorTabs();
 
     setupNavigation();
 
     setupButtons();
-    setupChat();  
-    if (toolRequest) {
+    setupChat();
+
+    /* Manual params persist while typing (debounced). */
+    const manualParamsEl = $("manual-params");
+    if (manualParamsEl) {
+        manualParamsEl.addEventListener(
+            "input",
+            () => schedulePersist()
+        );
+    }
+
+    if (!demoState.lastRequest && toolRequest) {
     toolRequest.textContent =
         "Waiting for tool request...";
 }
 
-if (toolResponse) {
+if (!demoState.lastResponse && toolResponse) {
     toolResponse.textContent =
         "Waiting for tool response...";
 }
+    if (demoState.lastRequest) {
+        showToolRequest(demoState.lastRequest);
+    }
+
+    if (demoState.lastResponse) {
+        showToolResponse(demoState.lastResponse);
+    }
+
     updatePrivacySummary();
 
+    updateRawJSON();
+
+    renderScreenState();
+
     renderEventLog();
-updateServerStatus(
-    false,
-    "Disconnected"
-);
+
+    navigateToSection(activePage);
+
+    if (hadContent) {
+        addUIEvent(
+            "Session restored from this browser (chat, log, screen state).",
+            "info",
+            "Playground"
+        );
+    }
+
+    updateServerStatus(
+        false,
+        "Disconnected"
+    );
+
+    /* Reconnect only when a previous Start/Pair opted in (false after
+       Stop, null on first visit). The stored bridge token re-pairs
+       silently via hello; if the daemon restarted, the token is
+       rejected and the UI lands on "reachable, not paired" so a fresh
+       code can be entered. No prior session and no token means first
+       visit — stay quiet. */
+    const autoUrl =
+        (wsUrl?.value || "").trim() || serverUrl;
+
+    let storedToken = null;
+    try {
+        storedToken = localStorage.getItem(TOKEN_KEY);
+    } catch {
+        storedToken = null;
+    }
+
+    if (autoconnect === true && autoUrl && (savedSession || storedToken)) {
+        connectToServer(true);
+    }
 
 }
 initialize();

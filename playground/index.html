@@ -102,18 +102,29 @@
 
 
             <!-- NAVIGATION -->
-
             <nav class="sidebar-nav">
 
                 <button
                     class="nav-item active"
-                    data-section="playground">
+                    data-section="chat">
 
-                    <span>⌂</span>
+                    <span>💬</span>
 
-                    Playground
+                    Chat
 
                 </button>
+
+
+                <button
+                    class="nav-item"
+                    data-section="manual-model">
+
+                    <span>🛠</span>
+
+                    Manual & Model
+
+                </button>
+
 
                 <button
                     class="nav-item"
@@ -138,11 +149,11 @@
 
                 <button
                     class="nav-item"
-                    data-section="action-logs">
+                    data-section="logs">
 
                     <span>☷</span>
 
-                    Action Logs
+                    Logs
 
                 </button>
 
@@ -342,15 +353,264 @@ WEBSOCKET CONNECTION
 
 
             <!-- =================================================
-                 MANUAL SIDE (T5: tab picker + generic tool sender)
+                 PREVIOUS CHATS (archived conversations)
             ================================================== -->
 
-            <section class="manual-panel">
+            <section class="chats-panel">
 
                 <h3>
-                    Manual
+                    Chats
                 </h3>
 
+                <div id="chat-threads">
+                    <div class="thread-empty">No saved chats yet.</div>
+                </div>
+
+                <small class="ws-hint">
+                    New chat archives the current one here.
+                </small>
+
+            </section>
+
+
+            <!-- MANUAL + MODEL now live on their own page (page-manual-model).
+                 Kept out of the sidebar so the forms are no longer squished. -->
+
+
+            <!-- =================================================
+                 MODEL PROVIDER moved to page-manual-model too.
+            ================================================== -->
+
+
+            <div class="version">
+                PerScope v1.0.0
+            </div>
+
+        </aside>
+
+
+        <!-- =================================================
+             MAIN DASHBOARD
+        ================================================== -->
+
+        <main class="dashboard">
+
+
+            <!-- =================================================
+                 PRIMARY WORKSPACE
+            ================================================== -->
+
+            <section class="workspace-grid">
+
+            <!-- PAGE: CHAT (main landing page) -->
+            <div id="page-chat" class="page" data-page="chat">
+
+  <!-- =================================================
+      CHAT PLAYGROUND
+================================================== -->
+
+<section
+    id="chat-panel"
+    class="panel chat-panel">
+
+    <!-- CHAT HEADER -->
+
+    <div class="panel-header chat-header">
+
+    <div>
+
+        <h2>
+            PerScope Chat
+        </h2>
+
+        <span>
+            Ask the browser agent to perform a task
+        </span>
+
+    </div>
+
+    <div class="chat-header-right">
+
+        <button
+            id="chat-new"
+            class="outline-button"
+            type="button"
+            title="Clear this conversation and start fresh">
+            + New chat
+        </button>
+
+        <span
+            id="privacy-chip"
+            class="privacy-chip">
+            🔒 sanitized-only
+        </span>
+
+        <span
+            id="chat-status"
+            class="chat-status">
+            Ready
+        </span>
+
+    </div>
+
+</div>
+
+
+    <!-- CHAT CONTENT -->
+
+    <div id="chatWrap">
+
+        <div id="chat">
+
+            <!-- Messages will be inserted here -->
+
+        </div>
+
+    <!-- =================================================
+         CHAT COMPOSER
+    ================================================== -->
+
+    <div class="chat-composer">
+
+        <textarea
+            id="chat-input"
+            rows="1"
+            placeholder="Ask PerScope to perform a task..."
+            aria-label="Chat input"></textarea>
+
+
+        <button
+            id="chat-send"
+            class="chat-send-button"
+            type="button">
+
+            <span>
+                Send
+            </span>
+
+            <span>
+                ↑
+            </span>
+
+        </button>
+
+    </div>
+
+
+    <div class="chat-hint">
+
+        <span>
+            Enter to send
+        </span>
+
+        <span>
+            Shift + Enter for a new line
+        </span>
+
+    </div>
+
+</section>
+
+            <!-- TOOL INSPECTOR (per-turn drawer on the Chat page) -->
+            <details id="inspector-drawer" class="panel inspector-drawer">
+
+                <summary class="inspector-summary">
+                    <span>Tool inspector</span>
+                    <small>per-turn request / response / reasoning</small>
+                </summary>
+
+                <section class="inspector-panel">
+
+
+                    <div class="inspector-tabs">
+
+
+                        <button
+                            class="inspector-tab active"
+                            data-tab="tool-request">
+
+                            Tool Request
+
+                        </button>
+
+
+                        <button
+                            class="inspector-tab"
+                            data-tab="tool-response">
+
+                            Tool Response
+
+                        </button>
+
+
+                        <button
+                            class="inspector-tab"
+                            data-tab="agent-reasoning">
+
+                            Agent Reasoning
+
+                        </button>
+
+                    </div>
+
+
+                    <!-- TOOL REQUEST -->
+
+                  <pre
+                      id="tool-request"
+                      class="inspector-content">Waiting for tool request...</pre>
+                    <!-- TOOL RESPONSE -->
+                    <pre
+                      id="tool-response"
+                      class="inspector-content hidden">Waiting for tool response...</pre>
+
+
+                    <!-- AGENT REASONING -->
+
+                    <div
+                        id="agent-reasoning"
+                        class="inspector-content hidden">
+
+                        <h3>
+                            Agent Decision
+                        </h3>
+
+                        <p>
+                            Waiting for the agent to determine
+                            the next action.
+                        </p>
+
+                    </div>
+
+                </section>
+
+            </details>
+
+            </div>
+            <!-- /PAGE: CHAT -->
+
+            <!-- PAGE: MANUAL & MODEL (un-squished two-card layout) -->
+            <div id="page-manual-model" class="page hidden" data-page="manual-model">
+
+            <section class="panel manual-page-card manual-panel">
+
+                <div class="panel-header">
+
+                    <div>
+
+                        <h2>
+                            Manual Tool Sender
+                        </h2>
+
+                        <span>
+                            Call any bridge tool directly
+                        </span>
+
+                    </div>
+
+                </div>
+
+                <div class="manual-page-body">
 
                 <label for="manual-tab-picker">
                     Tab
@@ -395,7 +655,7 @@ WEBSOCKET CONNECTION
 
                 <textarea
                     id="manual-params"
-                    rows="3"
+                    rows="6"
                     spellcheck="false">{}</textarea>
 
 
@@ -414,19 +674,29 @@ WEBSOCKET CONNECTION
                     it. Destructive tools still gate in the extension.
                 </small>
 
+                </div>
+
             </section>
 
+            <section class="panel model-page-card model-panel">
 
-            <!-- =================================================
-                 MODEL PROVIDER (chat-side reasoning backend)
-            ================================================== -->
+                <div class="panel-header">
 
-            <section class="model-panel">
+                    <div>
 
-                <h3>
-                    Model
-                </h3>
+                        <h2>
+                            Model Provider
+                        </h2>
 
+                        <span>
+                            Chat-side reasoning backend
+                        </span>
+
+                    </div>
+
+                </div>
+
+                <div class="manual-page-body">
 
                 <label for="model-mode">
                     Provider
@@ -525,125 +795,15 @@ WEBSOCKET CONNECTION
                     itself lives on the forwarder (env/file), not here.
                 </small>
 
+                </div>
+
             </section>
 
-
-            <div class="version">
-                PerScope v1.0.0
             </div>
+            <!-- /PAGE: MANUAL & MODEL -->
 
-        </aside>
-
-
-        <!-- =================================================
-             MAIN DASHBOARD
-        ================================================== -->
-
-        <main class="dashboard">
-
-
-            <!-- =================================================
-                 PRIMARY WORKSPACE
-            ================================================== -->
-
-            <section class="workspace-grid">
- <!-- =================================================
-     CHAT PLAYGROUND
-================================================== -->
-
-<section
-    id="chat-panel"
-    class="panel chat-panel">
-
-    <!-- CHAT HEADER -->
-
-    <div class="panel-header chat-header">
-
-    <div>
-
-        <h2>
-            PerScope Chat
-        </h2>
-
-        <span>
-            Ask the browser agent to perform a task
-        </span>
-
-    </div>
-
-    <div class="chat-header-right">
-
-        <span
-            id="privacy-chip"
-            class="privacy-chip">
-            🔒 sanitized-only
-        </span>
-
-        <span
-            id="chat-status"
-            class="chat-status">
-            Ready
-        </span>
-
-    </div>
-
-</div>
-
-
-    <!-- CHAT CONTENT -->
-
-    <div id="chatWrap">
-
-        <div id="chat">
-
-            <!-- Messages will be inserted here -->
-
-        </div>
-
-    <!-- =================================================
-         CHAT COMPOSER
-    ================================================== -->
-
-    <div class="chat-composer">
-
-        <textarea
-            id="chat-input"
-            rows="1"
-            placeholder="Ask PerScope to perform a task..."
-            aria-label="Chat input"></textarea>
-
-
-        <button
-            id="chat-send"
-            class="chat-send-button"
-            type="button">
-
-            <span>
-                Send
-            </span>
-
-            <span>
-                ↑
-            </span>
-
-        </button>
-
-    </div>
-
-
-    <div class="chat-hint">
-
-        <span>
-            Enter to send
-        </span>
-
-        <span>
-            Shift + Enter for a new line
-        </span>
-
-    </div>
-
-</section>
+            <!-- PAGE: SCREEN STATE -->
+            <div id="page-screen" class="page hidden" data-page="screen-state">
                 <!-- =================================================
                      SCREEN STATE
                 ================================================== -->
@@ -817,10 +977,13 @@ WEBSOCKET CONNECTION
                     <pre
                         id="raw-json"
                         class="raw-json hidden"></pre>
-
                 </section>
 
+            </div>
+            <!-- /PAGE: SCREEN STATE -->
 
+            <!-- PAGE: AGENT STATE -->
+            <div id="page-agent" class="page hidden" data-page="agent-input">
                 <!-- =================================================
                      AGENT STATE
                 ================================================== -->
@@ -875,6 +1038,10 @@ WEBSOCKET CONNECTION
             </div>
 
         </div>
+
+
+        <div class="thinking-wordline"><span id="thinkingWord">Thinking…</span></div>
+        <div class="thinking-shimmer" aria-hidden="true"></div>
 
 
         <div
@@ -1046,15 +1213,11 @@ WEBSOCKET CONNECTION
                 </section>
 
 
-         
-            <!-- =================================================
-                 EVENT LOG + TOOL INSPECTOR
-            ================================================== -->
+            </div>
+            <!-- /PAGE: AGENT STATE -->
 
-            <section
-                id="action-logs"
-                class="bottom-content">
-
+            <!-- PAGE: LOGS (event log lives here now, off the main page) -->
+            <div id="page-logs" class="page hidden" data-page="logs">
 
                 <!-- EVENT LOG -->
 
@@ -1129,74 +1292,11 @@ WEBSOCKET CONNECTION
                 </section>
 
 
-                <!-- TOOL INSPECTOR -->
+            </div>
+            <!-- /PAGE: LOGS -->
 
-                <section class="panel inspector-panel">
-
-
-                    <div class="inspector-tabs">
-
-
-                        <button
-                            class="inspector-tab active"
-                            data-tab="tool-request">
-
-                            Tool Request
-
-                        </button>
-
-
-                        <button
-                            class="inspector-tab"
-                            data-tab="tool-response">
-
-                            Tool Response
-
-                        </button>
-
-
-                        <button
-                            class="inspector-tab"
-                            data-tab="agent-reasoning">
-
-                            Agent Reasoning
-
-                        </button>
-
-                    </div>
-
-
-                    <!-- TOOL REQUEST -->
-
-                  <pre
-                      id="tool-request"
-                      class="inspector-content">Waiting for tool request...</pre>
-                    <!-- TOOL RESPONSE -->
-                    <pre
-                      id="tool-response"
-                      class="inspector-content hidden">Waiting for tool response...</pre>
-
-
-                    <!-- AGENT REASONING -->
-
-                    <div
-                        id="agent-reasoning"
-                        class="inspector-content hidden">
-
-                        <h3>
-                            Agent Decision
-                        </h3>
-
-                        <p>
-                            Waiting for the agent to determine
-                            the next action.
-                        </p>
-
-                    </div>
-
-                </section>
-
-            </section>
+            <!-- PAGE: SETTINGS -->
+            <div id="page-settings" class="page hidden" data-page="settings">
 
             <!-- =================================================
                  SETTINGS WORKSPACE
@@ -1204,7 +1304,7 @@ WEBSOCKET CONNECTION
 
             <section
                 id="settings"
-                class="panel workspace-section hidden">
+                class="panel workspace-section">
 
 
                 <div class="panel-header">
@@ -1271,6 +1371,9 @@ WEBSOCKET CONNECTION
                 </div>
 
             </section>
+
+            </div>
+            <!-- /PAGE: SETTINGS -->
 
         </main>
 

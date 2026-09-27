@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>bench: text-heavy invoice</title>
+<style>
+  body { font-family: Georgia, serif; max-width: 760px; margin: 32px auto; color: #111; line-height: 1.5; }
+  h1 { font-size: 26px; border-bottom: 3px double #333; padding-bottom: 8px; }
+  table { width: 100%; border-collapse: collapse; margin: 16px 0; }
+  th, td { border: 1px solid #999; padding: 6px 10px; text-align: left; font-size: 14px; }
+  .meta { display: flex; justify-content: space-between; font-size: 14px; }
+</style>
+</head>
+<body>
+<h1>Invoice INV-2026-0481 — Acme Widgets Ltd.</h1>
+<div class="meta">
+  <div>Billed to:<br><strong>Eleanor Rigby</strong><br>14 Penny Lane, Liverpool L18 1DG<br>eleanor.rigby@example.com<br>+1-555-014-2288</div>
+  <div>Invoice date: 03/14/2026<br>Due date: 04/13/2026<br>Order ref: WB-1904-SC-3524<br>VAT ID: GB 123 4567 89</div>
+</div>
+<table>
+  <tr><th>Item</th><th>Qty</th><th>Unit price</th><th>Total</th></tr>
+  <tr><td>Copper widget, 12mm</td><td>40</td><td>$12.50</td><td>$500.00</td></tr>
+  <tr><td>Brass gasket set</td><td>12</td><td>$84.00</td><td>$1,008.00</td></tr>
+  <tr><td>On-site calibration visit</td><td>1</td><td>$350.00</td><td>$350.00</td></tr>
+</table>
+<p>Payment due within 30 days. Card on file ending <strong>4111</strong> will be charged
+<strong>$1,858.00</strong> on 04/13/2026. Questions? Call accounts on +1-555-019-3344 or write to
+billing@example.org. Authorized signatory: <strong>Marcus Chen</strong>, Finance Director,
+DOB 09/27/1981, employee ID MC-4471.</p>
+<p>Ship to: 88 Harbor View Apartments, Apt 4B, Springfield, IL 62704, United States.
+Tracking: 1Z 999 999 99 9999 999 9. Notes: deliver after 5pm, gate code 4410, dog on premises.</p>
+<p>Previous balance $212.40 (paid 02/28/2026, ref PAY-88112). Late fee 1.5% per month applies.
+This is a synthetic benchmark fixture — all names, numbers and addresses are fictitious.</p>
+</body>
+</html>

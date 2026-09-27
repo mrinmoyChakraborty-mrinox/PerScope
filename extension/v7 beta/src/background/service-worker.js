@@ -151,6 +151,52 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   // workers suspend and kill sockets; offscreen stays alive). The worker
   // only relays dashboard/popup callers and owns the action badge, so a
   // missing/dead bridge never affects Human Mode flows above.
+  //
+  // Readiness race: ensureOffscreenDocument() resolves at creation, not
+  // readiness — a fresh offscreen still needs ~1s for WS open + hello
+  // with the stored token. Answering instantly would report
+  // {connected:false} on every dashboard refresh, i.e. a phantom
+  // disconnect/unpair. waitForBridgeReady() polls until the link
+  // connects (restored pairing included) or the budget runs out, so
+  // callers see the true state on first paint.
+
+  const BRIDGE_READY_POLL_MS = 500;
+  const BRIDGE_READY_TIMEOUT_MS = 6000;
+
+  async function queryOffscreenBridge() {
+    const res = await chrome.runtime.sendMessage({ target: "offscreen", action: "BRIDGE_STATUS" });
+    return res?.bridge || { connected: false, paired: false };
+  }
+
+  async function waitForBridgeReady() {
+    const deadline = Date.now() + BRIDGE_READY_TIMEOUT_MS;
+    let last = { connected: false, paired: false };
+    for (;;) {
+      try {
+        last = await queryOffscreenBridge();
+      } catch {
+        // Offscreen still booting (receiving end missing) — keep waiting.
+        last = { connected: false, paired: false };
+      }
+      if (last.connected || Date.now() >= deadline) {
+        if (last.connected && !last.paired && Date.now() < deadline) {
+          // Socket up but hello may still be in flight — brief settle so
+          // a restored pairing doesn't flicker as "not paired".
+          const settleUntil = Math.min(Date.now() + 1500, deadline);
+          while (!last.paired && Date.now() < settleUntil) {
+            await new Promise((resolve) => setTimeout(resolve, BRIDGE_READY_POLL_MS));
+            try {
+              last = await queryOffscreenBridge();
+            } catch {
+              break;
+            }
+          }
+        }
+        return last;
+      }
+      await new Promise((resolve) => setTimeout(resolve, BRIDGE_READY_POLL_MS));
+    }
+  }
 
   if (message.action === "BRIDGE_STATUS_UPDATE") {
     updateBridgeBadge(message.status).catch(() => {});
@@ -161,9 +207,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     (async () => {
       try {
         await ensureOffscreenDocument();
-        const res = await chrome.runtime.sendMessage({ target: "offscreen", action: "BRIDGE_STATUS" });
-        if (res?.bridge) updateBridgeBadge(res.bridge).catch(() => {});
-        sendResponse({ status: "SUCCESS", bridge: res?.bridge || { connected: false, paired: false } });
+        const bridge = await waitForBridgeReady();
+        updateBridgeBadge(bridge).catch(() => {});
+        sendResponse({ status: "SUCCESS", bridge });
       } catch (err) {
         sendResponse({ status: "SUCCESS", bridge: { connected: false, paired: false, error: err.message } });
       }
@@ -175,6 +221,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     (async () => {
       try {
         await ensureOffscreenDocument();
+        // Wait for the socket first: pairing the instant after a refresh
+        // must not fail with a phantom "no-connection".
+        const ready = await waitForBridgeReady();
+        if (!ready.connected) {
+          sendResponse({ status: "SUCCESS", ok: false, reason: "no-connection" });
+          return;
+        }
         const res = await chrome.runtime.sendMessage({ target: "offscreen", action: "BRIDGE_PAIR", code: message.code });
         if (res?.ok) {
           updateBridgeBadge({ connected: true, paired: true }).catch(() => {});

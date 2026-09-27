@@ -763,10 +763,61 @@ export async function runExtensionPipeline(inputImage, options = {}, onProgress 
   }
 }
 
+/* Benchmark instrumentation (additive only — never alters control flow).
+   Stage marks piggyback the existing progress emit() calls, so per-stage
+   latency and tier-escalation tracking cost nothing at runtime and cannot
+   change pipeline behavior. heapSample() is guarded: non-Chromium
+   runtimes get memory:null instead of a throw. */
+function heapSample() {
+  try {
+    const mem = performance.memory;
+    if (mem && typeof mem.usedJSHeapSize === "number") {
+      return { usedJSHeap: mem.usedJSHeapSize, totalJSHeap: mem.totalJSHeapSize };
+    }
+  } catch {}
+  return null;
+}
+
+function buildStagePerf(marks) {
+  const starts = new Map();
+  const out = [];
+  for (const m of marks) {
+    if (m.status === "START") {
+      if (!starts.has(m.stage)) starts.set(m.stage, m.at);
+    } else if (m.status === "SKIPPED") {
+      out.push({ stage: m.stage, status: "skipped", ms: null });
+      starts.delete(m.stage);
+    } else if (m.status === "DONE" || m.status === "ERROR") {
+      const s = starts.get(m.stage);
+      out.push({
+        stage: m.stage,
+        status: m.status === "DONE" ? "done" : "error",
+        ms: s !== undefined ? Math.round(m.at - s) : null,
+        info: typeof m.info === "string" ? m.info : null,
+      });
+      starts.delete(m.stage);
+    }
+  }
+  for (const [stage] of starts) out.push({ stage, status: "open", ms: null });
+  return out;
+}
+
 async function _runExtensionPipelineInner(inputImage, options = {}, onProgress = null) {
   const tTotalStart = performance.now();
+  const memBefore = heapSample();
+  const stageMarks = [];
   const emit = (stage, status, extra = {}) => {
     try {
+      // info is a size-capped copy of the progress payload (counts, not
+      // content) so stage records are self-diagnosing: itemsCount next to
+      // ms exposes fast-path vs measurement artifacts without new hooks.
+      let info;
+      try {
+        info = JSON.stringify(extra || {}).slice(0, 500);
+      } catch {
+        info = null;
+      }
+      stageMarks.push({ stage, status, at: performance.now(), info });
       onProgress?.({ stage, status, ...extra });
     } catch {}
   };
@@ -774,9 +825,10 @@ async function _runExtensionPipelineInner(inputImage, options = {}, onProgress =
   emit("INIT", "START");
 
   // 1. Device Resolution (Dedicated GPU -> Integrated GPU -> CPU Fallback)
+  emit("DEVICE", "START");
   const computeDevice = await resolveComputeDevice(options.forceDeviceTier || null);
   configureOrtEnvironment(Ort, env, computeDevice);
-  emit("DEVICE", "RESOLVED", { device: computeDevice });
+  emit("DEVICE", "DONE", { tier: computeDevice.tier });
 
   // 2. Decode Image
   emit("IMAGE_DECODE", "START");
@@ -803,6 +855,8 @@ async function _runExtensionPipelineInner(inputImage, options = {}, onProgress =
       emit("FACE", "ERROR", { error: err.message });
       faceFindings = [];
     }
+  } else {
+    emit("FACE", "SKIPPED", { reason: "Face disabled by user" });
   }
 
   /* ---------------- OCR ---------------- */
@@ -892,6 +946,9 @@ async function _runExtensionPipelineInner(inputImage, options = {}, onProgress =
       emit("FASTVLM", "ERROR", { error: err.message });
     }
   } else {
+    emit("FASTVLM", "SKIPPED", {
+      reason: fastvlmEnabled ? "No candidates found" : "FastVLM disabled by user",
+    });
     fastvlmResult = {
       status: "skipped",
       reason: fastvlmEnabled ? "No candidates found" : "FastVLM disabled by user",
@@ -953,6 +1010,9 @@ async function _runExtensionPipelineInner(inputImage, options = {}, onProgress =
   });
 
   const totalTimeMs = Math.round(performance.now() - tTotalStart);
+  // Post-cleanup sample: bitmaps are closed in the redact finally-block
+  // above, so this is the steady number — residue here is a leak signal.
+  const memAfter = heapSample();
 
   // Centralized display caption: parsed.caption is already sanitized at the
   // source, but the raw-prose fallback below is NOT — scrub it here so no
@@ -1044,6 +1104,8 @@ async function _runExtensionPipelineInner(inputImage, options = {}, onProgress =
     },
     pipeline_perf: {
       totalTimeMs,
+      stages: buildStagePerf(stageMarks),
+      memory: { before: memBefore, after: memAfter },
     },
   };
 

@@ -549,3 +549,36 @@ test("association: link between label and value does not break pairing (reported
   assert.ok(out.redactedDocument.includes("Forgot password?"), "link text must stay visible");
   assert.ok(out.redactedDocument.includes("Hide password"), "toggle text must stay visible");
 });
+
+test("association: cross-scope text value next to mask dots is forced (custom-component leak)", () => {
+  // Live PullO shape: <label> element nests the label one level deeper than
+  // a bare div, so scopeKey puts label and value in different scopes while
+  // the shown secret renders as plain text beside a dots run.
+  const doc = makeDocument(
+    el("body", {}, [
+      el("div", {}, [el("label", { for: "pw" }, ["Password"])]),
+      el("div", {}, [
+        el("span", {}, ["mw1er2s3-live"]),
+        el("span", {}, ["\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022"]),
+        el("button", {}, ["Hide password"]),
+      ]),
+    ])
+  );
+  const out = captureDOM(doc, detector, { NodeFilter: NF });
+  assert.ok(!JSON.stringify(out).includes("mw1er2s3-live"), "cross-scope password text leaked");
+  assert.ok(out.findings.some((f) => f.type === "PASSWORD" && f.forceRedacted));
+  assert.ok(out.redactedDocument.includes("<PASSWORD>"));
+  assert.ok(out.redactedDocument.includes("Hide password"), "toggle text must stay visible");
+});
+
+test("association: prose after a secret header without dots stays visible (no over-redaction)", () => {
+  const doc = makeDocument(
+    el("body", {}, [
+      el("div", {}, [el("h2", {}, ["Password"])]),
+      el("div", {}, [el("p", {}, ["Welcome back to your account"])]),
+    ])
+  );
+  const out = captureDOM(doc, detector, { NodeFilter: NF });
+  assert.ok(out.redactedDocument.includes("Welcome back"), "benign prose must not be masked");
+  assert.ok(!out.findings.some((f) => f.type === "PASSWORD" && f.forceRedacted));
+});

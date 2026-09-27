@@ -48360,18 +48360,61 @@ async function runExtensionPipeline(inputImage, options = {}, onProgress = null)
     _pipelineRunning = false;
   }
 }
+function heapSample() {
+  try {
+    const mem = performance.memory;
+    if (mem && typeof mem.usedJSHeapSize === "number") {
+      return { usedJSHeap: mem.usedJSHeapSize, totalJSHeap: mem.totalJSHeapSize };
+    }
+  } catch {
+  }
+  return null;
+}
+function buildStagePerf(marks) {
+  const starts = /* @__PURE__ */ new Map();
+  const out = [];
+  for (const m of marks) {
+    if (m.status === "START") {
+      if (!starts.has(m.stage)) starts.set(m.stage, m.at);
+    } else if (m.status === "SKIPPED") {
+      out.push({ stage: m.stage, status: "skipped", ms: null });
+      starts.delete(m.stage);
+    } else if (m.status === "DONE" || m.status === "ERROR") {
+      const s = starts.get(m.stage);
+      out.push({
+        stage: m.stage,
+        status: m.status === "DONE" ? "done" : "error",
+        ms: s !== void 0 ? Math.round(m.at - s) : null,
+        info: typeof m.info === "string" ? m.info : null
+      });
+      starts.delete(m.stage);
+    }
+  }
+  for (const [stage] of starts) out.push({ stage, status: "open", ms: null });
+  return out;
+}
 async function _runExtensionPipelineInner(inputImage, options = {}, onProgress = null) {
   const tTotalStart = performance.now();
+  const memBefore = heapSample();
+  const stageMarks = [];
   const emit = (stage, status, extra = {}) => {
     try {
+      let info;
+      try {
+        info = JSON.stringify(extra || {}).slice(0, 500);
+      } catch {
+        info = null;
+      }
+      stageMarks.push({ stage, status, at: performance.now(), info });
       onProgress?.({ stage, status, ...extra });
     } catch {
     }
   };
   emit("INIT", "START");
+  emit("DEVICE", "START");
   const computeDevice = await resolveComputeDevice(options.forceDeviceTier || null);
   configureOrtEnvironment(ort_bundle_min_exports, env2, computeDevice);
-  emit("DEVICE", "RESOLVED", { device: computeDevice });
+  emit("DEVICE", "DONE", { tier: computeDevice.tier });
   emit("IMAGE_DECODE", "START");
   let decoded = await decodeImageInput(inputImage);
   decoded = await capWorkingResolution(decoded);
@@ -48393,6 +48436,8 @@ async function _runExtensionPipelineInner(inputImage, options = {}, onProgress =
       emit("FACE", "ERROR", { error: err.message });
       faceFindings = [];
     }
+  } else {
+    emit("FACE", "SKIPPED", { reason: "Face disabled by user" });
   }
   emit("OCR", "START");
   const ocr = await runOCR(decoded.arrayBuffer);
@@ -48471,6 +48516,9 @@ async function _runExtensionPipelineInner(inputImage, options = {}, onProgress =
       emit("FASTVLM", "ERROR", { error: err.message });
     }
   } else {
+    emit("FASTVLM", "SKIPPED", {
+      reason: fastvlmEnabled ? "No candidates found" : "FastVLM disabled by user"
+    });
     fastvlmResult = {
       status: "skipped",
       reason: fastvlmEnabled ? "No candidates found" : "FastVLM disabled by user",
@@ -48522,6 +48570,7 @@ async function _runExtensionPipelineInner(inputImage, options = {}, onProgress =
     faceRegions: imageRedaction.faceRegionsRedacted
   });
   const totalTimeMs = Math.round(performance.now() - tTotalStart);
+  const memAfter = heapSample();
   const _rawFallback = fastvlmResult?.raw && !String(fastvlmResult.raw).trim().startsWith("{") ? sanitizeCaption(String(fastvlmResult.raw).trim(), fastvlmEvidence) : null;
   const safeCaption = sanitizeCaption(fastvlmResult?.parsed?.caption || _rawFallback || "", fastvlmEvidence) || null;
   const evidenceOutput = {
@@ -48603,7 +48652,9 @@ async function _runExtensionPipelineInner(inputImage, options = {}, onProgress =
       redaction_complete: adjudication.redaction_complete
     },
     pipeline_perf: {
-      totalTimeMs
+      totalTimeMs,
+      stages: buildStagePerf(stageMarks),
+      memory: { before: memBefore, after: memAfter }
     }
   };
   const perceptionPrompt = buildPerceptionPrompt(evidenceOutput);
