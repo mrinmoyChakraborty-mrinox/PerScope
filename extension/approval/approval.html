@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>PerScope — Approve action</title>
+<style>
+  :root { color-scheme: dark; }
+  body {
+    margin: 0; padding: 20px;
+    font: 13px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+    background: #0f172a; color: #e2e8f0;
+  }
+  h1 { font-size: 15px; margin: 0 0 4px; color: #fbbf24; }
+  .sub { color: #94a3b8; font-size: 12px; margin-bottom: 14px; }
+  .card {
+    background: #1e293b; border: 1px solid #334155; border-radius: 8px;
+    padding: 12px 14px; margin-bottom: 12px; overflow-wrap: break-word;
+  }
+  .card .k { color: #94a3b8; font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; }
+  .card .v { font-family: ui-monospace, Consolas, monospace; font-size: 12.5px; margin-top: 2px; }
+  #countdown { color: #94a3b8; font-size: 12px; margin-bottom: 14px; }
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  button {
+    min-height: 42px; border-radius: 8px; font-size: 14px; font-weight: 700;
+    border: 1px solid transparent; cursor: pointer;
+  }
+  #approve { background: #065f46; border-color: #10b981; color: #ecfdf5; }
+  #deny { background: #7f1d1d; border-color: #ef4444; color: #fef2f2; }
+  button:active { transform: translateY(1px); }
+  .note { margin-top: 12px; font-size: 11.5px; color: #94a3b8; }
+</style>
+</head>
+<body>
+  <h1>⚠ Agent action needs approval</h1>
+  <div class="sub">PerScope blocks this until you decide. Closing this window denies it.</div>
+  <div class="card"><div class="k">Tool</div><div class="v" id="f-tool">—</div></div>
+  <div class="card"><div class="k">Target</div><div class="v" id="f-target">—</div></div>
+  <div class="card"><div class="k">Why approval</div><div class="v" id="f-reasons">—</div></div>
+  <div id="countdown">Expires in 55s</div>
+  <div class="row">
+    <button id="approve" type="button">Approve</button>
+    <button id="deny" type="button">Deny</button>
+  </div>
+  <div class="note">Deny (or expiry) ends the agent's turn — it cannot retry on its own.</div>
+  <script src="approval.js"></script>
+</body>
+</html>

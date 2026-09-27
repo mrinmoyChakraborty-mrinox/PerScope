@@ -863,7 +863,7 @@ document.getElementById("btnNewCapture").addEventListener("click", resetView);
 
 document.getElementById("btnOpenDashboard").addEventListener("click", () => {
   if (hasExtensionAPIs) {
-    chrome.tabs.create({ url: chrome.runtime.getURL("dashboard.html") });
+    chrome.tabs.create({ url: chrome.runtime.getURL("dashboard/dashboard.html") });
   } else {
     window.open(window.location.href, "_blank");
   }
