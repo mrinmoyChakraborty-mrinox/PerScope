@@ -50,13 +50,21 @@ body {
 .brand-icon {
   width: 36px;
   height: 36px;
-  background: linear-gradient(135deg, #3b82f6, #06b6d4);
+  background: transparent;
   border-radius: 8px;
   display: flex;
   align-items: center;
   justify-content: center;
   color: white;
-  box-shadow: 0 4px 14px rgba(59, 130, 246, 0.35);
+  overflow: hidden;
+}
+
+.brand-icon img {
+  width: 36px;
+  height: 36px;
+  object-fit: contain;
+  border-radius: 8px;
+  display: block;
 }
 
 .brand-info h2 {

@@ -22,7 +22,8 @@ import readline from "node:readline";
 import { execSync } from "node:child_process";
 import { checkHealth, callTool, listTabs, DEFAULT_MCP_URL, DEFAULT_HEALTH_URL } from "./lib/mcp-client.mjs";
 import { startFixtureServer } from "./lib/serve.mjs";
-import { summarize, summarizeStages, slope, percentile, round1 } from "./lib/stats.mjs";
+import { summarize, summarizeStages, slope, percentile, round1, median } from "./lib/stats.mjs";
+import { sampleChromeCpuSeconds } from "./lib/cpu.mjs";
 import { writeResults, renderLatestMd, stampName } from "./lib/report.mjs";
 
 const HERE = path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1"));
@@ -40,7 +41,6 @@ export const FIXTURES = [
   { id: "ambiguous", file: "ambiguous.html", exercises: "masked/partial PII strings; forces Tier 2 adjudication" },
 ];
 
-const LEAK_SLOPE_KB_PER_RUN = 256;
 const LEAK_TOTAL_KB = 1024;
 
 function parseArgs(argv) {
@@ -55,6 +55,10 @@ function parseArgs(argv) {
     gapMs: 2000,
     yes: false,
     selfTest: false,
+    // Phase 4: offscreen recycle override forwarded as capture_tab's
+    // recycleAfterCaptures. null = omit (extension default 15). 0 = never
+    // recycle (Phase 3 correlation run: recycling would mask degradation).
+    recycleAfter: null,
     fixturesRoot: DEFAULT_FIXTURES_ROOT,
     resultsDir: DEFAULT_RESULTS_DIR,
     latestFile: DEFAULT_LATEST_FILE,
@@ -76,6 +80,7 @@ function parseArgs(argv) {
     else if (key === "--mcp-url") out.mcpUrl = v;
     else if (key === "--timeout-ms") out.timeoutMs = parseInt(v, 10) || 600_000;
     else if (key === "--gap-ms") out.gapMs = Math.max(0, parseInt(v, 10) || 0);
+    else if (key === "--recycle-after") out.recycleAfter = v === "" ? null : Math.max(0, parseInt(v, 10) || 0);
     else if (key === "--fixtures-root") out.fixturesRoot = v;
     else if (key === "--results-dir") out.resultsDir = v;
     else if (key === "--latest-file") out.latestFile = v;
@@ -83,9 +88,10 @@ function parseArgs(argv) {
     else if (key === "--self-test") out.selfTest = true;
     else if (key === "--help" || key === "-h") {
       console.log(
-        `usage: npm run benchmark -- [--runs=20] [--fixtures=all|id,...] [--port=7341]\n` +
+          `usage: npm run benchmark -- [--runs=20] [--fixtures=all|id,...] [--port=7341]\n` +
           `  [--mcp-url=...] [--timeout-ms=600000] [--gap-ms=2000] [--yes]\n` +
-          `  [--fixtures-root=...] [--results-dir=...] [--latest-file=...] [--self-test]`,
+          `  [--fixtures-root=...] [--results-dir=...] [--latest-file=...] [--self-test]\n` +
+          `  [--recycle-after=N] (offscreen recycle override: 0 = never, omit = default 15)`,
       );
       process.exit(0);
     } else throw new Error(`unknown flag ${a} (see --help)`);
@@ -144,8 +150,16 @@ function extractRun(result, wallMs) {
   const memBefore = mem.before?.usedJSHeap ?? null;
   const memAfter = mem.after?.usedJSHeap ?? null;
   const device = evidence.compute_device || result.computeDevice || {};
+  // A run whose stages errored out is "degraded": it completed at the top
+  // level but its timings describe a failure fast-path, not the pipeline.
+  // INIT is excluded (it never emits DONE by design - see buildStagePerf).
+  const degradedStages = stages
+    .filter((s) => (s.status === "error" || s.status === "open") && s.stage !== "INIT")
+    .map((s) => `${s.stage}(${s.status})`);
   return {
     ok: true,
+    degraded: degradedStages.length > 0,
+    degradedStages,
     wallMs: Math.round(wallMs),
     totalMs: typeof perf.totalTimeMs === "number" ? perf.totalTimeMs : null,
     stages: stages.map((s) => ({ stage: s.stage, status: s.status, ms: s.ms, info: s.info || null })),
@@ -163,40 +177,63 @@ function extractRun(result, wallMs) {
     entityTypes: evidence.redaction?.entity_types_found || [],
     adjudication: evidence.redaction?.adjudication_status || null,
     fallback: evidence.fastvlm_adjudication?.fallback ?? evidence.redaction?.fallback ?? null,
+    gpuEvents: Array.isArray(perf.gpuEvents) ? perf.gpuEvents.slice(0, 50) : [],
   };
 }
 
 /* ---- aggregation ---- */
 
 function aggregateFixture(fixture, cold, steady) {
-  const ok = steady.filter((r) => r.ok);
+  // Steady stats cover clean runs only: failed runs errored at the top
+  // level, degraded runs finished on a failure fast-path (their ~3s
+  // totals would otherwise masquerade as miraculous latency). Both are
+  // counted and flagged, never silently averaged in.
+  const ok = steady.filter((r) => r.ok && !r.degraded);
+  const degraded = steady.filter((r) => r.ok && r.degraded);
+  const degradedStageCounts = {};
+  for (const r of degraded) for (const s of r.degradedStages) degradedStageCounts[s] = (degradedStageCounts[s] || 0) + 1;
   const totals = ok.map((r) => r.totalMs).filter((v) => typeof v === "number");
   const stageStats = summarizeStages(ok);
   const memSamp = ok.filter((r) => r.memBefore !== null && r.memAfter !== null);
   const deltas = memSamp.map((r) => r.memDelta);
+  const baselines = memSamp.map((r) => r.memAfter);
   const slopeBytes = slope(memSamp.map((r, i) => ({ x: i, y: r.memAfter })));
   const slopeKB = slopeBytes === null ? null : round1(slopeBytes / 1024);
   const growthKB = memSamp.length > 1 ? round1((memSamp[memSamp.length - 1].memAfter - memSamp[0].memAfter) / 1024) : 0;
+  // Robust drift: median(second half baselines) - median(first half).
+  // Least-squares slope alone is fragile on n=5 with GC plunges (one
+  // -26MB collection flips its sign); both must agree for a verdict.
+  let driftKB = null;
+  if (baselines.length >= 4) {
+    const mid = Math.floor(baselines.length / 2);
+    driftKB = round1((median(baselines.slice(mid)) - median(baselines.slice(0, mid))) / 1024);
+  }
   let verdict = "n/a (memory sampling unavailable)";
-  if (memSamp.length > 1) {
+  if (memSamp.length === 1) verdict = "single sample - no drift measurable";
+  else if (memSamp.length > 1 && driftKB === null) verdict = `too few samples for drift (slope ${slopeKB}KB/run)`;
+  else if (driftKB !== null) {
     verdict =
-      slopeKB > LEAK_SLOPE_KB_PER_RUN && growthKB > LEAK_TOTAL_KB
-        ? `LEAK SIGNAL - heap grows ~${slopeKB}KB/run (+${growthKB}KB total)`
-        : `stable (slope ${slopeKB}KB/run)`;
-  } else if (memSamp.length === 1) verdict = "single sample - no drift measurable";
+      driftKB > LEAK_TOTAL_KB && slopeKB > 0
+        ? `LEAK SIGNAL - heap drifts +${driftKB}KB per half with positive slope (+${slopeKB}KB/run, +${growthKB}KB total)`
+        : `stable (drift ${driftKB}KB per half, slope ${slopeKB}KB/run)`;
+  }
   const scores = ok.flatMap((r) => r.scores);
   const typeHistogram = {};
   for (const r of ok) for (const [t, c] of Object.entries(r.findingTypes)) typeHistogram[t] = (typeHistogram[t] || 0) + c;
   const fallbacks = ok.filter((r) => r.fallback === true).length;
   const t2 = ok.filter((r) => r.tier2Fired).length;
+  const cpuSecs = ok.map((r) => r.cpuSec).filter((v) => typeof v === "number");
+  const cpuPcts = ok.map((r) => r.cpuPct).filter((v) => typeof v === "number");
   return {
     id: fixture.id,
     file: fixture.file,
     exercises: fixture.exercises,
-    coldTotal: cold?.ok ? cold.totalMs : null,
-    coldNote: cold?.ok ? null : `cold run failed: ${cold?.reason || "unknown"}`,
+    coldTotal: cold?.ok && !cold?.degraded ? cold.totalMs : null,
+    coldNote: cold?.ok ? (cold.degraded ? `cold run degraded (${cold.degradedStages.join(", ")})` : null) : `cold run failed: ${cold?.reason || "unknown"}`,
     steadyRuns: ok.length,
-    failedRuns: steady.length - ok.length,
+    failedRuns: steady.length - ok.length - degraded.length,
+    degradedRuns: degraded.length,
+    degradedStages: degradedStageCounts,
     steadyTotal: summarize(totals),
     stageStats,
     memory: {
@@ -204,6 +241,7 @@ function aggregateFixture(fixture, cold, steady) {
       medianBeforeMB: memSamp.length ? round1(summarize(memSamp.map((r) => r.memBefore / 1048576)).median) : null,
       medianDeltaKB: memSamp.length ? round1(summarize(deltas.map((d) => d / 1024)).median) : null,
       slopeKBPerRun: slopeKB,
+      driftKBPerHalf: driftKB,
       growthKB,
       verdict,
     },
@@ -216,6 +254,8 @@ function aggregateFixture(fixture, cold, steady) {
         : null,
     fallbackSharePct: ok.length ? round1((100 * fallbacks) / ok.length) : 0,
     tier2RatePct: ok.length ? round1((100 * t2) / ok.length) : 0,
+    cpuSecP50: cpuSecs.length ? summarize(cpuSecs).median : null,
+    cpuPctP50: cpuPcts.length ? summarize(cpuPcts).median : null,
   };
 }
 
@@ -289,9 +329,19 @@ async function runBench(opts, inject = {}) {
 
       const runOne = async (label) => {
         const t0 = Date.now();
+        const cpuBefore = await sampleChromeCpuSeconds().catch(() => null);
         try {
-          const res = await callTool(mcpUrl, "capture_tab", {}, opts.timeoutMs);
+          const toolArgs = opts.recycleAfter === null ? {} : { recycleAfterCaptures: opts.recycleAfter };
+          const res = await callTool(mcpUrl, "capture_tab", toolArgs, opts.timeoutMs);
           const rec = extractRun(res, Date.now() - t0);
+          const cpuAfter = await sampleChromeCpuSeconds().catch(() => null);
+          if (cpuBefore !== null && cpuAfter !== null && rec.wallMs > 0) {
+            rec.cpuSec = round1(cpuAfter - cpuBefore);
+            rec.cpuPct = round1(((cpuAfter - cpuBefore) / (rec.wallMs / 1000)) * 100);
+          } else {
+            rec.cpuSec = null;
+            rec.cpuPct = null;
+          }
           if (rec.deviceTier) deviceSeen.add(`${rec.deviceTier}${rec.deviceLabel ? ` (${rec.deviceLabel})` : ""}`);
           console.log(`  ${label}: total=${rec.totalMs}ms tiers=${rec.tierPath} findings=${rec.findingCount} heapdelta=${rec.memDelta === null ? "n/a" : Math.round(rec.memDelta / 1024) + "KB"}`);
           return rec;
@@ -344,9 +394,17 @@ async function runBench(opts, inject = {}) {
   }
   for (const f of agg) {
     if (f.failedRuns) flags.push(`${f.failedRuns} steady run(s) failed on fixture "${f.id}" (see raw JSON for reasons).`);
+    if (f.degradedRuns) {
+      const which = Object.entries(f.degradedStages).map(([s, c]) => `${s}x${c}`).join(", ");
+      flags.push(`${f.degradedRuns} steady run(s) DEGRADED on "${f.id}" (${which}) - excluded from latency stats; timings describe the failure path, not the pipeline.`);
+    }
     if (f.coldNote) flags.push(`cold-start anomaly on "${f.id}": ${f.coldNote}.`);
     if (f.memory.samples === 0) flags.push(`no memory samples on "${f.id}" - performance.memory unavailable in the offscreen context?`);
     if (String(f.memory.verdict).startsWith("LEAK SIGNAL")) flags.push(`${f.id}: ${f.memory.verdict}.`);
+  }
+  const gpuEventRuns = allSteady.filter((r) => Array.isArray(r.gpuEvents) && r.gpuEvents.length > 0).length;
+  if (gpuEventRuns) {
+    flags.push(`GPU EVENTS - ${gpuEventRuns}/${allSteady.length} runs logged WebGPU uncapturederror/device-lost events (see raw JSON gpuEvents per run). Correlate with degraded runs for the Phase 3 leak investigation.`);
   }
   const runsMissingStages = allSteady.filter((r) => !Array.isArray(r.stages) || r.stages.length === 0).length;
   if (allSteady.length && runsMissingStages) {
@@ -497,6 +555,7 @@ async function selfTest() {
       timeoutMs: 15_000,
       gapMs: 0,
       yes: true,
+      recycleAfter: null,
       fixturesRoot: DEFAULT_FIXTURES_ROOT,
       resultsDir: path.join(tmp, "results"),
       latestFile: path.join(tmp, "latest.md"),

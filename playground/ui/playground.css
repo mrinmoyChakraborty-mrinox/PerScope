@@ -254,12 +254,19 @@ button {
     align-items: center;
     justify-content: center;
     border-radius: var(--radius-sm);
-    background: linear-gradient(135deg, rgba(99, 102, 241, 0.22), rgba(59, 130, 246, 0.2));
+    background: transparent;
     border: 1px solid var(--border-glow);
     box-shadow: 0 0 16px var(--accent-glow);
-    color: #818cf8;
-    font-size: 18px;
+    overflow: hidden;
     transition: transform 0.15s ease;
+}
+
+.brand-icon img {
+    width: 36px;
+    height: 36px;
+    object-fit: contain;
+    border-radius: 8px;
+    display: block;
 }
 
 body.light-theme .brand-icon {

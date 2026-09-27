@@ -770,6 +770,164 @@ function extractMultiLineLabel(ocrItems, rows) {
     return candidates;
 }
 
+/* ============================================================
+   PHASE 2b — UNLABELED-FORMAT SUB-PASS (Phase 2 optimization)
+   Bare format detection over OCR text for PII with no adjacent known
+   label. Runs PER OCR ITEM so ocr_ids/geometry resolve through the
+   existing estimateTextSubBBox path — no second geometry system.
+   Scope is the approved variant list (Phase 2 proposal 2026-09-27):
+   EMAIL / PHONE / DATE / CARD_LAST4 (label-anchored only) /
+   TRACKING / VAT_ID. Names/addresses stay NER's job; IN-locale IDs
+   stay piidetector's job. Placeholder/example-domain exclusions apply
+   before any match counts.
+   Overlap note (verified, not assumed): DATE always requires date
+   separators (slash/dash with month/day/year structure) so it cannot
+   match TRACKING digit-runs or CARD_LAST4 4-digit values; PHONE
+   requires 3-3-4 digit groups or a leading + so it cannot match
+   dates/amounts/refs; CARD_LAST4 requires its label anchor. Residual
+   same-span collisions resolve longest-span, then higher confidence,
+   then fixed type order below.
+   ============================================================ */
+
+const UNLABELED_FORMAT_TYPES = [
+    {
+        field_type: "EMAIL",
+        confidence: 0.95,
+        // piidetector EMAIL_ID shape.
+        regexes: [/\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/gi],
+        skipValue: (v) => isExampleEmail(v) || isPlaceholderText(v),
+    },
+    {
+        field_type: "PHONE",
+        confidence: 0.9,
+        regexes: [
+            // US NANP, lenient exchange (fictional ranges like 555-01xx must hit):
+            // +1-555-014-2288, (555) 014-2288, 555-014-2288, dotted/spaced.
+            /(?<!\d)(?:\+?1[\s.\-]?)?(?:\(?[2-9]\d{2}\)?[\s.\-]?)\d{3}[\s.\-]\d{4}(?!\d)/g,
+            // Generic E.164 fallback for non-NANP internationals.
+            /(?<!\d)\+\d[\d\s.\-()]{7,16}(?!\d)/g,
+        ],
+        validateValue: (v) => {
+            const digits = String(v).replace(/\D/g, "");
+            return digits.length >= 10 && digits.length <= 15;
+        },
+    },
+    {
+        field_type: "DATE",
+        confidence: 0.85,
+        regexes: [
+            // MM/DD/YYYY (also matches DD/MM — accepted, marked DATE, no locale split).
+            /(?<!\d)(0?[1-9]|1[0-2])\/(0?[1-9]|[12]\d|3[01])\/(\d{2}|\d{4})(?!\d)/g,
+            // MM-DD-YYYY / DD-MM-YYYY (dash form; same acceptance rule).
+            /(?<!\d)(0?[1-9]|[12]\d|3[01])-(0?[1-9]|1[0-2])-(\d{2}|\d{4})(?!\d)/g,
+            // ISO YYYY-MM-DD.
+            /(?<!\d)(\d{4})-(0?[1-9]|1[0-2])-(0?[1-9]|[12]\d|3[01])(?!\d)/g,
+        ],
+    },
+    {
+        field_type: "CARD_NUMBER",
+        confidence: 0.9,
+        // Label-anchored ONLY — freestanding 4-digit runs (gate codes,
+        // amounts, years) are explicitly out of scope.
+        regexes: [/(?:ending|ends?\s+in|last\s*4)\D{0,10}(\d{4})(?!\d)/gi],
+        valueGroup: 1,
+    },
+    {
+        field_type: "TRACKING_NUMBER",
+        confidence: 0.9,
+        regexes: [
+            // UPS 1Z + 16 alphanumerics, spaced or solid.
+            /\b1Z(?:\s?[A-Z0-9]){16}\b/gi,
+            // FedEx 12 / 15 digit, USPS 20-22 digit.
+            /(?<!\d)\d{12}(?!\d)/g,
+            /(?<!\d)\d{15}(?!\d)/g,
+            /(?<!\d)\d{20,22}(?!\d)/g,
+        ],
+    },
+    {
+        field_type: "VAT_ID",
+        confidence: 0.85,
+        regexes: [
+            // GB VAT: GB 123 4567 89, spaced or solid.
+            /\bGB\s?\d{3}\s?\d{4}\s?\d{2}\b/gi,
+            // Small EU set, format-only (no checksum — stated limitation).
+            /\b(?:DE|FR|IT|ES|NL|BE|IE|AT|DK|SE|FI|PT|GR|PL|CZ|HU)\s?[A-Z0-9]{8,12}\b/gi,
+        ],
+    },
+];
+
+// Fixed order for same-span different-type ties (longest span and higher
+// confidence are compared first; this order only breaks exact ties).
+const UNLABELED_TYPE_ORDER = ["EMAIL", "PHONE", "TRACKING_NUMBER", "VAT_ID", "DATE", "CARD_NUMBER"];
+
+function _stripEdgePunct(t) {
+    return cleanText(t).replace(/^[.,:;]+/, "").replace(/[.,:;]+$/, "");
+}
+
+function extractUnlabeledFormatCandidates(ocrItems) {
+    const candidates = [];
+    for (const item of ocrItems || []) {
+        const text = String(item?.text ?? "");
+        if (!text || isPlaceholderText(text)) continue;
+        // Collect all raw matches with spans on this item for overlap resolution.
+        const raw = [];
+        for (const type of UNLABELED_FORMAT_TYPES) {
+            for (const re of type.regexes) {
+                re.lastIndex = 0;
+                let m;
+                while ((m = re.exec(text)) !== null) {
+                    const full = m[0];
+                    let value = full;
+                    let spanStart = m.index;
+                    if (type.valueGroup != null && m[type.valueGroup] != null) {
+                        value = m[type.valueGroup];
+                        spanStart = m.index + full.indexOf(value);
+                    }
+                    value = cleanText(value);
+                    if (!value) continue;
+                    if (type.skipValue && type.skipValue(value)) continue;
+                    if (type.validateValue && !type.validateValue(value)) continue;
+                    if (!isPlausibleValue(value)) continue;
+                    raw.push({
+                        field_type: type.field_type,
+                        confidence: type.confidence,
+                        value,
+                        start: spanStart,
+                        end: spanStart + value.length,
+                        item,
+                    });
+                    // Guard against zero-length-match infinite loops.
+                    if (full.length === 0) re.lastIndex++;
+                }
+            }
+        }
+        // Same-item overlap resolution: longest span wins, then higher
+        // confidence, then fixed type order. Suppress (don't merge) losers.
+        raw.sort((a, b) => (b.end - b.start) - (a.end - a.start) || b.confidence - a.confidence ||
+            UNLABELED_TYPE_ORDER.indexOf(a.field_type) - UNLABELED_TYPE_ORDER.indexOf(b.field_type));
+        const kept = [];
+        for (const r of raw) {
+            if (kept.some((k) => r.start < k.end && r.end > k.start)) continue;
+            kept.push(r);
+        }
+        for (const k of kept) {
+            const valueBBox = estimateTextSubBBox(k.item, k.value);
+            candidates.push({
+                source: "deterministic_format",
+                ocr_ids: [k.item.id],
+                label: null,
+                value: k.value,
+                field_type: k.field_type,
+                confidence: k.confidence,
+                reason: `Bare ${k.field_type} format match without adjacent label (unlabeled-format sub-pass)`,
+                bbox: valueBBox ?? null,
+                raw_text: text,
+            });
+        }
+    }
+    return candidates;
+}
+
 function extractSensitiveFieldCandidates(ocr) {
     if (!ocr?.items?.length) return [];
     const { ordered, rows } = buildReadingOrder(ocr);
@@ -777,7 +935,31 @@ function extractSensitiveFieldCandidates(ocr) {
     const sideBySide = extractLabelValueSideBySide(ordered, rows);
     const vertical = extractLabelValueVertical(ordered, rows);
     const multiLine = extractMultiLineLabel(ocr.items, rows);
-    const all = [...sameLine, ...sideBySide, ...vertical, ...multiLine];
+    const labeled = [...sameLine, ...sideBySide, ...vertical, ...multiLine];
+    const formatBased = extractUnlabeledFormatCandidates(ocr.items);
+    // Cross-source preference: when a label-anchored candidate already covers
+    // the same value text on shared OCR ids, keep the labeled (more specific)
+    // hit and drop the bare-format duplicate. Trailing-punct-insensitive so
+    // "09/27/1981," (labeled) suppresses "09/27/1981" (bare).
+    const labeledKeys = new Set();
+    for (const c of labeled) {
+        const v = _stripEdgePunct(c.value).toLowerCase();
+        for (const id of c.ocr_ids || []) labeledKeys.add(`${v}|${id}`);
+    }
+    const filteredFormat = formatBased.filter((c) => {
+        const v = _stripEdgePunct(c.value).toLowerCase();
+        return !(c.ocr_ids || []).some((id) => {
+            if (labeledKeys.has(`${v}|${id}`)) return true;
+            // Containment either way on the same item: labeled wins.
+            for (const key of labeledKeys) {
+                const [lv, lid] = key.split("|");
+                if (lid !== String(id)) continue;
+                if (lv && v && (lv.includes(v) || v.includes(lv))) return true;
+            }
+            return false;
+        });
+    });
+    const all = [...labeled, ...filteredFormat];
     // Deduplicate by ocr_ids+value
     const seen = new Map();
     for (const c of all) {
@@ -1457,6 +1639,8 @@ export {
     extractLabelValueSideBySide,
     extractLabelValueVertical,
     extractMultiLineLabel,
+    extractUnlabeledFormatCandidates,
+    UNLABELED_FORMAT_TYPES,
     extractSensitiveFieldCandidates,
     resolveSensitiveValueBBox,
     normalizeCandidateText,

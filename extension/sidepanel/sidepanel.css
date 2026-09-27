@@ -21,7 +21,8 @@ body{margin:0;font-family:var(--font-ui);background:var(--bg);}
 .panel-shell{min-height:100vh;background:var(--bg);color:var(--text);display:flex;flex-direction:column;}
 .panel-header{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid var(--border);}
 .brand{display:flex;align-items:center;gap:9px;}
-.brand-icon{width:30px;height:30px;border-radius:9px;background:var(--accent);color:var(--accent-contrast);display:flex;align-items:center;justify-content:center;}
+.brand-icon{width:30px;height:30px;border-radius:9px;background:transparent;display:flex;align-items:center;justify-content:center;overflow:hidden;}
+.brand-icon img{width:30px;height:30px;object-fit:contain;border-radius:9px;display:block;}
 .brand h1{font-size:16px;font-weight:700;margin:0;}
 .icon-btn{width:30px;height:30px;border-radius:8px;border:1px solid transparent;background:transparent;color:var(--text-muted);display:flex;align-items:center;justify-content:center;cursor:pointer;}
 .icon-btn:hover{background:var(--surface);color:var(--text);}

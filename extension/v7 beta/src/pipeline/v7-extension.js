@@ -17,7 +17,7 @@ import {
 } from "@huggingface/transformers";
 import { PaddleOcrService, V6_SMALL_MODEL } from "ppu-paddle-ocr/web";
 
-import { resolveComputeDevice, configureOrtEnvironment } from "./gpu.js";
+import { resolveComputeDevice, configureOrtEnvironment, getGpuErrorLog } from "./gpu.js";
 import {
   cleanText,
   buildOCRGlobalSpans,
@@ -63,9 +63,36 @@ const FASTVLM_DTYPE = {
   decoder_model_merged: "q4f16",
 };
 // 512 tokens of greedy decode was never needed for the fixed JSON schema
-// FastVLM returns (caption + a short redactions array) — 160 is generous
-// headroom and roughly a 3x cut in decode time/memory churn.
-const FASTVLM_MAX_NEW_TOKENS = 160;
+// FastVLM returns (caption + a short redactions array) — 128 is generous
+// headroom (Phase 1 optimization; was 160, shaved after the schema output
+// on all fixtures validated well under 100 tokens) and cuts decode
+// time/memory churn proportionally.
+// NOTE (attribution): this and the fused-evidence prompt cap both shrink
+// the decode/prefill workload — a FASTVLM latency drop in the live batch
+// cannot be naively split between them. Read finding-count + validation
+// status alongside latency: truncation harm shows up as invalid JSON
+// (token cap), missing-evidence harm as fewer/weaker findings (prompt cap).
+const FASTVLM_MAX_NEW_TOKENS = 128;
+
+// Hang-guard around generate(), NOT a fail-fast: transformers generate()
+// has no AbortSignal support (verified in @huggingface/transformers
+// generation sources), so a timeout stops the pipeline WAITING — the
+// underlying op keeps burning in the background. An abandoned op that
+// overlaps the NEXT capture's generate is a ~1GB pile-up that OOM-kills
+// the renderer (observed live 2026-09-28: timeouts at 01:35/03:08, then
+// +1GB/run deltas and document deaths). Two consequences encoded below:
+// (1) the value sits at 2x the slowest legitimate generate observed
+// (61s), so it fires only on true hangs; (2) a firing arms a cooldown
+// that keeps the next capture off the GPU while the orphan burns out.
+// The aggressive direction (<=30s fail-fast) stays a human decision:
+// natural ambiguous/text-heavy generates run 20-60s and would be
+// amputated by it.
+const FASTVLM_GENERATE_TIMEOUT_MS = 120_000;
+// Cooldown after an abandoned generate: skip T2 (fallback covers findings)
+// while the orphan may still be burning. Prevents pile-up, not a fix for
+// the un-cancellable op itself.
+const FASTVLM_TIMEOUT_COOLDOWN_MS = 90_000;
+let _fastvlmCooldownUntil = 0;
 
 // Verbose per-item OCR/NER/heuristics/finding dumps are useful when actively
 // debugging the pipeline but are pure overhead (console + string building +
@@ -636,6 +663,13 @@ async function prepareFastVLMImage(imageBlob) {
  * Runs FastVLM multimodal adjudication on image and extracted evidence
  */
 async function runFastVLMAdjudication({ imageBlob, evidence, computeDevice }) {
+  // Post-timeout cooldown (see FASTVLM_TIMEOUT_COOLDOWN_MS): a previous
+  // generate may still be burning orphaned (no abort handle exists). Do not
+  // pile a second generate onto it — fail over to fusion_fallback, which
+  // protects finding counts, and let the orphan burn out quietly.
+  if (Date.now() < _fastvlmCooldownUntil) {
+    throw new Error("FastVLM cooling down after abandoned generate (timeout pile-up guard)");
+  }
   const fastvlm = await loadFastVLM(computeDevice);
   const prompt = buildFastVLMRedactionPrompt(evidence);
   const startTime = performance.now();
@@ -645,18 +679,57 @@ async function runFastVLMAdjudication({ imageBlob, evidence, computeDevice }) {
   const renderedPrompt = fastvlm.processor.apply_chat_template(messages, {
     add_generation_prompt: true,
   });
+  // JSON-compliance fix (assistant prefill): small models obey the caption
+  // instruction (write prose) over the format instruction (emit JSON), so
+  // every observed output led with "The image provided shows..." and never
+  // contained a {. Prefilling the assistant turn with "{" forces a JSON
+  // start; inputLength is measured AFTER this append (below), so the slice
+  // that drops the prompt still drops exactly the prompt including the brace.
+  const renderedPromptJsonForced = `${renderedPrompt}{`;
 
-  const inputs = await fastvlm.processor(image, renderedPrompt, {
+  const inputs = await fastvlm.processor(image, renderedPromptJsonForced, {
     add_special_tokens: false,
   });
 
-  const generated = await fastvlm.model.generate({
+  const generatePromise = fastvlm.model.generate({
     ...inputs,
     max_new_tokens: FASTVLM_MAX_NEW_TOKENS,
     do_sample: false,
-    repetition_penalty: 1.15,
-    no_repeat_ngram_size: 3,
+    // JSON-compliance fix: the old no_repeat_ngram_size:3 actively punished
+    // valid JSON (repeated keys like "candidate_id"/"ocr_ids" contain
+    // repeated trigrams by construction), and repetition_penalty 1.15 biased
+    // away from required structural repetition. Greedy + near-unity penalty
+    // is the correct shape for schema output; loops are bounded by the token
+    // cap and the JSON-only prompt instead.
+    repetition_penalty: 1.05,
   });
+  // Wait-bounding only (see FASTVLM_GENERATE_TIMEOUT_MS note): on timeout
+  // the pipeline fails over to fusion_fallback instead of hanging to the
+  // bridge ceiling. The abandoned op is NOT cancelled — transformers offers
+  // no abort handle — so a timeout firing is visible twice: once as this
+  // error, once as background GPU burn on the next run's wall time.
+  // Swallow the loser's late rejection: if the timeout wins the race and
+  // the abandoned op rejects afterwards, it must not surface as an
+  // unhandled rejection (registering .catch marks it handled; the race
+  // still settles on whichever promise settles first).
+  generatePromise.catch(() => {});
+  let generated;
+  try {
+    generated = await Promise.race([
+      generatePromise,
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error(`FastVLM generation timed out after ${FASTVLM_GENERATE_TIMEOUT_MS}ms`)), FASTVLM_GENERATE_TIMEOUT_MS),
+      ),
+    ]);
+  } catch (err) {
+    // Arm the cooldown BEFORE the error propagates: the abandoned op is
+    // still burning, and the next capture must not stack onto it.
+    if (String(err?.message || "").includes("timed out")) {
+      _fastvlmCooldownUntil = Date.now() + FASTVLM_TIMEOUT_COOLDOWN_MS;
+      console.warn(`[FASTVLM] Timeout — cooling down T2 for ${FASTVLM_TIMEOUT_COOLDOWN_MS / 1000}s (orphaned op still burning)`);
+    }
+    throw err;
+  }
 
   // Prefill/input tensors (448px pixel_values + prompt ids) are the per-image
   // spike: generate() has consumed them, so release before the decode stage
@@ -680,6 +753,13 @@ async function runFastVLMAdjudication({ imageBlob, evidence, computeDevice }) {
     disposeTensors({ generated });
   }
 
+  // The assistant prefill above consumed the opening "{" as prompt, so the
+  // decoded continuation starts WITHOUT it (e.g. `"redactions": [...]`).
+  // Restore it for the extractor, unless the model emitted its own brace
+  // (prefill + model brace would double to "{{").
+  outputText = String(outputText).trim();
+  if (outputText && !outputText.startsWith("{")) outputText = `{${outputText}`;
+
   outputText = String(outputText).trim();
   if (!outputText) throw new Error("FastVLM generated an empty response");
 
@@ -691,6 +771,28 @@ async function runFastVLMAdjudication({ imageBlob, evidence, computeDevice }) {
   } catch (err) {
     parseError = err;
     console.warn(`[FASTVLM] JSON parse failed: ${err.message}`);
+  }
+
+  // Content guard (JSON-compliance fix, second half): a parseable object
+  // with garbage values (e.g. `{redactions: [1], ...}` — observed live)
+  // must NOT count as success. An "ok" with zero actionable items would
+  // ZERO OUT the fallback findings (3 on ambiguous) — strictly worse than
+  // the error path. Require at least one redaction referencing a real fused
+  // candidate_id, or one additional_redaction referencing a real OCR id;
+  // otherwise force the fallback path (caption salvage still applies).
+  if (parsed && !parseError) {
+    const fusedIds = new Set((evidence?.fused_candidates || []).map((c) => c?.candidate_id));
+    const ocrIds = new Set((evidence?.ocr || []).map((o) => o?.id));
+    const validRedactions = Array.isArray(parsed.redactions)
+      ? parsed.redactions.filter((r) => r && fusedIds.has(r.candidate_id))
+      : [];
+    const validAdditional = Array.isArray(parsed.additional_redactions)
+      ? parsed.additional_redactions.filter((r) => r && typeof r === "object" && (r.ocr_ids || []).some((id) => ocrIds.has(id)))
+      : [];
+    if (validRedactions.length === 0 && validAdditional.length === 0) {
+      parseError = new Error("FastVLM output parsed but contained no actionable redactions (no real candidate/OCR ids)");
+      console.warn(`[FASTVLM] ${parseError.message} — falling back to fusion`);
+    }
   }
 
   const latencyMs = Math.round(performance.now() - startTime);
@@ -711,7 +813,10 @@ async function runFastVLMAdjudication({ imageBlob, evidence, computeDevice }) {
     parsed.caption = sanitizeCaption(parsed.caption, evidence);
   }
 
-  if (parseError && (!parsed.redactions || parsed.redactions.length === 0)) {
+  // Any parseError — syntax failure OR content-guard rejection — takes the
+  // fallback path. (The old extra condition on redactions.length is gone:
+  // garbage like [1] is non-empty but unactionable, and must not pass.)
+  if (parseError) {
     // Return with error status so adjudicateOrFallback uses fusion_fallback,
     // but keep parsed.caption so caption is displayed to the user!
     return {
@@ -1106,6 +1211,7 @@ async function _runExtensionPipelineInner(inputImage, options = {}, onProgress =
       totalTimeMs,
       stages: buildStagePerf(stageMarks),
       memory: { before: memBefore, after: memAfter },
+      gpuEvents: getGpuErrorLog(),
     },
   };
 
