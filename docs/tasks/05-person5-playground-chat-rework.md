@@ -1,6 +1,6 @@
 # Person 5 (Banashree) — Playground Chat Rework: Whole Task + Guide
 
-`git pull` on `main` first. All work in `playground/` only.
+> **Status 2026-09-16: chat rework = T6, deferred (D6 model call open).** Manual-side items in this file are done (T2–T8 slice per `LIST.md`); the push-flow/`element_id`/Qwen3 parts are dead — see the banner in `05-server-bridge-playground.md` and root README §7. `git pull` on `main` first. All work in `playground/` only.
 Spec contract: `docs/tool-schema.md` (never violate). Visual pattern: root `claude_process_chat_mock.html`.
 Full background: `docs/tasks/05-server-bridge-playground.md` §A–E. This file is your standalone checklist — if it conflicts with §D, this file wins.
 

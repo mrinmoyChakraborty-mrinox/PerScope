@@ -14,12 +14,21 @@ import {
  *
  * Wire protocol (all frames are JSON text):
  *   Extension -> bridge  { "type": "pair", "code": "123456" }
- *   Bridge -> extension  { "type": "paired", "clientId": "ext-…", "token": "…" }
- *   Extension -> bridge  { "type": "hello", "auth": "<token>" }   (reconnects)
- *   Bridge -> extension  { "type": "welcome", "clientId": "ext-…" }
- *   Bridge -> extension  { "id": "…", "tool": "<name>", "params": {...} }
- *   Extension -> bridge  { "id": "…", "status": "ok"|"denied"|"timeout"|"error",
+ *   Agent -> bridge      { "type": "pair", "code": "123456", "role": "agent" }
+ *   Bridge -> client    { "type": "paired", "clientId": "ext-…"|"agent-…", "token": "…" }
+ *   Client -> bridge    { "type": "hello", "auth": "<token>", "role"?: "agent" }
+ *     (role defaults to "extension" when absent, preserving pre-role clients;
+ *      a declared role must match the stored record or the socket is closed)
+ *   Bridge -> client    { "type": "welcome", "clientId": "…" }
+ *   Bridge -> extension { "id": "…", "tool": "<name>", "params": {...} }
+ *   Extension -> bridge { "id": "…", "status": "ok"|"denied"|"timeout"|"error",
  *                           "auth": "<token>", ...rest }
+ *   Agent -> bridge     { "id": "<agent-id>", "tool": "<name>", "params": {...},
+ *                           "auth": "<token>" }
+ *   Bridge -> agent     { "id": "<agent-id>", "status": "ok"|"denied"|"timeout"|"error",
+ *                           ...rest }
+ *     (agent ids are remapped to internal UUIDs on the extension leg, so
+ *      concurrent agents can never collide; the agent always sees its own id)
  *
  * Per-message `auth` is REQUIRED on every extension frame after the initial
  * pair/hello handshake; anything missing/invalid auth is answered with an
@@ -41,29 +50,52 @@ export class ExtensionBridge extends EventEmitter {
     this.dir = dir;
     this.toolTimeoutMs = toolTimeoutMs;
     this.wss = null;
-    this.sockets = new Map(); // clientId -> { ws, token, lastActive }
-    this.pending = new Map(); // id -> { resolve, timer }
+    this.sockets = new Map(); // clientId -> { ws, token, role, lastActive }
+    this.pending = new Map(); // internalId -> { resolve, timer }
+    this.agentInflight = new Map(); // `${clientId}:${agentId}` -> internalId
     this.pairing = generatePairingCode();
     this.pairedClients = loadPairedClients(dir);
   }
 
+  /** Pre-role records (and ext- ids) count as the extension. */
+  static roleOf(record) {
+    return record && record.role === "agent" ? "agent" : "extension";
+  }
+
   getPairingCode() {
+    // Lazily rotate on natural expiry so the dashboard/stdout always show a
+    // usable code without a daemon restart (each code stays single-use,
+    // 10-minute, 5-strikes — rotation changes availability, not strength).
+    if (!this.pairing.consumed && Date.now() > this.pairing.expiresAt) {
+      this.pairing = generatePairingCode();
+      this.emit("pairing-rotated", this.getPairingCode());
+    }
     return this.pairing.consumed || Date.now() > this.pairing.expiresAt
       ? { code: null, expiresAt: this.pairing.expiresAt, pairingNeeded: this.authenticatedCount() === 0 }
       : { code: this.pairing.code, expiresAt: this.pairing.expiresAt, pairingNeeded: true };
   }
 
-  authenticatedCount() {
+  authenticatedCount(role) {
     let n = 0;
-    for (const s of this.sockets.values()) if (s.authenticated) n += 1;
+    for (const s of this.sockets.values()) {
+      if (!s.authenticated) continue;
+      if (role && s.role !== role) continue;
+      n += 1;
+    }
     return n;
   }
 
   getStatus() {
     return {
-      extensionConnected: this.authenticatedCount() > 0,
+      extensionConnected: this.authenticatedCount("extension") > 0,
       pairedClients: this.pairedClients.clients.length,
-      pairingNeeded: this.authenticatedCount() === 0 && (this.pairing.consumed || Date.now() > this.pairing.expiresAt),
+      // Tokens never leave the daemon: dashboard/health see ids + roles only.
+      clients: this.pairedClients.clients.map((c) => ({
+        clientId: c.clientId,
+        role: ExtensionBridge.roleOf(c),
+        pairedAt: c.pairedAt || null,
+      })),
+      pairingNeeded: this.authenticatedCount("extension") === 0 && (this.pairing.consumed || Date.now() > this.pairing.expiresAt),
       pairingLocked: Date.now() < this.pairing.lockedUntil,
     };
   }
@@ -79,11 +111,25 @@ export class ExtensionBridge extends EventEmitter {
   }
 
   #onConnection(ws) {
-    const state = { ws, authenticated: false, clientId: null, token: null };
+    const state = { ws, authenticated: false, clientId: null, token: null, role: null };
     ws.on("message", (data) => this.#onMessage(state, data));
     ws.on("close", () => {
       if (state.clientId && this.sockets.get(state.clientId)?.ws === ws) {
         this.sockets.delete(state.clientId);
+      }
+      // Sweep in-flight agent calls for a dead socket so keys never linger
+      // past close (pending extension replies then resolve to no-ops).
+      if (state.clientId) {
+        for (const [key, internalId] of this.agentInflight) {
+          if (key.startsWith(`${state.clientId}:`)) {
+            this.agentInflight.delete(key);
+            const entry = this.pending.get(internalId);
+            if (entry) {
+              this.pending.delete(internalId);
+              clearTimeout(entry.timer);
+            }
+          }
+        }
       }
     });
     ws.on("error", () => {
@@ -137,7 +183,8 @@ export class ExtensionBridge extends EventEmitter {
     state.lastActive = Date.now();
 
     if (typeof msg.id === "string" && typeof msg.tool !== "string") {
-      // Response to a bridge-initiated tool call: correlate by id.
+      // Response to a bridge-initiated tool call: correlate by INTERNAL id.
+      // Works for both the MCP leg and agent-leg remapped calls.
       const entry = this.pending.get(msg.id);
       if (!entry) return; // Late/duplicate response after timeout; ignore.
       this.pending.delete(msg.id);
@@ -148,6 +195,10 @@ export class ExtensionBridge extends EventEmitter {
     }
 
     if (typeof msg.id === "string" && typeof msg.tool === "string") {
+      if (state.role === "agent") {
+        this.#handleAgentRequest(state, msg);
+        return;
+      }
       // Extension-initiated request (reserved for future capture events).
       // The bridge relays; it has no handler, so answer honestly.
       const { auth: _auth, ...rest } = msg;
@@ -157,6 +208,47 @@ export class ExtensionBridge extends EventEmitter {
     }
 
     this.#rejectAndClose(state, null, "invalid-message");
+  }
+
+  /**
+   * Agent-leg tool call (D1/D2): validate, guard duplicate in-flight ids,
+   * remap to an internal UUID for the extension leg, and resolve back to
+   * the requesting socket with the AGENT's id. The agent always sees its
+   * own id; concurrent agents can never collide.
+   */
+  #handleAgentRequest(state, msg) {
+    if (typeof msg.tool !== "string" || !msg.tool) {
+      this.#send(state.ws, { id: msg.id, status: "error", reason: "invalid-tool" });
+      return;
+    }
+    const inflightKey = `${state.clientId}:${msg.id}`;
+    if (this.agentInflight.has(inflightKey)) {
+      this.#send(state.ws, { id: msg.id, status: "error", reason: "duplicate-id" });
+      return;
+    }
+    const target = this.#targetSocket();
+    if (!target) {
+      this.#send(state.ws, { id: msg.id, status: "error", reason: "no paired extension connected" });
+      return;
+    }
+    const internalId = crypto.randomUUID();
+    const params = msg.params && typeof msg.params === "object" ? msg.params : {};
+    const finish = (extRes) => {
+      this.agentInflight.delete(inflightKey);
+      const { auth: _auth, id: _iid, ...rest } = extRes;
+      this.#send(state.ws, { id: msg.id, ...rest });
+    };
+    const timer = setTimeout(() => {
+      this.pending.delete(internalId);
+      finish({ status: "timeout", reason: "extension-timeout" });
+    }, this.toolTimeoutMs);
+    if (timer.unref) timer.unref();
+    this.agentInflight.set(inflightKey, internalId);
+    this.pending.set(internalId, {
+      resolve: finish,
+      timer,
+    });
+    this.#send(target.ws, { id: internalId, tool: msg.tool, params });
   }
 
   #handlePair(state, msg) {
@@ -179,16 +271,23 @@ export class ExtensionBridge extends EventEmitter {
       this.#send(state.ws, { type: "pair-error", reason: result.reason });
       return;
     }
-    const clientId = `ext-${crypto.randomBytes(4).toString("hex")}`;
+    const clientId =
+      (msg.role === "agent" ? "agent-" : "ext-") + crypto.randomBytes(4).toString("hex");
     const token = crypto.randomBytes(32).toString("base64url");
-    this.pairedClients = addPairedClient(this.dir, { clientId, token });
+    const role = msg.role === "agent" ? "agent" : "extension";
+    this.pairedClients = addPairedClient(this.dir, { clientId, token, role });
     state.authenticated = true;
     state.clientId = clientId;
     state.token = token;
+    state.role = role;
     state.lastActive = Date.now();
     this.sockets.set(clientId, state);
     this.#send(state.ws, { type: "paired", clientId, token });
-    this.emit("paired", { clientId });
+    // A consumed code can never pair again, so mint its replacement now:
+    // the dashboard keeps showing a live code for the next client.
+    this.pairing = generatePairingCode();
+    this.emit("paired", { clientId, role });
+    this.emit("pairing-rotated", this.getPairingCode());
   }
 
   #handleHello(state, msg) {
@@ -201,20 +300,29 @@ export class ExtensionBridge extends EventEmitter {
       this.#rejectAndClose(state, null, "unauthorized");
       return;
     }
+    // Role declared at hello must match the stored record. Absent role
+    // means "extension", preserving pre-role clients (incl. the extension).
+    const declared = msg.role === "agent" ? "agent" : "extension";
+    if (ExtensionBridge.roleOf(holder) !== declared) {
+      this.#rejectAndClose(state, null, "unauthorized");
+      return;
+    }
     state.authenticated = true;
     state.clientId = holder.clientId;
     state.token = holder.token;
+    state.role = ExtensionBridge.roleOf(holder);
     state.lastActive = Date.now();
     this.sockets.set(holder.clientId, state);
     this.#send(state.ws, { type: "welcome", clientId: holder.clientId });
   }
 
   #targetSocket() {
-    // Most recently active authenticated socket wins (covers reconnects
-    // where the old socket hasn't timed out yet).
+    // Extension sockets ONLY — agent sockets must never receive
+    // extension-bound tool calls. Most-recently-active wins (covers
+    // reconnects where the old socket hasn't timed out yet).
     let best = null;
     for (const s of this.sockets.values()) {
-      if (!s.authenticated || s.ws.readyState !== s.ws.OPEN) continue;
+      if (!s.authenticated || s.role !== "extension" || s.ws.readyState !== s.ws.OPEN) continue;
       if (!best || (s.lastActive ?? 0) > (best.lastActive ?? 0)) best = s;
     }
     return best;
@@ -250,6 +358,7 @@ export class ExtensionBridge extends EventEmitter {
       entry.resolve({ status: "error", reason: "bridge-shutdown" });
     }
     this.pending.clear();
+    this.agentInflight.clear();
     if (this.wss) {
       for (const client of this.wss.clients) {
         try {

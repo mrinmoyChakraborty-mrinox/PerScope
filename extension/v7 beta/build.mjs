@@ -13,6 +13,7 @@ mkdirSync(dist, { recursive: true });
 // 1. Bundle JavaScript entry points for browser
 const entries = [
   { in: resolve(src, "popup/popup.js"), out: "popup.js" },
+  { in: resolve(src, "approval/approval.js"), out: "approval.js" },
   { in: resolve(src, "background/service-worker.js"), out: "background.js" },
   { in: resolve(src, "offscreen/offscreen.js"), out: "offscreen.js" },
   { in: resolve(src, "app/dashboard.js"), out: "dashboard.js" },
@@ -23,10 +24,18 @@ const entries = [
   // Node CLI branch requires "readline", which is dead in this context
   // (require.main is unset in the bundle, so the lazy __require call never
   // fires) — hence "readline" is external rather than bundled.
-  { in: resolve(src, "content/dom-capture-entry.js"), out: "dom-capture-entry.js" },
+  // NOTE 2: "@huggingface/transformers" is external ONLY for this entry.
+  // piidetector's loadNER() dynamically imports it, but the content script
+  // runs Tier0 only and never calls loadNER. Without this, esbuild inlines
+  // the whole transformers+ORT web stack (with top-level `import.meta`,
+  // which is a parse-time SyntaxError in classic-script content scripts
+  // and kills the listener on every page) and ships ~1.4MB of dead weight
+  // into every frame.
+  { in: resolve(src, "content/dom-capture-entry.js"), out: "dom-capture-entry.js",
+    external: ["@huggingface/transformers"] },
 ];
 
-for (const { in: entryIn, out } of entries) {
+for (const { in: entryIn, out, external: extraExternal = [] } of entries) {
   if (!existsSync(entryIn)) {
     console.error(`Missing entry: ${entryIn}`);
     process.exit(1);
@@ -45,7 +54,7 @@ for (const { in: entryIn, out } of entries) {
     minify: false,
     mainFields: ["module", "browser", "main"],
     conditions: ["browser", "module", "import"],
-    external: ["fs", "crypto", "path", "os", "module", "readline"],
+    external: ["fs", "crypto", "path", "os", "module", "readline", ...extraExternal],
     loader: { ".wasm": "file" },
     define: {
       "process.env.NODE_ENV": '"production"',
@@ -65,6 +74,7 @@ function copyIfExists(srcPath, destPath) {
 
 copyIfExists(resolve(src, "popup/popup.html"), resolve(dist, "popup.html"));
 copyIfExists(resolve(src, "popup/popup.css"), resolve(dist, "popup.css"));
+copyIfExists(resolve(src, "approval/approval.html"), resolve(dist, "approval.html"));
 copyIfExists(resolve(src, "offscreen/offscreen.html"), resolve(dist, "offscreen.html"));
 copyIfExists(resolve(src, "app/dashboard.html"), resolve(dist, "dashboard.html"));
 copyIfExists(resolve(src, "app/dashboard.css"), resolve(dist, "dashboard.css"));

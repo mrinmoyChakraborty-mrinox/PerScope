@@ -47891,6 +47891,11 @@ async function _prewarmModels() {
   try {
     const computeDevice = await resolveComputeDevice();
     configureOrtEnvironment(ort_bundle_min_exports, env2, computeDevice);
+    const heavyPrewarmAllowed = computeDevice.tier === "dedicated";
+    if (!heavyPrewarmAllowed) {
+      console.log(`[PREWARM] Tier=${computeDevice.tier}: skipping NER/FastVLM prewarm (will load lazily on first capture).`);
+      return;
+    }
     if (!_nerCache) {
       console.log("[PREWARM] Pre-loading Ettin NER in background...");
       await loadNER(computeDevice).catch((e) => console.warn("[PREWARM] NER pre-warm failed:", e.message));
@@ -47929,6 +47934,27 @@ async function decodeImageInput(input) {
     imageBitmap,
     width: imageBitmap.width,
     height: imageBitmap.height
+  };
+}
+async function capWorkingResolution(decoded, maxDim = MAX_WORKING_DIMENSION) {
+  const { width, height } = decoded;
+  if (!width || !height || width <= maxDim && height <= maxDim) return decoded;
+  const scale = Math.min(maxDim / width, maxDim / height);
+  const targetW = Math.max(1, Math.round(width * scale));
+  const targetH = Math.max(1, Math.round(height * scale));
+  const canvas = new OffscreenCanvas(targetW, targetH);
+  const ctx = canvas.getContext("2d");
+  ctx.drawImage(decoded.imageBitmap, 0, 0, targetW, targetH);
+  const resizedBlob = await canvas.convertToBlob({ type: "image/png" });
+  const resizedBuffer = await resizedBlob.arrayBuffer();
+  const resizedBitmap = await createImageBitmap(resizedBlob);
+  console.log(`[PIPELINE] Capped working resolution ${width}x${height} -> ${targetW}x${targetH}`);
+  return {
+    blob: resizedBlob,
+    arrayBuffer: resizedBuffer,
+    imageBitmap: resizedBitmap,
+    width: targetW,
+    height: targetH
   };
 }
 async function loadOCRService() {
@@ -47975,11 +48001,13 @@ async function loadOCRService() {
 async function runOCR(imageArrayBuffer) {
   const service = await loadOCRService();
   const result = await service.recognize(imageArrayBuffer, { flatten: true });
-  console.log(`[OCR-DEBUG] result.results count=${(result.results || []).length} text.length=${(result.text || "").length} confidence=${result.confidence}`);
-  console.log(`[OCR-DEBUG] full text: '${result.text}'`);
-  for (const r of result.results || []) {
-    const b = r.box || {};
-    console.log(`[OCR-DEBUG] bbox=[x=${b.x}, y=${b.y}, w=${b.width}, h=${b.height}] text='${r.text}' conf=${Number(r.confidence ?? 0).toFixed(3)} raw=${JSON.stringify(r)}`);
+  if (PII_DEBUG) {
+    console.log(`[OCR-DEBUG] result.results count=${(result.results || []).length} text.length=${(result.text || "").length} confidence=${result.confidence}`);
+    console.log(`[OCR-DEBUG] full text: '${result.text}'`);
+    for (const r of result.results || []) {
+      const b = r.box || {};
+      console.log(`[OCR-DEBUG] bbox=[x=${b.x}, y=${b.y}, w=${b.width}, h=${b.height}] text='${r.text}' conf=${Number(r.confidence ?? 0).toFixed(3)} raw=${JSON.stringify(r)}`);
+    }
   }
   const items = (result.results || []).map((item, index) => ({
     id: `ocr_${index}`,
@@ -48012,42 +48040,55 @@ async function resolveNERModelPath() {
 }
 async function loadNER(computeDevice) {
   if (_nerCache) return _nerCache;
-  const modelId = await resolveNERModelPath();
-  const targetDevice = computeDevice.type === "webgpu" ? "webgpu" : "cpu";
-  const webgpuSessionOptions = { executionProviders: ["webgpu"] };
-  const wasmSessionOptions = { executionProviders: ["wasm"], intraOpNumThreads: 1, interOpNumThreads: 1 };
-  console.log(`[NER] Loading Ettin NER: ${modelId} (${targetDevice})`);
-  let tokenizer;
-  let model;
-  try {
-    tokenizer = await AutoTokenizer.from_pretrained(modelId);
-    model = await AutoModelForTokenClassification.from_pretrained(modelId, {
-      dtype: "fp32",
-      model_file_name: "model",
-      device: targetDevice,
-      session_options: targetDevice === "webgpu" ? webgpuSessionOptions : wasmSessionOptions
-    });
-    console.log(`[NER] Ettin NER sessions on EP: ${targetDevice === "webgpu" ? "webgpu" : "wasm/1-thread"}`);
-  } catch (err) {
-    console.warn(`[NER] NER load failed on ${targetDevice}:`, err.message);
-    if (targetDevice === "webgpu") {
-      console.log("[NER] Retrying Ettin NER on CPU/WASM fallback...");
-      tokenizer = tokenizer || await AutoTokenizer.from_pretrained(modelId);
+  if (_nerLoadPromise) return await _nerLoadPromise;
+  _nerLoadPromise = (async () => {
+    const modelId = await resolveNERModelPath();
+    const targetDevice = computeDevice.type === "webgpu" ? "webgpu" : "wasm";
+    const webgpuSessionOptions = { executionProviders: ["webgpu"] };
+    const wasmSessionOptions = { executionProviders: ["wasm"], intraOpNumThreads: 1, interOpNumThreads: 1 };
+    console.log(`[NER] Loading Ettin NER: ${modelId} (${targetDevice})`);
+    let tokenizer;
+    let model;
+    try {
+      tokenizer = await AutoTokenizer.from_pretrained(modelId);
       model = await AutoModelForTokenClassification.from_pretrained(modelId, {
         dtype: "fp32",
         model_file_name: "model",
-        device: "cpu",
-        session_options: wasmSessionOptions
+        // Upstream repo is flat (model.onnx at root, no onnx/ subfolder —
+        // verified via HF API siblings). The from_pretrained default
+        // subfolder "onnx" 404s here; "" resolves to the repo root.
+        subfolder: "",
+        device: targetDevice,
+        session_options: targetDevice === "webgpu" ? webgpuSessionOptions : wasmSessionOptions
       });
-    } else {
-      throw err;
+      console.log(`[NER] Ettin NER sessions on EP: ${targetDevice === "webgpu" ? "webgpu" : "wasm/1-thread"}`);
+    } catch (err) {
+      console.warn(`[NER] NER load failed on ${targetDevice}:`, err.message);
+      if (targetDevice === "webgpu") {
+        console.log("[NER] Retrying Ettin NER on CPU/WASM fallback...");
+        tokenizer = tokenizer || await AutoTokenizer.from_pretrained(modelId);
+        model = await AutoModelForTokenClassification.from_pretrained(modelId, {
+          dtype: "fp32",
+          model_file_name: "model",
+          subfolder: "",
+          device: "wasm",
+          session_options: wasmSessionOptions
+        });
+      } else {
+        throw err;
+      }
     }
+    const id2label = normalizeId2Label(model.config?.id2label);
+    const configuredMax = Number(model.config?.max_position_embeddings ?? NER_MAX_TOKENS);
+    const maxTokens = Math.min(NER_MAX_TOKENS, configuredMax > 0 ? configuredMax : NER_MAX_TOKENS);
+    _nerCache = { tokenizer, model, id2label, maxTokens };
+    return _nerCache;
+  })();
+  try {
+    return await _nerLoadPromise;
+  } finally {
+    _nerLoadPromise = null;
   }
-  const id2label = normalizeId2Label(model.config?.id2label);
-  const configuredMax = Number(model.config?.max_position_embeddings ?? NER_MAX_TOKENS);
-  const maxTokens = Math.min(NER_MAX_TOKENS, configuredMax > 0 ? configuredMax : NER_MAX_TOKENS);
-  _nerCache = { tokenizer, model, id2label, maxTokens };
-  return _nerCache;
 }
 async function runNER(ner, ocr) {
   const findings = [];
@@ -48161,19 +48202,35 @@ async function runNER(ner, ocr) {
   }
   return findings;
 }
+function closeBitmap(bitmap) {
+  try {
+    if (bitmap && typeof bitmap.close === "function") bitmap.close();
+  } catch {
+  }
+}
+function disposeTensors(bag) {
+  if (!bag || typeof bag !== "object") return;
+  for (const value of Object.values(bag)) {
+    try {
+      value?.dispose?.();
+    } catch {
+    }
+  }
+}
 async function loadFastVLM(computeDevice) {
   if (_fastvlmCache) return _fastvlmCache;
-  const device = computeDevice.type === "webgpu" ? "webgpu" : "cpu";
-  const sessionOptions = { executionProviders: device === "webgpu" ? ["webgpu"] : ["wasm"] };
-  console.log(`[FASTVLM] Loading FastVLM 0.5B on ${computeDevice.label} (device: ${device})`);
-  try {
+  if (_fastvlmLoadPromise) return await _fastvlmLoadPromise;
+  _fastvlmLoadPromise = (async () => {
+    const device = computeDevice.type === "webgpu" ? "webgpu" : "wasm";
+    const sessionOptions = { executionProviders: device === "webgpu" ? ["webgpu"] : ["wasm"] };
+    console.log(`[FASTVLM] Loading FastVLM 0.5B on ${computeDevice.label} (device: ${device})`);
     const processor = await AutoProcessor.from_pretrained(FASTVLM_MODEL);
     const model = await AutoModelForImageTextToText.from_pretrained(FASTVLM_MODEL, {
       dtype: FASTVLM_DTYPE,
       device,
       session_options: sessionOptions
     });
-    console.log("[FASTVLM-DEBUG] sessions:", Object.keys(model.sessions || {}));
+    if (PII_DEBUG) console.log("[FASTVLM-DEBUG] sessions:", Object.keys(model.sessions || {}));
     _fastvlmCache = {
       model,
       processor,
@@ -48183,36 +48240,21 @@ async function loadFastVLM(computeDevice) {
     };
     console.log(`[FASTVLM] Loaded FastVLM 0.5B successfully on ${_fastvlmCache.backend}`);
     return _fastvlmCache;
-  } catch (err) {
-    console.warn(`[FASTVLM] FastVLM load failed on ${device}:`, err.message);
-    if (device === "webgpu") {
-      console.log("[FASTVLM] Retrying FastVLM on CPU/WASM fallback...");
-      const processor = await AutoProcessor.from_pretrained(FASTVLM_MODEL);
-      const model = await AutoModelForImageTextToText.from_pretrained(FASTVLM_MODEL, {
-        dtype: FASTVLM_DTYPE,
-        device: "cpu",
-        session_options: { executionProviders: ["wasm"] }
-      });
-      console.log("[FASTVLM-DEBUG] sessions:", Object.keys(model.sessions || {}));
-      _fastvlmCache = {
-        model,
-        processor,
-        modelId: FASTVLM_MODEL,
-        device: "cpu",
-        backend: "CPU (Fallback)"
-      };
-      return _fastvlmCache;
-    }
-    throw err;
+  })();
+  try {
+    return await _fastvlmLoadPromise;
+  } finally {
+    _fastvlmLoadPromise = null;
   }
 }
 async function prepareFastVLMImage(imageBlob) {
   try {
     const bitmap = await createImageBitmap(imageBlob);
-    const max2 = 672;
+    const max2 = 448;
     const w = bitmap.width;
     const h = bitmap.height;
     if (!w || !h || w <= max2 && h <= max2) {
+      closeBitmap(bitmap);
       return await load_image(imageBlob);
     }
     const scale = Math.min(max2 / w, max2 / h);
@@ -48221,6 +48263,7 @@ async function prepareFastVLMImage(imageBlob) {
     const canvas = new OffscreenCanvas(targetW, targetH);
     const ctx = canvas.getContext("2d");
     ctx.drawImage(bitmap, 0, 0, targetW, targetH);
+    closeBitmap(bitmap);
     const resizedBlob = await canvas.convertToBlob({ type: "image/png" });
     console.log(`[FASTVLM] Resized image from ${w}x${h} to ${targetW}x${targetH} for stability`);
     return await load_image(resizedBlob);
@@ -48249,12 +48292,17 @@ async function runFastVLMAdjudication({ imageBlob, evidence, computeDevice }) {
     no_repeat_ngram_size: 3
   });
   const inputLength = Number(inputs?.input_ids?.dims?.at(-1) ?? 0);
+  disposeTensors(inputs);
   let outputText = "";
+  let generatedOnly = null;
   try {
-    const generatedOnly = inputLength > 0 ? generated.slice(null, [inputLength, null]) : generated;
+    generatedOnly = inputLength > 0 ? generated.slice(null, [inputLength, null]) : generated;
     outputText = fastvlm.processor.batch_decode(generatedOnly, { skip_special_tokens: true })[0] ?? "";
   } catch {
     outputText = fastvlm.processor.batch_decode(generated, { skip_special_tokens: true })[0] ?? "";
+  } finally {
+    if (generatedOnly && generatedOnly !== generated) disposeTensors({ generatedOnly });
+    disposeTensors({ generated });
   }
   outputText = String(outputText).trim();
   if (!outputText) throw new Error("FastVLM generated an empty response");
@@ -48302,6 +48350,17 @@ async function runFastVLMAdjudication({ imageBlob, evidence, computeDevice }) {
   };
 }
 async function runExtensionPipeline(inputImage, options = {}, onProgress = null) {
+  if (_pipelineRunning) {
+    throw new Error("PerScope: a capture is already in progress. Please wait for it to finish.");
+  }
+  _pipelineRunning = true;
+  try {
+    return await _runExtensionPipelineInner(inputImage, options, onProgress);
+  } finally {
+    _pipelineRunning = false;
+  }
+}
+async function _runExtensionPipelineInner(inputImage, options = {}, onProgress = null) {
   const tTotalStart = performance.now();
   const emit = (stage, status, extra = {}) => {
     try {
@@ -48314,7 +48373,8 @@ async function runExtensionPipeline(inputImage, options = {}, onProgress = null)
   configureOrtEnvironment(ort_bundle_min_exports, env2, computeDevice);
   emit("DEVICE", "RESOLVED", { device: computeDevice });
   emit("IMAGE_DECODE", "START");
-  const decoded = await decodeImageInput(inputImage);
+  let decoded = await decodeImageInput(inputImage);
+  decoded = await capWorkingResolution(decoded);
   emit("IMAGE_DECODE", "DONE", { width: decoded.width, height: decoded.height });
   let faceFindings = [];
   const faceEnabled = options.faceEnabled !== false;
@@ -48346,8 +48406,10 @@ async function runExtensionPipeline(inputImage, options = {}, onProgress = null)
     console.log("[NER] Ettin NER model loaded. Running inference...");
     nerFindings = await runNER(ner, ocr);
     console.log(`[NER] runNER complete: ${nerFindings.length} findings`);
-    for (const f of nerFindings) {
-      console.log(`[NER] finding: entity=${f.entity} text='${f.text}' score=${Number(f.score).toFixed(3)} source=${f.source_id}`);
+    if (PII_DEBUG) {
+      for (const f of nerFindings) {
+        console.log(`[NER] finding: entity=${f.entity} text='${f.text}' score=${Number(f.score).toFixed(3)} source=${f.source_id}`);
+      }
     }
     emit("NER", "DONE", { count: nerFindings.length, findings: nerFindings.map((f) => ({ entity: f.entity, text: f.text, score: f.score })) });
   } catch (err) {
@@ -48362,8 +48424,10 @@ async function runExtensionPipeline(inputImage, options = {}, onProgress = null)
     deterministicFindings
   });
   console.log(`[HEURISTICS] deterministicFindings=${deterministicFindings.length} fusedCandidates=${fusedCandidates.length}`);
-  for (const c of fusedCandidates) {
-    console.log(`[HEURISTICS] candidate: ${c.candidate_id} text='${c.text}' types=${c.candidate_types.join("+")} sources=${c.sources.join("+")} conf=${Number(c.confidence).toFixed(3)}`);
+  if (PII_DEBUG) {
+    for (const c of fusedCandidates) {
+      console.log(`[HEURISTICS] candidate: ${c.candidate_id} text='${c.text}' types=${c.candidate_types.join("+")} sources=${c.sources.join("+")} conf=${Number(c.confidence).toFixed(3)}`);
+    }
   }
   const uiStructure = buildUIStructure({
     image: decoded,
@@ -48425,8 +48489,10 @@ async function runExtensionPipeline(inputImage, options = {}, onProgress = null)
   });
   const finalTextFindings = adjudication.finalFindings || [];
   console.log(`[ADJUDICATION] status=${adjudication.status} fallback=${adjudication.fallback} finalTextFindings=${finalTextFindings.length}`);
-  for (const f of finalTextFindings) {
-    console.log(`[ADJUDICATION] final: entity=${f.entity} text='${f.text}' score=${Number(f.score).toFixed(3)} decision=${f.decision_source}`);
+  if (PII_DEBUG) {
+    for (const f of finalTextFindings) {
+      console.log(`[ADJUDICATION] final: entity=${f.entity} text='${f.text}' score=${Number(f.score).toFixed(3)} decision=${f.decision_source}`);
+    }
   }
   const finalFindings = [...finalTextFindings, ...faceFindings];
   emit("REDACT", "START", { regionsCount: finalFindings.length });
@@ -48438,14 +48504,19 @@ async function runExtensionPipeline(inputImage, options = {}, onProgress = null)
   }));
   const redactedChunks = redactChunks(rawChunks, finalTextFindings);
   const redactedOcrText = redactedChunks.map((c) => c.text).join(" ");
-  const imageRedaction = await redactImageOnCanvas(decoded.imageBitmap, finalFindings, {
-    style: options.redactionStyle || "blur",
-    faceStyle: options.faceRedactionStyle || options.redactionStyle || "blur",
-    padding: options.padding ?? 2,
-    facePadding: options.facePadding ?? 3,
-    textBlurSigma: options.textBlurSigma ?? 12,
-    faceBlurSigma: options.faceBlurSigma ?? 14
-  });
+  let imageRedaction;
+  try {
+    imageRedaction = await redactImageOnCanvas(decoded.imageBitmap, finalFindings, {
+      style: options.redactionStyle || "blur",
+      faceStyle: options.faceRedactionStyle || options.redactionStyle || "blur",
+      padding: options.padding ?? 2,
+      facePadding: options.facePadding ?? 3,
+      textBlurSigma: options.textBlurSigma ?? 12,
+      faceBlurSigma: options.faceBlurSigma ?? 14
+    });
+  } finally {
+    closeBitmap(decoded.imageBitmap);
+  }
   emit("REDACT", "DONE", {
     textRegions: imageRedaction.textRegionsRedacted,
     faceRegions: imageRedaction.faceRegionsRedacted
@@ -48544,7 +48615,7 @@ async function runExtensionPipeline(inputImage, options = {}, onProgress = null)
     totalTimeMs
   };
 }
-var FASTVLM_MODEL, FASTVLM_DTYPE, FASTVLM_MAX_NEW_TOKENS, NER_MODEL_LOCAL, NER_MODEL_REMOTE, NER_MAX_TOKENS, _ocrServiceCache, _nerCache, _fastvlmCache;
+var FASTVLM_MODEL, FASTVLM_DTYPE, FASTVLM_MAX_NEW_TOKENS, PII_DEBUG, _pipelineRunning, NER_MODEL_LOCAL, NER_MODEL_REMOTE, NER_MAX_TOKENS, _ocrServiceCache, _nerCache, _fastvlmCache, MAX_WORKING_DIMENSION, _nerLoadPromise, _fastvlmLoadPromise;
 var init_v7_extension = __esm({
   "src/pipeline/v7-extension.js"() {
     init_ort_bundle_min();
@@ -48563,7 +48634,9 @@ var init_v7_extension = __esm({
       vision_encoder: "q4f16",
       decoder_model_merged: "q4f16"
     };
-    FASTVLM_MAX_NEW_TOKENS = 512;
+    FASTVLM_MAX_NEW_TOKENS = 160;
+    PII_DEBUG = false;
+    _pipelineRunning = false;
     if (typeof chrome !== "undefined" && chrome?.runtime?.getURL) {
       env2.allowLocalModels = true;
       env2.useBrowserCache = true;
@@ -48575,12 +48648,79 @@ var init_v7_extension = __esm({
     _ocrServiceCache = null;
     _nerCache = null;
     _fastvlmCache = null;
+    MAX_WORKING_DIMENSION = 1600;
+    _nerLoadPromise = null;
+    _fastvlmLoadPromise = null;
   }
 });
 
 // src/offscreen/offscreen.js
 init_gpu();
 init_v7_extension();
+
+// src/shared/read-page-mapping.js
+var FINDING_FIELDS = ["type", "source", "confidence", "segmentId", "forceRedacted", "structuralHint"];
+function sanitizeFinding(f) {
+  if (!f || typeof f !== "object") return null;
+  const out = {};
+  for (const key of FINDING_FIELDS) {
+    if (f[key] !== void 0) out[key] = f[key];
+  }
+  if (typeof out.source !== "string") out.source = "dom";
+  return out;
+}
+function mapDomCaptureToReadPage(capture) {
+  if (!capture || typeof capture !== "object") {
+    return { status: "error", reason: "dom-capture-failed" };
+  }
+  const findings = Array.isArray(capture.findings) ? capture.findings.map(sanitizeFinding).filter(Boolean) : [];
+  return {
+    status: "ok",
+    sanitizedText: String(capture.redactedDocument ?? ""),
+    findings
+  };
+}
+
+// src/shared/is-destructive.js
+var DESTRUCTIVE_PATTERNS = [
+  /delete|remove|erase|destroy|wipe/i,
+  /buy|purchase|checkout|pay\b|payment|order\b/i,
+  /\bsend\b|\bsubmit\b|confirm|irreversible|permanent/i,
+  /cancel (order|subscription|account)|close account|deactivate/i,
+  /transfer|withdraw/i
+];
+var EXPLICITLY_SAFE_INPUT_TYPES = /* @__PURE__ */ new Set([
+  "text",
+  "search",
+  "email",
+  "tel",
+  "url",
+  "password",
+  "number"
+]);
+function isDestructive(action = {}) {
+  const reasons = [];
+  const { tool = "", label = "", text = "", inputType = "", isFormSubmit = false } = action;
+  const haystack = `${label} ${text}`.trim();
+  if (tool === "submit" || isFormSubmit) {
+    reasons.push("form-submit");
+  }
+  for (const re of DESTRUCTIVE_PATTERNS) {
+    if (re.test(haystack)) {
+      reasons.push(`keyword:${re.source.slice(0, 32)}`);
+      break;
+    }
+  }
+  if (tool === "type" || tool === "select_option") {
+    if (inputType && !EXPLICITLY_SAFE_INPUT_TYPES.has(String(inputType).toLowerCase())) {
+      reasons.push(`unknown-input-type:${inputType}`);
+    }
+  }
+  if (tool !== "click" && tool !== "type" && tool !== "select_option" && tool !== "submit") {
+    reasons.push(`unknown-tool:${tool || "(missing)"}`);
+  }
+  return { destructive: reasons.length > 0, reasons };
+}
 
 // src/offscreen/bridge-link.js
 var BRIDGE_WS_URL = "ws://127.0.0.1:7331";
@@ -48828,15 +48968,44 @@ async function runPipelineJob({ jobId, imageBytes, options, onProgress }) {
     totalTimeMs: Math.round(performance.now() - t0)
   };
 }
-var DOM_DEFERRED = /* @__PURE__ */ new Set([
-  "read_page",
-  "list_interactive_elements",
-  "click",
-  "type",
-  "select_option",
-  "submit",
-  "scroll"
-]);
+var APPROVAL_WAIT_MS = 6e4;
+function approvalVerdict({ tool, label, text, reasons }) {
+  let port;
+  try {
+    port = chrome.runtime.connect({ name: "perscope-approval" });
+  } catch (err) {
+    return Promise.resolve({ approved: false, error: err?.message || "approval-channel-failed" });
+  }
+  const id2 = `appr_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (value) => {
+      if (done) return;
+      done = true;
+      try {
+        port.disconnect();
+      } catch {
+      }
+      resolve(value);
+    };
+    const timer = setTimeout(() => finish({ approved: false, timeout: true }), APPROVAL_WAIT_MS);
+    port.onMessage.addListener((msg) => {
+      if (!msg || msg.id !== id2 || msg.action !== "APPROVAL_RESULT") return;
+      clearTimeout(timer);
+      finish({ approved: !!msg.approved, dismissed: !!msg.dismissed, error: msg.error });
+    });
+    port.onDisconnect.addListener(() => {
+      clearTimeout(timer);
+      finish({ approved: false, error: "approval-channel-closed" });
+    });
+    try {
+      port.postMessage({ action: "APPROVAL_REQUEST", id: id2, tool, label, text, reasons });
+    } catch (err) {
+      clearTimeout(timer);
+      finish({ approved: false, error: err?.message || "approval-channel-failed" });
+    }
+  });
+}
 async function handleBridgeTool({ tool, params }) {
   if (tool === "capture_tab") {
     if (params && params.tabId !== void 0 && params.tabId !== null) {
@@ -48863,12 +49032,140 @@ async function handleBridgeTool({ tool, params }) {
       return { status: "error", reason: err?.message || "pipeline-failed" };
     }
   }
-  if (DOM_DEFERRED.has(tool)) {
-    return {
-      status: "error",
-      reason: "dom-not-implemented-in-beta",
-      detail: `${tool} needs content.js (Final scope). This beta serves capture_tab only.`
-    };
+  if (tool === "read_page") {
+    if (params && params.tabId !== void 0 && params.tabId !== null) {
+      return { status: "error", reason: "tab-targeting-requires-tabs-permission" };
+    }
+    try {
+      const res = await chrome.runtime.sendMessage({ target: "background", action: "REQUEST_DOM_CAPTURE" });
+      if (!res || res.status !== "SUCCESS" || !res.capture) {
+        return { status: "error", reason: res?.error || "dom-capture-failed" };
+      }
+      return mapDomCaptureToReadPage(res.capture);
+    } catch (err) {
+      return { status: "error", reason: err?.message || "dom-capture-failed" };
+    }
+  }
+  if (tool === "list_tabs") {
+    try {
+      const res = await chrome.runtime.sendMessage({ target: "background", action: "LIST_TABS" });
+      if (!res || res.status !== "SUCCESS" || !Array.isArray(res.tabs)) {
+        return { status: "error", reason: res?.error || "tab-listing-failed" };
+      }
+      const tabs = res.tabs.filter((t) => t && typeof t.tabId === "number").map((t) => ({
+        tabId: t.tabId,
+        title: String(t.title ?? ""),
+        url: String(t.url ?? ""),
+        active: !!t.active
+      }));
+      const out = { status: "ok", tabs };
+      if (typeof res.titlesAvailable === "boolean") out.titlesAvailable = res.titlesAvailable;
+      return out;
+    } catch (err) {
+      return { status: "error", reason: err?.message || "tab-listing-failed" };
+    }
+  }
+  if (tool === "list_interactive_elements") {
+    if (params && params.tabId !== void 0 && params.tabId !== null) {
+      return { status: "error", reason: "tab-targeting-requires-tabs-permission" };
+    }
+    try {
+      const res = await chrome.runtime.sendMessage({ target: "background", action: "REQUEST_ELEMENT_LIST" });
+      if (!res || res.status !== "SUCCESS" || !Array.isArray(res.elements)) {
+        return { status: "error", reason: res?.error || "element-listing-failed" };
+      }
+      const elements = res.elements.filter((el2) => el2 && typeof el2.ref === "string").map((el2) => ({
+        ref: el2.ref,
+        tag: String(el2.tag ?? ""),
+        label: String(el2.label ?? ""),
+        role: String(el2.role ?? "")
+      }));
+      return { status: "ok", elements };
+    } catch (err) {
+      return { status: "error", reason: err?.message || "element-listing-failed" };
+    }
+  }
+  if (tool === "scroll" || tool === "click" || tool === "type" || tool === "select_option" || tool === "submit") {
+    if (params && params.tabId !== void 0 && params.tabId !== null) {
+      return { status: "error", reason: "tab-targeting-requires-tabs-permission" };
+    }
+    if (tool === "type" && typeof params?.text !== "string") {
+      return { status: "error", reason: "bad-arguments" };
+    }
+    if (tool === "select_option" && typeof params?.value !== "string") {
+      return { status: "error", reason: "bad-arguments" };
+    }
+    if (tool === "scroll" && params?.direction !== "up" && params?.direction !== "down") {
+      return { status: "error", reason: "bad-arguments" };
+    }
+    if ((tool === "click" || tool === "submit") && (typeof params?.ref !== "string" || !params.ref)) {
+      return { status: "error", reason: "bad-arguments" };
+    }
+    if ((tool === "type" || tool === "select_option") && (typeof params?.ref !== "string" || !params.ref)) {
+      return { status: "error", reason: "bad-arguments" };
+    }
+    try {
+      if (tool === "scroll") {
+        const res = await chrome.runtime.sendMessage({
+          target: "background",
+          action: "REQUEST_EXECUTE",
+          tool,
+          direction: params.direction,
+          amount: params.amount
+        });
+        if (!res || res.status !== "SUCCESS") {
+          return { status: "error", reason: res?.error || "scroll-failed" };
+        }
+        return { status: "ok" };
+      }
+      const preview = await chrome.runtime.sendMessage({
+        target: "background",
+        action: "REQUEST_PREVIEW",
+        tool,
+        ref: params.ref
+      });
+      if (!preview || preview.status !== "SUCCESS" || !preview.preview) {
+        return { status: "error", reason: preview?.error || "preview-failed" };
+      }
+      const signals = preview.preview;
+      const execute = async () => {
+        const res = await chrome.runtime.sendMessage({
+          target: "background",
+          action: "REQUEST_EXECUTE",
+          tool,
+          ref: params.ref,
+          text: params.text,
+          value: params.value
+        });
+        if (!res || res.status !== "SUCCESS") {
+          return { status: "error", reason: res?.error || "action-failed" };
+        }
+        return { status: "ok", ref: params.ref };
+      };
+      const verdict = isDestructive({
+        tool,
+        label: signals.label || "",
+        text: signals.text || "",
+        inputType: signals.inputType || "",
+        isFormSubmit: !!signals.isFormSubmit
+      });
+      if (!verdict.destructive) return await execute();
+      const decision = await approvalVerdict({
+        tool,
+        label: signals.label || "",
+        text: signals.text || "",
+        reasons: verdict.reasons
+      });
+      if (!decision.approved) {
+        if (decision.timeout || decision.error === "approval-timed-out") {
+          return { status: "timeout", reason: "Approval timed out in the extension \u2014 not executed" };
+        }
+        return { status: "denied", reason: "Denied in the extension \u2014 not executed" };
+      }
+      return await execute();
+    } catch (err) {
+      return { status: "error", reason: err?.message || "action-failed" };
+    }
   }
   return { status: "error", reason: `unknown-tool:${tool}` };
 }

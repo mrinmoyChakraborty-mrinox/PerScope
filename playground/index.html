@@ -7,7 +7,7 @@
 
     <title>PerScope Playground</title>
 
-    <link rel="stylesheet" href="perscopee.css">
+    <link rel="stylesheet" href="/ui/playground.css">
 </head>
 
 <body>
@@ -176,13 +176,13 @@ WEBSOCKET CONNECTION
 <div class="ws-controls">
 
     <label for="ws-url">
-        WebSocket Server
+        Bridge WebSocket
     </label>
 
     <input
         id="ws-url"
         type="text"
-        value="ws://localhost:8080"
+        value="ws://127.0.0.1:7331"
         autocomplete="off">
 
     <div class="ws-buttons">
@@ -202,20 +202,28 @@ WEBSOCKET CONNECTION
         </button>
 
     </div>
-    <div class="progress-speed-control">
+    <div class="ws-pairing">
 
-    <label>
+        <label for="ws-pair-code">
+            Pairing code (bridge dashboard)
+        </label>
+
         <input
-            type="checkbox"
-            id="progress-fast-toggle">
-        Fast mode
-    </label>
+            id="ws-pair-code"
+            type="text"
+            inputmode="numeric"
+            autocomplete="one-time-code"
+            maxlength="6"
+            placeholder="6-digit code">
 
-    <small>
-        Fast ≈ 3s · Normal ≈ 6.5s
-    </small>
+        <button
+            id="ws-pair"
+            class="secondary-button"
+            type="button">
+            Pair
+        </button>
 
-</div>
+    </div>
     <div class="ws-status-row">
 
         <span
@@ -230,8 +238,8 @@ WEBSOCKET CONNECTION
     </div>
 
     <small class="ws-hint">
-        Start Node server first —
-        browser cannot spawn it.
+        Start the bridge daemon first (it prints the pairing code),
+        then Start here, then Pair — the browser cannot spawn the daemon.
     </small>
 
 </div>
@@ -246,8 +254,16 @@ WEBSOCKET CONNECTION
             <section class="tools-panel">
 
                 <h3>
-                    Tools (7)
+                    Tools (9)
                 </h3>
+
+
+                <div class="tool-row">
+                    <span>capture_tab</span>
+                    <span class="tool-status read">
+                        Read
+                    </span>
+                </div>
 
 
                 <div class="tool-row">
@@ -312,6 +328,202 @@ WEBSOCKET CONNECTION
                         Read
                     </span>
                 </div>
+
+
+                <div class="tool-row">
+                    <span>list_tabs</span>
+
+                    <span class="tool-status read">
+                        Read
+                    </span>
+                </div>
+
+            </section>
+
+
+            <!-- =================================================
+                 MANUAL SIDE (T5: tab picker + generic tool sender)
+            ================================================== -->
+
+            <section class="manual-panel">
+
+                <h3>
+                    Manual
+                </h3>
+
+
+                <label for="manual-tab-picker">
+                    Tab
+                </label>
+
+                <div class="manual-row">
+
+                    <select id="manual-tab-picker">
+                        <option value="">Active tab</option>
+                    </select>
+
+                    <button
+                        id="manual-refresh-tabs"
+                        class="secondary-button"
+                        type="button">
+                        Refresh
+                    </button>
+
+                </div>
+
+
+                <label for="manual-tool">
+                    Tool
+                </label>
+
+                <select id="manual-tool">
+                    <option value="capture_tab">capture_tab</option>
+                    <option value="read_page">read_page</option>
+                    <option value="list_interactive_elements">list_interactive_elements</option>
+                    <option value="list_tabs">list_tabs</option>
+                    <option value="click">click</option>
+                    <option value="type">type</option>
+                    <option value="select_option">select_option</option>
+                    <option value="submit">submit</option>
+                    <option value="scroll">scroll</option>
+                </select>
+
+
+                <label for="manual-params">
+                    Params (JSON)
+                </label>
+
+                <textarea
+                    id="manual-params"
+                    rows="3"
+                    spellcheck="false">{}</textarea>
+
+
+                <button
+                    id="manual-send"
+                    class="primary-button"
+                    type="button">
+                    Send
+                </button>
+
+
+                <small class="ws-hint">
+                    Results land in the Tool inspector, exactly as an
+                    agent would see them. The selected tab is injected
+                    as tabId (except list_tabs); pick Active tab to omit
+                    it. Destructive tools still gate in the extension.
+                </small>
+
+            </section>
+
+
+            <!-- =================================================
+                 MODEL PROVIDER (chat-side reasoning backend)
+            ================================================== -->
+
+            <section class="model-panel">
+
+                <h3>
+                    Model
+                </h3>
+
+
+                <label for="model-mode">
+                    Provider
+                </label>
+
+                <select id="model-mode">
+                    <option value="lmstudio">LM Studio (local)</option>
+                    <option value="ollama">Ollama (local)</option>
+                    <option value="custom">Custom URL (local)</option>
+                    <option value="cloud">Cloud API (via local forwarder)</option>
+                </select>
+
+
+                <label for="model-endpoint">
+                    Endpoint
+                </label>
+
+                <input
+                    id="model-endpoint"
+                    type="text"
+                    autocomplete="off"
+                    spellcheck="false">
+
+
+                <label for="model-name">
+                    Model name
+                </label>
+
+                <input
+                    id="model-name"
+                    type="text"
+                    autocomplete="off"
+                    spellcheck="false"
+                    placeholder="e.g. llama-3.1-8b-instruct">
+
+
+                <label for="model-key">
+                    API key (optional, stored locally, never displayed)
+                </label>
+
+                <input
+                    id="model-key"
+                    type="password"
+                    autocomplete="off"
+                    spellcheck="false"
+                    placeholder="leave empty for LM Studio / Ollama">
+
+
+                <div class="setting-item-row">
+                    <label class="switch-label">
+                        <input type="checkbox" id="model-vision">
+                        <span>Vision-capable (send capture images)</span>
+                    </label>
+                </div>
+
+
+                <div class="manual-row">
+
+                    <button
+                        id="model-save"
+                        class="secondary-button"
+                        type="button">
+                        Save
+                    </button>
+
+                    <button
+                        id="model-test"
+                        class="secondary-button"
+                        type="button">
+                        Test
+                    </button>
+
+                </div>
+
+
+                <small class="ws-hint" id="model-status">
+                    Not configured.
+                </small>
+
+                <small class="ws-hint">
+                    Ollama in a browser needs CORS enabled
+                    (OLLAMA_ORIGINS) or requests fail silently —
+                    use Test to confirm. LM Studio allows local
+                    origins by default. Keys are stored locally and
+                    never shown or logged.
+                </small>
+
+                <small class="ws-hint">
+                    Cloud API never talks to the provider from this
+                    page: start the local forwarder
+                    (<span class="mono">npm run forwarder</span>,
+                    <span class="mono">127.0.0.1:7339</span>), keep the
+                    endpoint field pointed at it, and put the key here
+                    once — it is posted straight to the forwarder and
+                    never kept in the page afterwards. The provider URL
+                    itself lives on the forwarder (env/file), not here.
+                </small>
 
             </section>
 
@@ -457,13 +669,21 @@ WEBSOCKET CONNECTION
 
                          <div class="screen-header-right">
 
-                        <button
-                            id="raw-json-toggle"
-                            class="outline-button">
+                         <button
+                             id="raw-json-toggle"
+                             class="outline-button">
 
-                            View Raw JSON
+                             View Raw JSON
 
-                        </button>
+                         </button>
+                         <button
+                             id="capture-tab-btn"
+                             class="outline-button"
+                             type="button">
+
+                             Capture active tab
+
+                         </button>
                         <span
             id="latency-value"
             class="latency-value">
@@ -474,6 +694,21 @@ WEBSOCKET CONNECTION
 
 </div>
                     <!-- STRUCTURED VIEW -->
+
+                    <div
+                        id="capture-view"
+                        class="capture-view hidden">
+
+                        <img
+                            id="capture-img"
+                            class="capture-img"
+                            alt="Redacted tab capture">
+
+                        <div
+                            id="capture-meta"
+                            class="capture-meta"></div>
+
+                    </div>
 
                     <div
                         id="structured-screen-state">
@@ -490,7 +725,7 @@ WEBSOCKET CONNECTION
                                 </small>
 
                                 <strong>
-                                    Browser Page
+                                    —
                                 </strong>
 
                             </div>
@@ -503,7 +738,7 @@ WEBSOCKET CONNECTION
                                 </small>
 
                                 <strong>
-                                    Current browser page
+                                    —
                                 </strong>
 
                             </div>
@@ -516,7 +751,7 @@ WEBSOCKET CONNECTION
                                 </small>
 
                                 <strong>
-                                    1
+                                    —
                                 </strong>
 
                             </div>
@@ -560,34 +795,20 @@ WEBSOCKET CONNECTION
 
 </details>
                         <!-- Elements table -->
+
 <div class="elements-table">
 
     <div class="table-header">
 
-        <span>ID</span>
-        <span>Type</span>
+        <span>Ref</span>
+        <span>Tag</span>
         <span>Label / Text</span>
-        <span>Value</span>
+        <span>Role</span>
         <span>BBox</span>
 
     </div>
 
-
-    <div class="table-row">
-
-        <span>el_8</span>
-
-        <span>button</span>
-
-        <span>Delete Account</span>
-
-        <span>—</span>
-
-        <span>
-            [620,350,180,48]
-        </span>
-
-    </div>
+    <!-- Rows render here from real list_interactive_elements responses only. -->
 
 </div>
 
@@ -813,11 +1034,11 @@ WEBSOCKET CONNECTION
                         </div>
 
                         <strong>
-                            SAFE
+                            —
                         </strong>
 
                         <small>
-                            This action is allowed
+                            No action evaluated yet
                         </small>
 
                     </div>
@@ -1042,7 +1263,7 @@ WEBSOCKET CONNECTION
 
 
                         <span class="connection-label">
-                            ● Connected
+                            ○ Disconnected
                         </span>
 
                     </div>
@@ -1062,7 +1283,7 @@ WEBSOCKET CONNECTION
 
      <script
         type="module"
-        src="perscopee.js">
+        src="/ui/playground.js">
     </script> 
 
 </body>
