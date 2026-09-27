@@ -62,7 +62,7 @@ export class MockExtension {
     }
   }
 
-  pair(code) {
+  pair(code, role) {
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error("pair timeout")), 5000);
       const onMsg = (data) => {
@@ -80,7 +80,32 @@ export class MockExtension {
         }
       };
       this.ws.on("message", onMsg);
-      this.ws.send(JSON.stringify({ type: "pair", code }));
+      this.ws.send(JSON.stringify(role ? { type: "pair", code, role } : { type: "pair", code }));
+    });
+  }
+
+  hello(auth, role) {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("hello timeout")), 5000);
+      const onMsg = (data) => {
+        const msg = JSON.parse(String(data));
+        if (msg.type === "welcome") {
+          clearTimeout(timer);
+          this.ws.off("message", onMsg);
+          this.ws.off("close", onClose);
+          this.token = auth;
+          this.clientId = msg.clientId;
+          resolve(msg);
+        }
+      };
+      const onClose = () => {
+        clearTimeout(timer);
+        this.ws.off("message", onMsg);
+        reject(new Error("closed-during-hello"));
+      };
+      this.ws.on("message", onMsg);
+      this.ws.on("close", onClose);
+      this.ws.send(JSON.stringify(role ? { type: "hello", auth, role } : { type: "hello", auth }));
     });
   }
 

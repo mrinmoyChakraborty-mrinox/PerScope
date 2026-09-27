@@ -19,6 +19,7 @@
  */
 
 import {
+  associateLabelValues,
   classifySensitiveField,
   placeholderForForceRedact,
   resolveStructuralHint,
@@ -393,9 +394,12 @@ export function runTier0OnSegments(segments, detector) {
     if (segment.forceRedact) {
       const placeholder = placeholderForForceRedact(
         null,
-        segment.forceReason || "input-type-password"
+        segment.forceReason || "input-type-password",
+        segment.forcedType
       );
-      const type = placeholder === "<CARD_NUMBER>" ? "CARD_NUMBER" : "PASSWORD";
+      const type =
+        segment.forcedType ||
+        (placeholder === "<CARD_NUMBER>" ? "CARD_NUMBER" : "PASSWORD");
       segmentResults.push({ segment, redactedText: placeholder, detections: [] });
       findings.push({
         type,
@@ -433,12 +437,18 @@ export function runTier0OnSegments(segments, detector) {
 }
 
 /**
- * Full snapshot pipeline: walk -> Tier0 per segment -> block-aware rebuild.
- * Never mutates the DOM. Empty findings is a valid, non-error result.
+ * Full snapshot pipeline: walk -> label/value association -> Tier0 per
+ * segment -> block-aware rebuild. Never mutates the DOM. Empty findings is
+ * a valid, non-error result.
+ *
+ * Association runs BEFORE Tier0 (mirroring Tier0-before-NER layering):
+ * label-associated secrets skip pattern matching entirely, because random
+ * strings carry no pattern signature to match.
  */
 export function captureDOM(rootDoc, detector, options) {
   const { segments, skipped, frameCount } = captureDOMSegments(rootDoc, options);
-  const { segmentResults, findings } = runTier0OnSegments(segments, detector);
+  const associated = associateLabelValues(segments);
+  const { segmentResults, findings } = runTier0OnSegments(associated, detector);
   const redactedDocument = reconstructDocument(
     segmentResults.map((r) => ({ blockRole: r.segment.blockRole, redactedText: r.redactedText }))
   );

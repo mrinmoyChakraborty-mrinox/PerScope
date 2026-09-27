@@ -15,6 +15,15 @@
 
 ---
 
+## 2026-09-16 — Bridge multiplexing + playground Manual leg + DOM read/list — Cosmic Crux
+
+- **Change:** `@perscope/bridge@0.1.0` published; in-repo role-aware multiplexing (agent vs extension sockets, id remap, `duplicate-id`, live-code dashboard), 9 tools with new `list_tabs`; extension routes `read_page` (Tier0 map) + `list_interactive_elements` (registry refs) + `list_tabs` over the bridge; playground speaks the bridge directly (paired WS agent leg, 70s ceilings, tab picker, generic sender, `capture_tab` rendering, pairing UI; mock retired to explicit-only); DOM label→value association + UPI/Verhoeff Tier0 gap fixes; piidetector NER placeholder-feedback + remote-path fixes.
+- **Why:** T0–T8 slice (usable Manual playground) per LIST.md; D1–D5, D7 approved as specified.
+- **Impact:** `bridge/` (22/22 tests), `extension/v7 beta/` (51/51 tests, rebuilt `dist/`), `playground/` (8/8 tests), `README.md` §7, `docs/{architecture,tool-schema,security-model,limitations,build-order}.md`, `LIST.md`.
+- **Follow-up:** T6 chat loop (D6 model call open), T6d actions + approval UI, T9 joint acceptance, `0.2.0` publish; manual checks outstanding: T2b live read_page, `list_tabs` titles verdict.
+
+---
+
 ## 2026-09-16 — README + locked next-phase plan — Cosmic Crux
 
 - **Change:** Replaced root `README.md` with the working-test-prototype doc (image pipeline + locked Section 7: bridge singleton daemon, blocking confirm flow, DOM Phase-1 text-only, Playground Local/Manual/Cloud, owner split). Synced architecture §4–5, tool-schema (`capture_tab`, blocking-call resolution), security-model (validator boundary + pairing), limitations (prototype limits + §7.6 deferrals), build-order (superseded by README §7.7).

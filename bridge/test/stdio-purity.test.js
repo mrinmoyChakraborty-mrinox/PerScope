@@ -62,6 +62,7 @@ test("mcp subcommand writes only JSON-RPC frames to stdout", async () => {
     "capture_tab",
     "click",
     "list_interactive_elements",
+    "list_tabs",
     "read_page",
     "scroll",
     "select_option",

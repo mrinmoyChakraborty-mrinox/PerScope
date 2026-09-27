@@ -1,3 +1,11 @@
+/* DEMO ONLY — NOT the production path.
+ *
+ * This is the retired mock browser runtime: canned elements, fabricated
+ * verdicts, home-grown safety logic. It exists for offline UI development
+ * only (run explicitly via `npm run mock`) and must never be mistaken for
+ * the real PerScope runtime (bridge -> extension -> browser). Do not add
+ * features here; do not point production UI at it.
+ */
 import { WebSocketServer } from "ws";
 
 const PORT = 8080;

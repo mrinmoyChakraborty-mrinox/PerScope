@@ -50,3 +50,11 @@ Port `7331` ✓ · envelope `{id,tool,params}` **plus top-level `auth`** (differ
 - Real routing for `read_page` / `list_interactive_elements` / `click` / `type` / `select_option` / `submit` / `scroll`; `tabId` targeting (needs `tabs` permission).
 - Wire `isDestructive()` in front of every mutating action + blocking Approve/Deny UI (side-panel-vs-popup-window decision open — beta has neither surface).
 - `isDestructive()` list refinement; timeout mitigation (§5); reconnection edge cases under load.
+
+## 7. Addendum 2026-09-16 � T2b/T2c/T5-era wiring (supplements, does not rewrite above)
+
+- \ead_page\ routed: offscreen -> SW REQUEST_DOM_CAPTURE -> Tier0 map to {sanitizedText, findings} (allowlisted fields; \	abId\ variant errors pending D4).
+- \list_interactive_elements\ routed: SW REQUEST_ELEMENT_LIST -> content registry \efs.js\ (opaque el_N, live re-resolution, stale_element only on genuine mismatch). No second content script � single injection path.
+- \list_tabs\ routed: SW chrome.tabs.query -> allowlisted {tabId,title,url,active} + titlesAvailable (D4 empirical probe).
+- Manifest since widened: scripting + content_scripts (auto-injected entry) + <all_urls>. The section 6 lines about no-permission-changes / no-content-script are stale by later work.
+- Still T6d: action execution, isDestructive wiring, approval UI (popup-window approved).

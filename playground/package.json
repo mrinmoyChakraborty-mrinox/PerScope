@@ -2,12 +2,14 @@
   "name": "playground",
   "version": "1.0.0",
   "description": "PerScope Privacy-First Browser Agent Playground",
-  "main": "js/server/websocket-server.js",
   "type": "module",
   "scripts": {
-    "start": "node js/server/websocket-server.js",
-    "serve": "serve . -l 3000",
-    "dev": "concurrently \"npm start\" \"npm run serve\""
+    "start": "vite",
+    "serve": "vite",
+    "dev": "vite",
+    "mock": "node mock/websocket-server.js",
+    "forwarder": "node forwarder/server.js",
+    "test": "node --test --test-concurrency=1 tests/transport.test.mjs tests/schema.test.mjs"
   },
   "keywords": [
     "perscope",
@@ -21,7 +23,8 @@
     "ws": "^8.21.3"
   },
   "devDependencies": {
+    "concurrently": "^9.2.1",
     "serve": "^14.2.4",
-    "concurrently": "^9.2.1"
+    "vite": "^8.3.1"
   }
 }

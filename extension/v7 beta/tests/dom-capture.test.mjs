@@ -18,7 +18,10 @@ import {
   captureDOM,
 } from "../src/pipeline/dom-capture.js";
 import {
+  associateLabelValues,
   classifySensitiveField,
+  findSecretLabelMatch,
+  isPlausibleValueDom,
   mapAutocompleteToType,
   resolveStructuralHint,
   reconstructDocument,
@@ -340,7 +343,20 @@ test("acceptance: email text + labelled email input + password + aria-label phon
 
   const forced = result.findings.filter((f) => f.forceRedacted);
   assert.ok(forced.length >= 2, "expected password + hidden force-redacted findings");
-  assert.ok(forced.every((f) => f.type === "PASSWORD"));
+  // type=password / type=hidden inputs stay PASSWORD-typed and forced...
+  const pwForced = forced.filter((f) => f.type === "PASSWORD");
+  assert.ok(pwForced.length >= 2, `expected >=2 forced PASSWORD, got ${JSON.stringify(forced.map((f) => f.type))}`);
+  // ...while label-associated values carry their precise associated type
+  // (association runs before Tier0): the labelled email input is forced
+  // EMAIL_ID with its label hint intact, not generic PASSWORD.
+  const emailForced = forced.filter(
+    (f) => f.type === "EMAIL_ID" && f.structuralHint && f.structuralHint.labelText === "Email address"
+  );
+  assert.ok(emailForced.length >= 1, "expected forced EMAIL_ID with labelText hint");
+  assert.ok(
+    forced.every((f) => ["PASSWORD", "EMAIL_ID", "PHONE_NUMBER", "OTP", "PIN", "UPI_VPA", "BANK_ACCOUNT", "CARD_NUMBER", "IFSC_CODE", "DATE_OF_BIRTH", "AADHAAR", "PASSPORT_NUMBER"].includes(f.type)),
+    `forced finding with unexpected type: ${JSON.stringify(forced.map((f) => f.type))}`
+  );
 
   // Raw secrets must never reach findings or serialized output.
   const serialized = JSON.stringify(result.findings) + result.redactedDocument;
@@ -446,4 +462,123 @@ test("confidence passthrough: finding confidence equals Tier0 detectPII confiden
   const via = findings.find((f) => f.type === "EMAIL_ID");
   assert.ok(direct && via);
   assert.equal(via.confidence, direct.confidence);
+});
+
+test("association: visible password input with label hint is force-redacted (reported leak shape)", () => {
+  const label = el("label", { for: "pw2" }, ["Password"]);
+  const input = el("input", { id: "pw2", name: "pw2", type: "text", value: "mwafhaeiofhoeu" });
+  const doc = makeDocument(el("body", {}, [el("div", {}, [label, input])]));
+  const out = captureDOM(doc, detector, { NodeFilter: NF });
+  const wire = JSON.stringify(out);
+  assert.ok(!wire.includes("mwafhaeiofhoeu"), "raw password value leaked to output");
+  const hit = out.findings.find((f) => f.type === "PASSWORD" && f.forceRedacted);
+  assert.ok(hit, "expected a force-redacted PASSWORD finding");
+  assert.ok(out.redactedDocument.includes("<PASSWORD>"));
+});
+
+test("association: same-segment 'Label: value' split keeps the label", () => {
+  const doc = makeDocument(el("body", {}, [el("p", {}, ["Password: hunter2secret"])]));
+  const out = captureDOM(doc, detector, { NodeFilter: NF });
+  assert.ok(out.redactedDocument.includes("Password"), "label must stay visible");
+  assert.ok(!out.redactedDocument.includes("hunter2secret"), "value must not survive");
+  assert.ok(out.findings.some((f) => f.type === "PASSWORD" && f.forceRedacted));
+});
+
+test("association: colon-terminated bare label forces next same-block value", () => {
+  const doc = makeDocument(
+    el("body", {}, [el("div", {}, ["Password:"]), el("div", {}, ["s3cr3t-visible"])])
+  );
+  const out = captureDOM(doc, detector, { NodeFilter: NF });
+  assert.ok(!JSON.stringify(out).includes("s3cr3t-visible"));
+  assert.ok(out.findings.some((f) => f.type === "PASSWORD" && f.forceRedacted));
+});
+
+test("association: row-style table th key forces adjacent td value", () => {
+  const row = el("tr", {}, [el("th", {}, ["Password"]), el("td", {}, ["table-secret-9"])]);
+  const doc = makeDocument(el("body", {}, [el("table", {}, [row])]));
+  const out = captureDOM(doc, detector, { NodeFilter: NF });
+  assert.ok(!JSON.stringify(out).includes("table-secret-9"));
+  assert.ok(out.findings.some((f) => f.type === "PASSWORD" && f.forceRedacted));
+  assert.ok(out.redactedDocument.includes("Password"), "key cell stays visible");
+});
+
+test("association: secret column header forces values beneath it", () => {
+  const thead = el("thead", {}, [el("tr", {}, [el("th", {}, ["Password"])])]);
+  const tbody = el("tbody", {}, [el("tr", {}, [el("td", {}, ["col-secret-7"])])]);
+  const doc = makeDocument(el("body", {}, [el("table", {}, [thead, tbody])]));
+  const out = captureDOM(doc, detector, { NodeFilter: NF });
+  assert.ok(!JSON.stringify(out).includes("col-secret-7"));
+  assert.ok(out.findings.some((f) => f.type === "PASSWORD" && f.forceRedacted));
+});
+
+test("association: value-only principle — labels are never force-marked", () => {
+  const segs = [
+    { id: "s1", kind: "text", tag: "span", text: "Password", blockRole: "inline" },
+    { id: "s2", kind: "text", tag: "span", text: "Just some prose without secrets", blockRole: "inline" },
+  ];
+  const frozen = JSON.stringify(segs);
+  const out = associateLabelValues(segs);
+  assert.equal(JSON.stringify(segs), frozen, "input segments must not be mutated");
+  assert.ok(out.find((s) => s.id === "s1" && !s.forceRedact), "bare label untouched");
+  assert.ok(out.find((s) => s.id === "s2" && !s.forceRedact), "plain prose untouched");
+});
+
+test("association vocabulary: findSecretLabelMatch + plausible-value guards", () => {
+  assert.deepEqual(findSecretLabelMatch("  Password: "), { label: "password", type: "PASSWORD" });
+  assert.deepEqual(findSecretLabelMatch("UPI ID"), { label: "upi id", type: "UPI_VPA" });
+  assert.equal(findSecretLabelMatch("Contact us anytime"), null);
+  assert.equal(isPlausibleValueDom("mwafhaeiofhoeu"), true);
+  assert.equal(isPlausibleValueDom("Thank you for reading this lengthy help article today"), false);
+  assert.equal(isPlausibleValueDom(""), false);
+});
+test("association: link between label and value does not break pairing (reported login shape)", () => {
+  const doc = makeDocument(
+    el("body", {}, [
+      el("div", {}, ["Password"]),
+      el("a", { href: "/forgot" }, ["Forgot password?"]),
+      el("div", {}, ["madiwhfaoniof"]),
+      el("div", {}, ["\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022"]),
+      el("button", {}, ["Hide password"]),
+    ])
+  );
+  const out = captureDOM(doc, detector, { NodeFilter: NF });
+  const wire = JSON.stringify(out);
+  assert.ok(!wire.includes("madiwhfaoniof"), "raw password value leaked to output");
+  assert.ok(out.findings.some((f) => f.type === "PASSWORD" && f.forceRedacted));
+  assert.ok(out.redactedDocument.includes("<PASSWORD>"));
+  assert.ok(out.redactedDocument.includes("Forgot password?"), "link text must stay visible");
+  assert.ok(out.redactedDocument.includes("Hide password"), "toggle text must stay visible");
+});
+
+test("association: cross-scope text value next to mask dots is forced (custom-component leak)", () => {
+  // Live PullO shape: <label> element nests the label one level deeper than
+  // a bare div, so scopeKey puts label and value in different scopes while
+  // the shown secret renders as plain text beside a dots run.
+  const doc = makeDocument(
+    el("body", {}, [
+      el("div", {}, [el("label", { for: "pw" }, ["Password"])]),
+      el("div", {}, [
+        el("span", {}, ["mw1er2s3-live"]),
+        el("span", {}, ["\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022"]),
+        el("button", {}, ["Hide password"]),
+      ]),
+    ])
+  );
+  const out = captureDOM(doc, detector, { NodeFilter: NF });
+  assert.ok(!JSON.stringify(out).includes("mw1er2s3-live"), "cross-scope password text leaked");
+  assert.ok(out.findings.some((f) => f.type === "PASSWORD" && f.forceRedacted));
+  assert.ok(out.redactedDocument.includes("<PASSWORD>"));
+  assert.ok(out.redactedDocument.includes("Hide password"), "toggle text must stay visible");
+});
+
+test("association: prose after a secret header without dots stays visible (no over-redaction)", () => {
+  const doc = makeDocument(
+    el("body", {}, [
+      el("div", {}, [el("h2", {}, ["Password"])]),
+      el("div", {}, [el("p", {}, ["Welcome back to your account"])]),
+    ])
+  );
+  const out = captureDOM(doc, detector, { NodeFilter: NF });
+  assert.ok(out.redactedDocument.includes("Welcome back"), "benign prose must not be masked");
+  assert.ok(!out.findings.some((f) => f.type === "PASSWORD" && f.forceRedacted));
 });

@@ -9,12 +9,15 @@
 - **WASM fallback is single-threaded by necessity** (int64 inputs crash the threaded WASM build); CPU inference of the big models is slow — demo on WebGPU-capable hardware.
 - **`tests/run-checks.mjs` still references a legacy `models/FastVLM-0.5B-ONNX` check path;** the real full-offline path is `models/onnx-community/FastVLM-0.5B-ONNX`.
 
-## Explicitly deferred (locked plan, README §7.6)
+## Explicitly deferred (locked plan, README §7.6 + open gaps)
 
 - DOM overlay visual masking (Phase 2) — stretch goal, scoped demo pages only.
 - Native Messaging for extension↔bridge — WebSocket ships first; Native Messaging is a post-MVP hardening item.
 - Multimodal adjudication for DOM mode — toggle (`FASTVLM_FOR_DOM`), off by default.
 - Output-level self-audit re-scan vs. relying on caption scrubbing alone — still open.
+- Action execution + `isDestructive()` wiring + approval UI (T6d; popup-window approved, side panel long-term).
+- Chat-side model loop (T6, PS-required) + MCP-show demos (T4) + `list_tabs` titles live verdict (D4 empirical check pending).
+- NER model path for `piidetector.js` Node use (remote `onnx/` prefix 404s; local copy untracked) — extension DOM path unaffected (Tier0-only).
 
 ## System limits (still true)
 
@@ -33,6 +36,6 @@ Demo must rehearse the broadened use case (ISRO-regulated / sensitive-screen) an
 ## What we will NOT claim
 
 - Firefox fully tested (until it is) — Chrome-only, no Firefox claim without testing.
-- Bridge / DOM redaction / Playground built (until each subsection lands — see README §7 status lines).
+- Bridge / DOM redaction / Playground built — now partially true, state per-component (see README §7 status lines): bridge transport + multiplexing built, DOM Tier0 + read_page + listing built, playground Manual WS leg built; chat loop, action execution, approval UI pending.
 - FastVLM-0.5B always produces valid JSON (it doesn't — fusion fallback covers it).
 - DOM overlay masking in Phase 1 (text-level only by design).
