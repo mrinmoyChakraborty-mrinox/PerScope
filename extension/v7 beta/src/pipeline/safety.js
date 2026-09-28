@@ -77,8 +77,24 @@ function extractJsonObject(text) {
         }
         throw new Error("JSON output truncated or incomplete. Preview: " + src.slice(base, base+500));
     }
-    const jsonStr = src.slice(base, end + 1);
-    return jsonStr;
+    // JSON-compliance repair (attempt-only, never corrupting): the 0.5B model
+    // emits JS-object-literal shape with UNQUOTED keys
+    // ({redactions: [..], caption: ".."}). Try quoting bare keys; success is
+    // proven by JSON.parse — on failure the exact original slice is returned
+    // and the caller follows the normal path. String contents may contain
+    // `word:` patterns the regex also quotes, but a mangled string still
+    // fails parse, so repair can only turn failure into success, never
+    // success into failure.
+    const rawSlice = src.slice(base, end + 1);
+    const repairedSlice = rawSlice.replace(/([{,]\s*)([A-Za-z_][A-Za-z0-9_]*)(\s*:)/g, '$1"$2"$3');
+    if (repairedSlice !== rawSlice) {
+        try {
+            JSON.parse(repairedSlice);
+            console.warn("[FASTVLM] Repaired unquoted JSON keys");
+            return repairedSlice;
+        } catch {}
+    }
+    return rawSlice;
 }
 
 function normalizeFastVLMRedactionItem(r, evidence) {

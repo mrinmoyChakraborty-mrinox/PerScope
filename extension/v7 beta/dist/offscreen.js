@@ -31,6 +31,30 @@ function classifyGpuTier(info, isFallback = false) {
   if (isIntegrated) return "integrated";
   return info?.vendor || info?.description ? "integrated" : "unknown";
 }
+function _logGpuEvent(kind, detail) {
+  _gpuEventLog.push({ t: Date.now(), kind, detail: String(detail ?? "").slice(0, 300) });
+  if (_gpuEventLog.length > 50) _gpuEventLog.shift();
+  console.warn(`[GPU-EVENT] ${kind}: ${String(detail ?? "").slice(0, 300)}`);
+}
+function getGpuErrorLog() {
+  return [..._gpuEventLog];
+}
+async function _attachObservabilityDevice(adapter) {
+  try {
+    if (!adapter || typeof adapter.requestDevice !== "function") return null;
+    const device = await adapter.requestDevice();
+    device.addEventListener?.("uncapturederror", (e) => {
+      _logGpuEvent("uncapturederror", e?.error?.message ?? e?.message ?? "unknown");
+    });
+    device.lost?.then?.((info) => {
+      _logGpuEvent("device-lost", `${info?.reason ?? "unknown"}: ${info?.message ?? ""}`);
+    });
+    return device;
+  } catch (e) {
+    console.warn("[GPU] Observability device unavailable:", e?.message ?? e);
+    return null;
+  }
+}
 async function resolveComputeDevice(forceTier = null) {
   if (_cachedDeviceResolution && !forceTier) {
     return _cachedDeviceResolution;
@@ -115,7 +139,9 @@ async function resolveComputeDevice(forceTier = null) {
       description: info.description || label,
       isFallback: Boolean(adapter.isFallbackAdapter),
       highPerformance,
-      adapter
+      adapter,
+      // Observability handle only — the pipeline never renders through it.
+      observabilityDevice: await _attachObservabilityDevice(adapter)
     };
     console.log(`[GPU] Hardware Selected: ${resolution.label} (${resolution.tier.toUpperCase()} GPU, highPerformance=${highPerformance})`);
     _cachedDeviceResolution = resolution;
@@ -163,10 +189,11 @@ function configureOrtEnvironment(Ort, env3, computeDevice) {
     console.warn("[GPU] Failed configuring ORT environment:", e.message);
   }
 }
-var _cachedDeviceResolution;
+var _cachedDeviceResolution, _gpuEventLog;
 var init_gpu = __esm({
   "src/pipeline/gpu.js"() {
     _cachedDeviceResolution = null;
+    _gpuEventLog = [];
   }
 });
 
@@ -45977,6 +46004,67 @@ function extractMultiLineLabel(ocrItems, rows) {
   }
   return candidates;
 }
+function _stripEdgePunct(t) {
+  return cleanText(t).replace(/^[.,:;]+/, "").replace(/[.,:;]+$/, "");
+}
+function extractUnlabeledFormatCandidates(ocrItems) {
+  const candidates = [];
+  for (const item of ocrItems || []) {
+    const text = String(item?.text ?? "");
+    if (!text || isPlaceholderText(text)) continue;
+    const raw = [];
+    for (const type of UNLABELED_FORMAT_TYPES) {
+      for (const re of type.regexes) {
+        re.lastIndex = 0;
+        let m;
+        while ((m = re.exec(text)) !== null) {
+          const full2 = m[0];
+          let value = full2;
+          let spanStart = m.index;
+          if (type.valueGroup != null && m[type.valueGroup] != null) {
+            value = m[type.valueGroup];
+            spanStart = m.index + full2.indexOf(value);
+          }
+          value = cleanText(value);
+          if (!value) continue;
+          if (type.skipValue && type.skipValue(value)) continue;
+          if (type.validateValue && !type.validateValue(value)) continue;
+          if (!isPlausibleValue(value)) continue;
+          raw.push({
+            field_type: type.field_type,
+            confidence: type.confidence,
+            value,
+            start: spanStart,
+            end: spanStart + value.length,
+            item
+          });
+          if (full2.length === 0) re.lastIndex++;
+        }
+      }
+    }
+    raw.sort((a, b) => b.end - b.start - (a.end - a.start) || b.confidence - a.confidence || UNLABELED_TYPE_ORDER.indexOf(a.field_type) - UNLABELED_TYPE_ORDER.indexOf(b.field_type));
+    const kept = [];
+    for (const r of raw) {
+      if (kept.some((k3) => r.start < k3.end && r.end > k3.start)) continue;
+      kept.push(r);
+    }
+    for (const k3 of kept) {
+      const valueBBox = estimateTextSubBBox(k3.item, k3.value);
+      candidates.push({
+        source: "deterministic_format",
+        ocr_ids: [k3.item.id],
+        label: null,
+        value: k3.value,
+        field_type: k3.field_type,
+        confidence: k3.confidence,
+        reason: `Bare ${k3.field_type} format match without adjacent label (unlabeled-format sub-pass)`,
+        bbox: valueBBox ?? null,
+        raw_text: text
+      });
+    }
+  }
+  return candidates;
+}
 function extractSensitiveFieldCandidates(ocr) {
   if (!ocr?.items?.length) return [];
   const { ordered, rows } = buildReadingOrder(ocr);
@@ -45984,7 +46072,26 @@ function extractSensitiveFieldCandidates(ocr) {
   const sideBySide = extractLabelValueSideBySide(ordered, rows);
   const vertical = extractLabelValueVertical(ordered, rows);
   const multiLine = extractMultiLineLabel(ocr.items, rows);
-  const all = [...sameLine, ...sideBySide, ...vertical, ...multiLine];
+  const labeled = [...sameLine, ...sideBySide, ...vertical, ...multiLine];
+  const formatBased = extractUnlabeledFormatCandidates(ocr.items);
+  const labeledKeys = /* @__PURE__ */ new Set();
+  for (const c of labeled) {
+    const v = _stripEdgePunct(c.value).toLowerCase();
+    for (const id2 of c.ocr_ids || []) labeledKeys.add(`${v}|${id2}`);
+  }
+  const filteredFormat = formatBased.filter((c) => {
+    const v = _stripEdgePunct(c.value).toLowerCase();
+    return !(c.ocr_ids || []).some((id2) => {
+      if (labeledKeys.has(`${v}|${id2}`)) return true;
+      for (const key of labeledKeys) {
+        const [lv, lid] = key.split("|");
+        if (lid !== String(id2)) continue;
+        if (lv && v && (lv.includes(v) || v.includes(lv))) return true;
+      }
+      return false;
+    });
+  });
+  const all = [...labeled, ...filteredFormat];
   const seen = /* @__PURE__ */ new Map();
   for (const c of all) {
     const key = `${c.field_type}|${c.value}|${[...c.ocr_ids].sort().join(",")}`;
@@ -46444,7 +46551,7 @@ function buildUIStructure({ image, ocr, fastvlm }) {
     containers
   };
 }
-var FASTVLM_DEBUG, EXACT_PLACEHOLDERS, EXAMPLE_EMAIL_DOMAINS, SENSITIVE_FIELD_VOCABULARY, NORMALIZED_VOCAB;
+var FASTVLM_DEBUG, EXACT_PLACEHOLDERS, EXAMPLE_EMAIL_DOMAINS, SENSITIVE_FIELD_VOCABULARY, NORMALIZED_VOCAB, UNLABELED_FORMAT_TYPES, UNLABELED_TYPE_ORDER;
 var init_heuristics = __esm({
   "src/pipeline/heuristics.js"() {
     FASTVLM_DEBUG = false;
@@ -46528,6 +46635,73 @@ var init_heuristics = __esm({
       normalized: normalizeLabelForMatch(entry.label)
     }));
     NORMALIZED_VOCAB.sort((a, b) => b.normalized.length - a.normalized.length);
+    UNLABELED_FORMAT_TYPES = [
+      {
+        field_type: "EMAIL",
+        confidence: 0.95,
+        // piidetector EMAIL_ID shape.
+        regexes: [/\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/gi],
+        skipValue: (v) => isExampleEmail(v) || isPlaceholderText(v)
+      },
+      {
+        field_type: "PHONE",
+        confidence: 0.9,
+        regexes: [
+          // US NANP, lenient exchange (fictional ranges like 555-01xx must hit):
+          // +1-555-014-2288, (555) 014-2288, 555-014-2288, dotted/spaced.
+          /(?<!\d)(?:\+?1[\s.\-]?)?(?:\(?[2-9]\d{2}\)?[\s.\-]?)\d{3}[\s.\-]\d{4}(?!\d)/g,
+          // Generic E.164 fallback for non-NANP internationals.
+          /(?<!\d)\+\d[\d\s.\-()]{7,16}(?!\d)/g
+        ],
+        validateValue: (v) => {
+          const digits = String(v).replace(/\D/g, "");
+          return digits.length >= 10 && digits.length <= 15;
+        }
+      },
+      {
+        field_type: "DATE",
+        confidence: 0.85,
+        regexes: [
+          // MM/DD/YYYY (also matches DD/MM — accepted, marked DATE, no locale split).
+          /(?<!\d)(0?[1-9]|1[0-2])\/(0?[1-9]|[12]\d|3[01])\/(\d{2}|\d{4})(?!\d)/g,
+          // MM-DD-YYYY / DD-MM-YYYY (dash form; same acceptance rule).
+          /(?<!\d)(0?[1-9]|[12]\d|3[01])-(0?[1-9]|1[0-2])-(\d{2}|\d{4})(?!\d)/g,
+          // ISO YYYY-MM-DD.
+          /(?<!\d)(\d{4})-(0?[1-9]|1[0-2])-(0?[1-9]|[12]\d|3[01])(?!\d)/g
+        ]
+      },
+      {
+        field_type: "CARD_NUMBER",
+        confidence: 0.9,
+        // Label-anchored ONLY — freestanding 4-digit runs (gate codes,
+        // amounts, years) are explicitly out of scope.
+        regexes: [/(?:ending|ends?\s+in|last\s*4)\D{0,10}(\d{4})(?!\d)/gi],
+        valueGroup: 1
+      },
+      {
+        field_type: "TRACKING_NUMBER",
+        confidence: 0.9,
+        regexes: [
+          // UPS 1Z + 16 alphanumerics, spaced or solid.
+          /\b1Z(?:\s?[A-Z0-9]){16}\b/gi,
+          // FedEx 12 / 15 digit, USPS 20-22 digit.
+          /(?<!\d)\d{12}(?!\d)/g,
+          /(?<!\d)\d{15}(?!\d)/g,
+          /(?<!\d)\d{20,22}(?!\d)/g
+        ]
+      },
+      {
+        field_type: "VAT_ID",
+        confidence: 0.85,
+        regexes: [
+          // GB VAT: GB 123 4567 89, spaced or solid.
+          /\bGB\s?\d{3}\s?\d{4}\s?\d{2}\b/gi,
+          // Small EU set, format-only (no checksum — stated limitation).
+          /\b(?:DE|FR|IT|ES|NL|BE|IE|AT|DK|SE|FI|PT|GR|PL|CZ|HU)\s?[A-Z0-9]{8,12}\b/gi
+        ]
+      }
+    ];
+    UNLABELED_TYPE_ORDER = ["EMAIL", "PHONE", "TRACKING_NUMBER", "VAT_ID", "DATE", "CARD_NUMBER"];
   }
 });
 
@@ -46725,19 +46899,26 @@ function buildFastVLMRedactionEvidence({ image, ocr, ettinFindings, deterministi
   };
 }
 function buildFastVLMRedactionPrompt(evidence) {
+  const MAX_FUSED_PROMPT_LINES = 40;
+  const MAX_OCR_IDS_PROMPT = 120;
   const ocrJoined = evidence.ocr.map(
     (o) => o.text
   ).join(" | ").slice(0, 12e3) || "(no OCR)";
-  const ocrIds = evidence.ocr.map(
+  const ocrIdsAll = evidence.ocr.map(
     (o) => o.id
-  ).join(",") || "(none)";
-  const fusedLines = evidence.fused_candidates.map(
+  );
+  const ocrIds = ocrIdsAll.slice(0, MAX_OCR_IDS_PROMPT).join(",") || "(none)";
+  const ocrIdsTruncNote = ocrIdsAll.length > MAX_OCR_IDS_PROMPT ? ` [+${ocrIdsAll.length - MAX_OCR_IDS_PROMPT} more OCR ids omitted]` : "";
+  const fusedAll = evidence.fused_candidates || [];
+  const fusedLines = fusedAll.slice(0, MAX_FUSED_PROMPT_LINES).map(
     (c) => `${c.candidate_id} "${c.text}" types=[${(c.candidate_types || []).join(",")}] conf=${Number(
       c.confidence ?? 0
     ).toFixed(
       2
     )} ocr=${(c.ocr_ids || []).join(",")}`
   ).join("\n") || "(none)";
+  const fusedTruncNote = fusedAll.length > MAX_FUSED_PROMPT_LINES ? `
+[+${fusedAll.length - MAX_FUSED_PROMPT_LINES} more candidates omitted for length; prefer listed candidate_ids]` : "";
   return `
 You are PerScope's local multimodal
 privacy-redaction adjudicator.
@@ -46757,13 +46938,24 @@ NO CODE FENCES.
 NO EXPLANATION.
 NO REASONING.
 
-Schema:
+Schema (machine-readable FIRST, prose LAST \u2014 under a token cap the tail
+is what gets cut, and a cut caption is recoverable while cut redactions
+are not):
 
 {
-  "caption": "detailed visual description of everything visible, without repeating sensitive values",
   "redactions": [],
   "additional_redactions": [],
-  "rejected_candidates": []
+  "rejected_candidates": [],
+  "caption": "detailed visual description of everything visible, without repeating sensitive values"
+}
+
+Minimal valid example (exact shape, short values):
+
+{
+  "redactions": [{"candidate_id": "cand_000", "confidence": 0.97}],
+  "additional_redactions": [],
+  "rejected_candidates": ["cand_001"],
+  "caption": "Invoice page with a table and contact block."
 }
 
 RULES:
@@ -46829,10 +47021,10 @@ RULES:
  11. Confidence must be between 0 and 1.
 
 OCR IDS:
-${ocrIds}
+${ocrIds}${ocrIdsTruncNote}
 
 FUSED CANDIDATES:
-${fusedLines}
+${fusedLines}${fusedTruncNote}
 
 OCR:
 ${ocrJoined}
@@ -47107,8 +47299,17 @@ function extractJsonObject(text) {
     }
     throw new Error("JSON output truncated or incomplete. Preview: " + src.slice(base, base + 500));
   }
-  const jsonStr = src.slice(base, end + 1);
-  return jsonStr;
+  const rawSlice = src.slice(base, end + 1);
+  const repairedSlice = rawSlice.replace(/([{,]\s*)([A-Za-z_][A-Za-z0-9_]*)(\s*:)/g, '$1"$2"$3');
+  if (repairedSlice !== rawSlice) {
+    try {
+      JSON.parse(repairedSlice);
+      console.warn("[FASTVLM] Repaired unquoted JSON keys");
+      return repairedSlice;
+    } catch {
+    }
+  }
+  return rawSlice;
 }
 function normalizeFastVLMRedactionItem(r, evidence) {
   if (!r) return null;
@@ -48273,6 +48474,9 @@ async function prepareFastVLMImage(imageBlob) {
   }
 }
 async function runFastVLMAdjudication({ imageBlob, evidence, computeDevice }) {
+  if (Date.now() < _fastvlmCooldownUntil) {
+    throw new Error("FastVLM cooling down after abandoned generate (timeout pile-up guard)");
+  }
   const fastvlm = await loadFastVLM(computeDevice);
   const prompt = buildFastVLMRedactionPrompt(evidence);
   const startTime = performance.now();
@@ -48281,16 +48485,39 @@ async function runFastVLMAdjudication({ imageBlob, evidence, computeDevice }) {
   const renderedPrompt = fastvlm.processor.apply_chat_template(messages, {
     add_generation_prompt: true
   });
-  const inputs = await fastvlm.processor(image, renderedPrompt, {
+  const renderedPromptJsonForced = `${renderedPrompt}{`;
+  const inputs = await fastvlm.processor(image, renderedPromptJsonForced, {
     add_special_tokens: false
   });
-  const generated = await fastvlm.model.generate({
+  const generatePromise = fastvlm.model.generate({
     ...inputs,
     max_new_tokens: FASTVLM_MAX_NEW_TOKENS,
     do_sample: false,
-    repetition_penalty: 1.15,
-    no_repeat_ngram_size: 3
+    // JSON-compliance fix: the old no_repeat_ngram_size:3 actively punished
+    // valid JSON (repeated keys like "candidate_id"/"ocr_ids" contain
+    // repeated trigrams by construction), and repetition_penalty 1.15 biased
+    // away from required structural repetition. Greedy + near-unity penalty
+    // is the correct shape for schema output; loops are bounded by the token
+    // cap and the JSON-only prompt instead.
+    repetition_penalty: 1.05
   });
+  generatePromise.catch(() => {
+  });
+  let generated;
+  try {
+    generated = await Promise.race([
+      generatePromise,
+      new Promise(
+        (_, reject) => setTimeout(() => reject(new Error(`FastVLM generation timed out after ${FASTVLM_GENERATE_TIMEOUT_MS}ms`)), FASTVLM_GENERATE_TIMEOUT_MS)
+      )
+    ]);
+  } catch (err) {
+    if (String(err?.message || "").includes("timed out")) {
+      _fastvlmCooldownUntil = Date.now() + FASTVLM_TIMEOUT_COOLDOWN_MS;
+      console.warn(`[FASTVLM] Timeout \u2014 cooling down T2 for ${FASTVLM_TIMEOUT_COOLDOWN_MS / 1e3}s (orphaned op still burning)`);
+    }
+    throw err;
+  }
   const inputLength = Number(inputs?.input_ids?.dims?.at(-1) ?? 0);
   disposeTensors(inputs);
   let outputText = "";
@@ -48305,6 +48532,8 @@ async function runFastVLMAdjudication({ imageBlob, evidence, computeDevice }) {
     disposeTensors({ generated });
   }
   outputText = String(outputText).trim();
+  if (outputText && !outputText.startsWith("{")) outputText = `{${outputText}`;
+  outputText = String(outputText).trim();
   if (!outputText) throw new Error("FastVLM generated an empty response");
   let parsed = null;
   let parseError = null;
@@ -48314,6 +48543,16 @@ async function runFastVLMAdjudication({ imageBlob, evidence, computeDevice }) {
   } catch (err) {
     parseError = err;
     console.warn(`[FASTVLM] JSON parse failed: ${err.message}`);
+  }
+  if (parsed && !parseError) {
+    const fusedIds = new Set((evidence?.fused_candidates || []).map((c) => c?.candidate_id));
+    const ocrIds = new Set((evidence?.ocr || []).map((o) => o?.id));
+    const validRedactions = Array.isArray(parsed.redactions) ? parsed.redactions.filter((r) => r && fusedIds.has(r.candidate_id)) : [];
+    const validAdditional = Array.isArray(parsed.additional_redactions) ? parsed.additional_redactions.filter((r) => r && typeof r === "object" && (r.ocr_ids || []).some((id2) => ocrIds.has(id2))) : [];
+    if (validRedactions.length === 0 && validAdditional.length === 0) {
+      parseError = new Error("FastVLM output parsed but contained no actionable redactions (no real candidate/OCR ids)");
+      console.warn(`[FASTVLM] ${parseError.message} \u2014 falling back to fusion`);
+    }
   }
   const latencyMs = Math.round(performance.now() - startTime);
   if (!parsed || !parsed.caption) {
@@ -48326,7 +48565,7 @@ async function runFastVLMAdjudication({ imageBlob, evidence, computeDevice }) {
   if (parsed?.caption) {
     parsed.caption = sanitizeCaption(parsed.caption, evidence);
   }
-  if (parseError && (!parsed.redactions || parsed.redactions.length === 0)) {
+  if (parseError) {
     return {
       status: "error",
       reason: parseError.message,
@@ -48654,7 +48893,8 @@ async function _runExtensionPipelineInner(inputImage, options = {}, onProgress =
     pipeline_perf: {
       totalTimeMs,
       stages: buildStagePerf(stageMarks),
-      memory: { before: memBefore, after: memAfter }
+      memory: { before: memBefore, after: memAfter },
+      gpuEvents: getGpuErrorLog()
     }
   };
   const perceptionPrompt = buildPerceptionPrompt(evidenceOutput);
@@ -48666,7 +48906,7 @@ async function _runExtensionPipelineInner(inputImage, options = {}, onProgress =
     totalTimeMs
   };
 }
-var FASTVLM_MODEL, FASTVLM_DTYPE, FASTVLM_MAX_NEW_TOKENS, PII_DEBUG, _pipelineRunning, NER_MODEL_LOCAL, NER_MODEL_REMOTE, NER_MAX_TOKENS, _ocrServiceCache, _nerCache, _fastvlmCache, MAX_WORKING_DIMENSION, _nerLoadPromise, _fastvlmLoadPromise;
+var FASTVLM_MODEL, FASTVLM_DTYPE, FASTVLM_MAX_NEW_TOKENS, FASTVLM_GENERATE_TIMEOUT_MS, FASTVLM_TIMEOUT_COOLDOWN_MS, _fastvlmCooldownUntil, PII_DEBUG, _pipelineRunning, NER_MODEL_LOCAL, NER_MODEL_REMOTE, NER_MAX_TOKENS, _ocrServiceCache, _nerCache, _fastvlmCache, MAX_WORKING_DIMENSION, _nerLoadPromise, _fastvlmLoadPromise;
 var init_v7_extension = __esm({
   "src/pipeline/v7-extension.js"() {
     init_ort_bundle_min();
@@ -48685,7 +48925,10 @@ var init_v7_extension = __esm({
       vision_encoder: "q4f16",
       decoder_model_merged: "q4f16"
     };
-    FASTVLM_MAX_NEW_TOKENS = 160;
+    FASTVLM_MAX_NEW_TOKENS = 128;
+    FASTVLM_GENERATE_TIMEOUT_MS = 12e4;
+    FASTVLM_TIMEOUT_COOLDOWN_MS = 9e4;
+    _fastvlmCooldownUntil = 0;
     PII_DEBUG = false;
     _pipelineRunning = false;
     if (typeof chrome !== "undefined" && chrome?.runtime?.getURL) {
@@ -49003,12 +49246,48 @@ function schedulePrewarm() {
   }
 }
 schedulePrewarm();
+var DEFAULT_RECYCLE_AFTER_CAPTURES = 15;
+var _completedCaptures = 0;
+var _lastGpuEventSeenT = 0;
+function _resolveRecycleAfter(options) {
+  if (options && typeof options.recycleAfterCaptures === "number") return options.recycleAfterCaptures;
+  return DEFAULT_RECYCLE_AFTER_CAPTURES;
+}
+function _maybeRequestRecycle({ options, evidence }) {
+  try {
+    _completedCaptures++;
+    const recycleAfter = _resolveRecycleAfter(options);
+    const gpuEvents = evidence?.pipeline_perf?.gpuEvents || [];
+    const freshGpuEvents = gpuEvents.filter((e) => Number(e?.t || 0) > _lastGpuEventSeenT);
+    for (const e of gpuEvents) {
+      const t = Number(e?.t || 0);
+      if (Number.isFinite(t) && t > _lastGpuEventSeenT) _lastGpuEventSeenT = t;
+    }
+    let reason = null;
+    if (freshGpuEvents.length > 0) {
+      reason = `gpu-event (${freshGpuEvents.length} new: ${freshGpuEvents.map((e) => e.kind).join(",")})`;
+    } else if (recycleAfter > 0 && _completedCaptures >= recycleAfter) {
+      reason = `capture-count ${_completedCaptures} >= ${recycleAfter}`;
+    }
+    if (!reason) return;
+    console.warn(`[RECYCLE] capture #${_completedCaptures} triggered recycle (${reason}) \u2014 requesting offscreen reload after result delivery.`);
+    setTimeout(() => {
+      try {
+        chrome.runtime.sendMessage({ target: "background", action: "REQUEST_OFFSCREEN_RECYCLE", reason }).catch?.(() => {
+        });
+      } catch {
+      }
+    }, 1500);
+  } catch {
+  }
+}
 async function runPipelineJob({ jobId, imageBytes, options, onProgress }) {
   const t0 = performance.now();
   const buffer = new Uint8Array(imageBytes).buffer;
   const result = await runExtensionPipeline(buffer, options || {}, onProgress);
   const outputArrayBuffer = await result.outputBlob.arrayBuffer();
   const outputBase64 = uint8ToBase64(new Uint8Array(outputArrayBuffer));
+  _maybeRequestRecycle({ options, evidence: result.evidence });
   return {
     status: "SUCCESS",
     jobId,
@@ -49070,7 +49349,11 @@ async function handleBridgeTool({ tool, params }) {
       const blob = await (await fetch(cap.dataUrl)).blob();
       const imageBytes = Array.from(new Uint8Array(await blob.arrayBuffer()));
       const jobId = `bridge_${Date.now()}`;
-      const res = await runPipelineJob({ jobId, imageBytes, options: {}, onProgress: () => {
+      const bridgeOptions = {};
+      if (params && typeof params.recycleAfterCaptures === "number") {
+        bridgeOptions.recycleAfterCaptures = params.recycleAfterCaptures;
+      }
+      const res = await runPipelineJob({ jobId, imageBytes, options: bridgeOptions, onProgress: () => {
       } });
       return {
         status: "ok",

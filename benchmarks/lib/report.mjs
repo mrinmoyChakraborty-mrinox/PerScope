@@ -43,7 +43,7 @@ export function renderLatestMd(summary) {
   L.push(``);
   L.push(`## Steady-state stage latency (ms, all fixtures pooled)`);
   L.push(``);
-  L.push(`| stage | mean | median | p95 | max | n |`);
+  L.push(`| stage | mean | p50 | p95 | max | n |`);
   L.push(`| --- | ---: | ---: | ---: | ---: | ---: |`);
   for (const [stage, s] of Object.entries(summary.stageStats)) L.push(statsRow(stage, s));
   L.push(``);
@@ -51,7 +51,7 @@ export function renderLatestMd(summary) {
   L.push(``);
   L.push(`## Cold start vs steady (total ms per fixture)`);
   L.push(``);
-  L.push(`| fixture | cold (run 1) | steady median | steady p95 |`);
+  L.push(`| fixture | cold (run 1) | steady p50 | steady p95 |`);
   L.push(`| --- | ---: | ---: | ---: |`);
   for (const f of summary.fixtures) {
     L.push(`| ${esc(f.id)} | ${fmt(f.coldTotal, 0)} | ${fmt(f.steadyTotal?.median, 0)} | ${fmt(f.steadyTotal?.p95, 0)} |`);
@@ -59,7 +59,7 @@ export function renderLatestMd(summary) {
   L.push(``);
   L.push(`## Memory (JS heap, offscreen document, per capture_tab run)`);
   L.push(``);
-  L.push(`| fixture | median before (MB) | median delta/run (KB) | drift slope (KB/run) | verdict |`);
+  L.push(`| fixture | p50 before (MB) | p50 delta/run (KB) | drift slope (KB/run) | verdict |`);
   L.push(`| --- | ---: | ---: | ---: | --- |`);
   for (const f of summary.fixtures) {
     const m = f.memory || {};
@@ -84,9 +84,19 @@ export function renderLatestMd(summary) {
   L.push(``);
   L.push(`Expected by construction: clean ~0% Tier 2 (text-free page => FastVLM skips); ambiguous ~100%.`);
   L.push(``);
+  L.push(`## CPU (Chrome process CPU-seconds per capture_tab run, Windows only)`);
+  L.push(``);
+  L.push(`Wall time says WHERE time goes; CPU seconds say WHAT burns. Per-stage CPU attribution is impossible from outside the renderer, so CPU is per-run and stages stay per-stage. >100% utilization = multi-threaded (WASM/model workers).`);
+  L.push(``);
+  L.push(`| fixture | CPU/run p50 (s) | utilization p50 (%) |`);
+  L.push(`| --- | ---: | ---: |`);
+  for (const f of summary.fixtures) {
+    L.push(`| ${esc(f.id)} | ${fmt(f.cpuSecP50)} | ${fmt(f.cpuPctP50, 0)} |`);
+  }
+  L.push(``);
   L.push(`## Per-fixture breakdown`);
   L.push(``);
-  L.push(`| fixture | designed to exercise | steady median total (ms) | findings/run (median) | entity types seen | T2 rate |`);
+  L.push(`| fixture | designed to exercise | steady p50 total (ms) | findings/run (p50) | entity types seen | T2 rate |`);
   L.push(`| --- | --- | ---: | ---: | --- | ---: |`);
   for (const f of summary.fixtures) {
     L.push(
