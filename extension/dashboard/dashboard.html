@@ -3,20 +3,654 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>PerScope Privacy Redactor - Full Dashboard</title>
-  <link rel="icon" type="image/png" href="../assets/icon128.png">
-  <link rel="stylesheet" href="dashboard.css">
+  <title>PerScope Privacy Redactor — Dashboard</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+  <style>
+    /* ============ SHARED TOKENS (identical in both palettes) ============ */
+    :root {
+      /* Palette from the supplied reference */
+      --brown-900: #582F0E;
+      --brown-800: #7F4F24;
+      --brown-700: #936639;
+      --tan-600: #A68A64;
+      --sand-500: #B6AD90;
+      --sage-400: #C2C5AA;
+      --sage-500: #A4AC86;
+      --olive-600: #656D4A;
+      --olive-700: #414833;
+      --olive-800: #333D29;
+      --radius: 16px;
+    }
+
+    /* ============ LIGHT THEME (from PerScope_dashboard_light_palette.html) ============ */
+    #dashShell[data-theme="light"] {
+      --page: #F5F1E8;
+      --surface: #FFFDF8;
+      --surface-soft: #F8F5ED;
+      --surface-muted: #EEE9DC;
+      --border: #D9D3C3;
+      --border-strong: #C5BCA8;
+      --text: #333D29;
+      --text-soft: #656D4A;
+      --shadow: 0 10px 30px rgba(65, 72, 51, .09);
+      --shadow-soft: 0 4px 14px rgba(65, 72, 51, .07);
+
+      color: var(--text);
+      background:
+        radial-gradient(circle at 80% 0%, rgba(194,197,170,.42), transparent 28%),
+        linear-gradient(135deg, #F8F5ED 0%, var(--page) 52%, #EEE9DC 100%);
+    }
+
+    /* ============ DARK THEME (from PerScope_dashboard_dark_palette.html) ============ */
+    #dashShell[data-theme="dark"] {
+      --page: #171A12;
+      --surface: #202419;
+      --surface-soft: #25291D;
+      --surface-muted: #2D3223;
+      --border: #3D4430;
+      --border-strong: #566044;
+      --text: #F0EBDD;
+      --text-soft: #B6AD90;
+      --shadow: 0 12px 32px rgba(0, 0, 0, .30);
+      --shadow-soft: 0 5px 16px rgba(0, 0, 0, .22);
+
+      color: var(--text);
+      background:
+        radial-gradient(circle at 80% 0%, rgba(164,172,134,.12), transparent 28%),
+        radial-gradient(circle at 15% 80%, rgba(147,102,57,.10), transparent 30%),
+        linear-gradient(135deg, #1D2118 0%, var(--page) 52%, #12150F 100%);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: Inter, system-ui, sans-serif;
+    }
+
+    #dashShell { min-height: 100vh; }
+
+    button, input, select { font: inherit; }
+
+    .dashboard-layout {
+      min-height: 100vh;
+      display: grid;
+      grid-template-columns: 320px minmax(0, 1fr);
+    }
+
+    /* Sidebar */
+    .sidebar {
+      padding: 22px 18px;
+      background: rgba(255,253,248,.9);
+      border-right: 1px solid var(--border);
+      box-shadow: 6px 0 28px rgba(65,72,51,.06);
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      overflow-y: auto;
+    }
+    #dashShell[data-theme="dark"] .sidebar {
+      background: rgba(29,33,24,.94);
+      box-shadow: 6px 0 28px rgba(0,0,0,.22);
+    }
+
+    .sidebar-brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 4px 7px 20px;
+    }
+
+    .brand-icon {
+      width: 42px;
+      height: 42px;
+      display: grid;
+      place-items: center;
+      color: white;
+      background: linear-gradient(145deg, var(--brown-700), var(--brown-900));
+      border-radius: 12px;
+      box-shadow: 0 6px 14px rgba(88,47,14,.18);
+    }
+    #dashShell[data-theme="dark"] .brand-icon {
+      box-shadow: 0 6px 18px rgba(88,47,14,.28);
+      border-radius: 12px;
+      box-shadow: 0 6px 14px rgba(88,47,14,.18);
+    }
+
+    .brand-info h2 {
+      margin: 0;
+      font-size: 19px;
+      color: var(--brown-900);
+      letter-spacing: -.02em;
+    }
+    #dashShell[data-theme="dark"] .brand-info h2 { color: #E2D6BF; }
+
+    .brand-info span {
+      color: var(--text-soft);
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+    #dashShell[data-theme="dark"] .brand-info span { color: #B6AD90; }
+
+    .sidebar-card {
+      padding: 16px;
+      margin-bottom: 14px;
+      background: rgba(255,253,248,.82);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow-soft);
+    }
+    #dashShell[data-theme="dark"] .sidebar-card { background: rgba(32,36,25,.88); }
+
+    .sidebar-card h3 {
+      margin: 0 0 13px;
+      font-size: 12px;
+      color: var(--brown-800);
+      text-transform: uppercase;
+      letter-spacing: .09em;
+    }
+    #dashShell[data-theme="dark"] .sidebar-card h3 { color: #C8B18D; }
+
+    .device-badge-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 5px 9px;
+      border-radius: 999px;
+      background: #E4E8D5;
+      color: var(--olive-700);
+      border: 1px solid #C8CFB0;
+      font-size: 11px;
+      font-weight: 700;
+    }
+    #dashShell[data-theme="dark"] .badge {
+      background: #39412C;
+      color: #D5D9BD;
+      border: 1px solid #596448;
+    }
+
+    .pulse-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--olive-600);
+      box-shadow: 0 0 0 4px rgba(101,109,74,.12);
+    }
+
+    .device-name {
+      margin: 10px 0 13px;
+      color: var(--olive-800);
+      font-weight: 700;
+      font-size: 14px;
+    }
+    #dashShell[data-theme="dark"] .device-name { color: #D6D8C2; }
+
+    .telemetry-list {
+      display: grid;
+      gap: 8px;
+      padding-top: 11px;
+      border-top: 1px solid var(--border);
+    }
+
+    .telemetry-item {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      color: var(--text-soft);
+      font-size: 11px;
+    }
+    #dashShell[data-theme="dark"] .telemetry-item { color: #B6AD90; }
+
+    .telemetry-item strong {
+      color: var(--olive-700);
+      font-weight: 600;
+    }
+    #dashShell[data-theme="dark"] .telemetry-item strong { color: #C5C9AF; }
+
+    .form-group { margin-bottom: 13px; }
+
+    label {
+      display: block;
+      margin-bottom: 6px;
+      color: var(--text-soft);
+      font-size: 11px;
+      font-weight: 600;
+    }
+    #dashShell[data-theme="dark"] label { color: #B6AD90; }
+
+    .form-control {
+      width: 100%;
+      border: 1px solid var(--border-strong);
+      border-radius: 10px;
+      background: #FFFDF8;
+      color: var(--text);
+      padding: 10px 11px;
+      outline: none;
+      transition: .2s ease;
+    }
+    #dashShell[data-theme="dark"] .form-control { background: #1A1E15; }
+
+    .form-control:focus {
+      border-color: var(--brown-700);
+      box-shadow: 0 0 0 3px rgba(147,102,57,.13);
+    }
+
+    .form-check {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      margin-top: 11px;
+    }
+
+    .form-check input {
+      margin-top: 2px;
+      accent-color: var(--olive-600);
+    }
+
+    .form-check label {
+      margin: 0;
+      line-height: 1.45;
+    }
+
+    .bridge-status {
+      margin: -3px 0 13px;
+      color: var(--text-soft);
+      font-size: 11px;
+    }
+    #dashShell[data-theme="dark"] .bridge-status { color: #B6AD90; }
+
+    .bridge-status strong { color: var(--olive-600); }
+
+    .bridge-msg {
+      min-height: 14px;
+      margin: 8px 0 0;
+      color: var(--text-soft);
+      font-size: 10px;
+    }
+    #dashShell[data-theme="dark"] .bridge-msg { color: #B6AD90; }
+
+    .sidebar-actions {
+      display: grid;
+      gap: 9px;
+      padding: 2px 0 12px;
+    }
+
+    .btn {
+      border: 1px solid transparent;
+      border-radius: 10px;
+      padding: 10px 13px;
+      cursor: pointer;
+      font-size: 11px;
+      font-weight: 700;
+      transition: transform .15s ease, box-shadow .15s ease, background .15s ease;
+    }
+
+    .btn:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 5px 13px rgba(65,72,51,.11);
+    }
+
+    .btn-full { width: 100%; }
+
+    .btn-primary {
+      color: #fff;
+      background: linear-gradient(135deg, var(--brown-700), var(--brown-800));
+      box-shadow: 0 5px 14px rgba(127,79,36,.17);
+    }
+    #dashShell[data-theme="dark"] .btn-primary {
+      background: linear-gradient(135deg, var(--brown-700), var(--brown-900));
+      box-shadow: 0 5px 16px rgba(88,47,14,.30);
+    }
+
+    .btn-secondary {
+      color: var(--olive-800);
+      background: #E5E8D7;
+      border-color: #C9CFB5;
+    }
+    #dashShell[data-theme="dark"] .btn-secondary {
+      color: #D6D8C2;
+      background: #343B29;
+      border-color: #596448;
+    }
+
+    .btn-ghost {
+      color: var(--brown-800);
+      background: transparent;
+      border-color: var(--border-strong);
+    }
+    #dashShell[data-theme="dark"] .btn-ghost { color: #C8B18D; }
+
+    /* Theme toggle lives in the topbar actions; kept visually quiet so the
+       supplied light/dark designs render exactly as provided. */
+    .theme-btn {
+      width: 34px;
+      padding: 10px 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .theme-btn svg { width: 14px; height: 14px; }
+
+    .hidden { display: none !important; }
+
+    /* Main */
+    .workspace {
+      min-width: 0;
+      padding: 26px 30px 30px;
+    }
+
+    .topbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 18px;
+      margin-bottom: 22px;
+    }
+
+    .topbar-title h1 {
+      margin: 0 0 7px;
+      color: var(--brown-900);
+      font-size: clamp(22px, 2.4vw, 30px);
+      letter-spacing: -.04em;
+    }
+    #dashShell[data-theme="dark"] .topbar-title h1 { color: #E2D6BF; }
+
+    .status-indicator {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      color: var(--olive-600);
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .status-indicator::before {
+      content: "";
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--olive-600);
+    }
+
+    .topbar-actions {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+
+    .viewer-layout {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 18px;
+    }
+
+    .image-panel {
+      min-width: 0;
+      overflow: hidden;
+      background: rgba(255,253,248,.92);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      box-shadow: var(--shadow);
+    }
+    #dashShell[data-theme="dark"] .image-panel { background: rgba(32,36,25,.94); }
+
+    .panel-header {
+      min-height: 55px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 0 15px;
+      border-bottom: 1px solid var(--border);
+      background: #FBF9F2;
+    }
+    #dashShell[data-theme="dark"] .panel-header { background: #25291D; }
+
+    .panel-header h3 {
+      margin: 0;
+      color: var(--brown-900);
+      font-size: 12px;
+      letter-spacing: .01em;
+    }
+    #dashShell[data-theme="dark"] .panel-header h3 { color: #E2D6BF; }
+
+    .panel-controls {
+      display: flex;
+      align-items: center;
+    }
+
+    .toggle-switch {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      margin: 0;
+      color: var(--text-soft);
+      font-size: 10px;
+      white-space: nowrap;
+    }
+    #dashShell[data-theme="dark"] .toggle-switch { color: #B6AD90; }
+
+    .toggle-switch input { accent-color: var(--olive-600); }
+
+    .redact-tag {
+      padding: 5px 9px;
+      border-radius: 999px;
+      background: #E3E7D5;
+      border: 1px solid #C7CEB1;
+      color: var(--olive-700);
+      font-size: 9px;
+      font-weight: 800;
+      letter-spacing: .06em;
+      text-transform: uppercase;
+    }
+    #dashShell[data-theme="dark"] .redact-tag {
+      background: #3A432C;
+      border: 1px solid #596448;
+      color: #D7D9C2;
+    }
+
+    .image-viewport {
+      min-height: 360px;
+      position: relative;
+      display: grid;
+      place-items: center;
+      overflow: hidden;
+      background:
+        linear-gradient(45deg, #F1EDE3 25%, transparent 25%) 0 0 / 22px 22px,
+        linear-gradient(-45deg, #F1EDE3 25%, transparent 25%) 0 0 / 22px 22px,
+        linear-gradient(45deg, transparent 75%, #F1EDE3 75%) 11px -11px / 22px 22px,
+        linear-gradient(-45deg, transparent 75%, #F1EDE3 75%) -11px 11px / 22px 22px,
+        #FAF8F2;
+    }
+    #dashShell[data-theme="dark"] .image-viewport {
+      background:
+        linear-gradient(45deg, #25291D 25%, transparent 25%) 0 0 / 22px 22px,
+        linear-gradient(-45deg, #25291D 25%, transparent 25%) 0 0 / 22px 22px,
+        linear-gradient(45deg, transparent 75%, #25291D 75%) 11px -11px / 22px 22px,
+        linear-gradient(-45deg, transparent 75%, #25291D 75%) -11px 11px / 22px 22px,
+        #1B1F16;
+    }
+
+    .drop-placeholder,
+    .empty-placeholder {
+      width: min(80%, 390px);
+      padding: 32px 20px;
+      text-align: center;
+      color: var(--text-soft);
+    }
+    #dashShell[data-theme="dark"] .drop-placeholder,
+    #dashShell[data-theme="dark"] .empty-placeholder { color: #B6AD90; }
+
+    .drop-placeholder svg {
+      color: var(--tan-600);
+      margin-bottom: 10px;
+    }
+
+    .drop-placeholder p,
+    .empty-placeholder p {
+      margin: 0 0 7px;
+      color: var(--olive-700);
+      font-size: 12px;
+      font-weight: 600;
+    }
+    #dashShell[data-theme="dark"] .drop-placeholder p,
+    #dashShell[data-theme="dark"] .empty-placeholder p { color: #C5C9AF; }
+
+    .drop-placeholder span {
+      font-size: 10px;
+      color: var(--sand-500);
+    }
+
+    .viewport-img {
+      max-width: 100%;
+      max-height: 520px;
+      object-fit: contain;
+      display: block;
+    }
+
+    .bbox-container {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+    }
+
+    .inspector-section {
+      margin-top: 18px;
+      overflow: hidden;
+      background: rgba(255,253,248,.92);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      box-shadow: var(--shadow);
+    }
+    #dashShell[data-theme="dark"] .inspector-section { background: rgba(32,36,25,.94); }
+
+    .inspector-tabs {
+      display: flex;
+      overflow-x: auto;
+      border-bottom: 1px solid var(--border);
+      background: #FBF9F2;
+    }
+    #dashShell[data-theme="dark"] .inspector-tabs { background: #25291D; }
+
+    .tab-btn {
+      position: relative;
+      border: 0;
+      background: transparent;
+      color: var(--text-soft);
+      padding: 13px 17px;
+      cursor: pointer;
+      font-size: 10px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+    #dashShell[data-theme="dark"] .tab-btn { color: #B6AD90; }
+
+    .tab-btn.active {
+      color: var(--brown-800);
+    }
+    #dashShell[data-theme="dark"] .tab-btn.active { color: #C8B18D; }
+
+    .tab-btn.active::after {
+      content: "";
+      position: absolute;
+      left: 14px;
+      right: 14px;
+      bottom: -1px;
+      height: 2px;
+      border-radius: 3px 3px 0 0;
+      background: var(--brown-700);
+    }
+
+    .inspector-content { padding: 16px; }
+
+    .tab-pane { display: none; }
+    .tab-pane.active { display: block; }
+
+    .caption-box {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      padding: 14px;
+      border-radius: 12px;
+      background: #F1F3E7;
+      border: 1px solid #D5DAC2;
+    }
+    #dashShell[data-theme="dark"] .caption-box {
+      background: #2C3223;
+      border: 1px solid #4D563B;
+    }
+
+    .caption-icon { font-size: 15px; }
+
+    .caption-box p {
+      margin: 0;
+      color: var(--olive-700);
+      font-size: 11px;
+      line-height: 1.6;
+    }
+    #dashShell[data-theme="dark"] .caption-box p { color: #C8CCB2; }
+
+    .json-viewer,
+    .prompt-viewer {
+      min-height: 115px;
+      margin: 0;
+      padding: 14px;
+      overflow: auto;
+      border-radius: 12px;
+      color: #F6F3EA;
+      background: var(--olive-800);
+      font: 11px/1.6 "JetBrains Mono", monospace;
+    }
+    #dashShell[data-theme="dark"] .json-viewer,
+    #dashShell[data-theme="dark"] .prompt-viewer {
+      color: #E7E0CF;
+      background: #10130D;
+    }
+
+    @media (max-width: 1100px) {
+      .dashboard-layout { grid-template-columns: 270px minmax(0,1fr); }
+      .workspace { padding: 22px; }
+      .topbar { align-items: flex-start; flex-direction: column; }
+      .topbar-actions { justify-content: flex-start; }
+    }
+
+    @media (max-width: 820px) {
+      .dashboard-layout { display: block; }
+      .sidebar {
+        position: relative;
+        width: 100%;
+        height: auto;
+        border-right: 0;
+        border-bottom: 1px solid var(--border);
+      }
+      .viewer-layout { grid-template-columns: 1fr; }
+      .workspace { padding: 18px; }
+    }
+  </style>
 </head>
+
 <body>
-  <div class="dashboard-layout">
-    <!-- Sidebar -->
+  <div class="dashboard-layout" id="dashShell" data-theme="light">
     <aside class="sidebar">
       <div class="sidebar-brand">
         <div class="brand-icon">
-          <img src="../assets/icon128.png" alt="PerScope logo" width="36" height="36" style="width:36px;height:36px;object-fit:contain;border-radius:8px;display:block;">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+            <path d="M12 8v4"/>
+            <path d="M12 16h.01"/>
+          </svg>
         </div>
         <div class="brand-info">
           <h2>PerScope</h2>
@@ -24,43 +658,35 @@
         </div>
       </div>
 
-      <!-- Hardware Telemetry Card -->
       <div class="sidebar-card">
         <h3>Compute Device</h3>
         <div class="device-badge-row">
           <span class="badge" id="dashDeviceTier">Dedicated GPU</span>
           <span class="pulse-dot" id="dashPulseDot"></span>
         </div>
-        <p class="device-name" id="dashDeviceName">Detecting...</p>
+        <p class="device-name" id="dashDeviceName">NVIDIA GPU · Local</p>
         <div class="telemetry-list" id="dashTelemetryList">
-          <div class="telemetry-item">
-            <span>Backend:</span> <strong id="teleBackend">WebGPU</strong>
-          </div>
-          <div class="telemetry-item">
-            <span>Adapter:</span> <strong id="teleVendor">NVIDIA</strong>
-          </div>
-          <div class="telemetry-item">
-            <span>Power Mode:</span> <strong id="telePower">High-Performance</strong>
-          </div>
+          <div class="telemetry-item"><span>Backend:</span> <strong id="teleBackend">WebGPU</strong></div>
+          <div class="telemetry-item"><span>Adapter:</span> <strong id="teleVendor">NVIDIA</strong></div>
+          <div class="telemetry-item"><span>Power Mode:</span> <strong id="telePower">High-Performance</strong></div>
         </div>
       </div>
 
-      <!-- Controls & Toggles -->
       <div class="sidebar-card">
         <h3>Pipeline Settings</h3>
         <div class="form-group">
           <label for="dashSelectDevice">Hardware Preference</label>
           <select id="dashSelectDevice" class="form-control">
-            <option value="auto">Auto (Dedicated GPU Priority)</option>
-            <option value="integrated">Integrated GPU</option>
-            <option value="cpu">CPU (WASM SIMD Fallback)</option>
+            <option>Auto (Dedicated GPU Priority)</option>
+            <option>Integrated GPU</option>
+            <option>CPU (WASM SIMD Fallback)</option>
           </select>
         </div>
         <div class="form-group">
           <label for="dashSelectStyle">Redaction Style</label>
           <select id="dashSelectStyle" class="form-control">
-            <option value="blur">Blur (Dual Pass + Wash)</option>
-            <option value="black">Solid Black Box</option>
+            <option>Blur (Dual Pass + Wash)</option>
+            <option>Solid Black Box</option>
           </select>
         </div>
         <div class="form-check">
@@ -73,54 +699,48 @@
         </div>
       </div>
 
-      <!-- Bridge Connection (agent mode; Human Mode works without it) -->
       <div class="sidebar-card">
         <h3>Bridge Connection</h3>
         <p class="bridge-status">Status: <strong id="dashBridgeStatus">Checking…</strong></p>
         <div class="form-group">
           <label for="dashBridgeCode">Pairing code (from bridge dashboard)</label>
-          <input type="text" id="dashBridgeCode" class="form-control" inputmode="numeric"
-                 autocomplete="one-time-code" maxlength="6" placeholder="6-digit code">
+          <input type="text" id="dashBridgeCode" class="form-control" maxlength="6" placeholder="6-digit code">
         </div>
-        <button id="dashBridgePair" class="btn btn-secondary btn-full">Pair with Bridge</button>
+        <button class="btn btn-secondary btn-full" id="dashBridgePair">Pair with Bridge</button>
         <p class="bridge-msg" id="dashBridgeMsg"></p>
       </div>
 
-      <!-- Actions -->
       <div class="sidebar-actions">
-        <button id="dashBtnUpload" class="btn btn-primary btn-full">Upload New Image</button>
-        <button id="dashBtnCapture" class="btn btn-secondary btn-full">Capture Active Tab</button>
+        <button class="btn btn-primary btn-full" id="dashBtnUpload">Upload New Image</button>
+        <button class="btn btn-secondary btn-full" id="dashBtnCapture">Capture Active Tab</button>
         <input type="file" id="dashFileInput" accept="image/*" class="hidden">
       </div>
     </aside>
 
-    <!-- Main Workspace -->
     <main class="workspace">
-      <!-- Top Bar -->
       <header class="topbar">
         <div class="topbar-title">
-          <h1 id="dashTitle">PII Redaction Studio</h1>
-          <span class="status-indicator" id="dashStatusIndicator">Ready</span>
+          <h1>PII Redaction Studio</h1>
+          <span class="status-indicator" id="dashStatusIndicator">Ready · On-device processing</span>
         </div>
-        <div class="topbar-actions" id="dashResultsActions" style="display: none;">
-          <button id="dashBtnDownloadPNG" class="btn btn-primary">Download Redacted PNG</button>
-          <button id="dashBtnCopy" class="btn btn-secondary">Copy to Clipboard</button>
-          <button id="dashBtnDownloadJSON" class="btn btn-ghost">Export Evidence JSON</button>
+        <div class="topbar-actions">
+          <button class="btn btn-primary" id="dashBtnDownloadPNG">Download Redacted PNG</button>
+          <button class="btn btn-secondary" id="dashBtnCopy">Copy to Clipboard</button>
+          <button class="btn btn-ghost" id="dashBtnDownloadJSON">Export Evidence JSON</button>
+          <button class="btn btn-ghost theme-btn" id="dashBtnTheme" title="Toggle light / dark">
+            <svg id="dashThemeIcon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+          </button>
         </div>
       </header>
 
-      <!-- Viewer Container -->
       <div class="viewer-layout">
-        <!-- Left Image: Original / BBox Overlay -->
         <div class="image-panel">
           <div class="panel-header">
             <h3>Original Image</h3>
-            <div class="panel-controls">
-              <label class="toggle-switch">
-                <input type="checkbox" id="dashToggleOverlay" checked>
-                <span>Show Bounding Boxes</span>
-              </label>
-            </div>
+            <label class="toggle-switch">
+              <input type="checkbox" id="dashToggleOverlay" checked>
+              <span>Show Bounding Boxes</span>
+            </label>
           </div>
           <div class="image-viewport" id="viewportOriginal">
             <div class="drop-placeholder" id="dashDropZone">
@@ -132,46 +752,38 @@
               <p>Drag and drop an image or screenshot here</p>
               <span>or click to browse from disk</span>
             </div>
-            <img id="dashImgOriginal" class="viewport-img hidden" alt="Original Image">
-            <div id="dashBBoxContainer" class="bbox-container"></div>
           </div>
         </div>
 
-        <!-- Right Image: Redacted Result -->
         <div class="image-panel">
           <div class="panel-header">
             <h3>Redacted Image (On-Device)</h3>
-            <span class="redact-tag" id="dashRedactTag">100% Local</span>
+            <span class="redact-tag">100% Local</span>
           </div>
           <div class="image-viewport" id="viewportRedacted">
             <div class="empty-placeholder" id="dashEmptyPlaceholder">
               <p>Redacted image will appear here once processed</p>
             </div>
-            <img id="dashImgRedacted" class="viewport-img hidden" alt="Redacted Image">
           </div>
         </div>
       </div>
 
-      <!-- Bottom Inspector Tabs: FastVLM Caption & JSON Evidence -->
       <section class="inspector-section">
         <div class="inspector-tabs">
-          <button class="tab-btn active" id="tabBtnCaption">FastVLM Description</button>
-          <button class="tab-btn" id="tabBtnEvidence">Evidence Schema (JSON)</button>
-          <button class="tab-btn" id="tabBtnPrompts">Adjudication Prompts</button>
+          <button class="tab-btn active" data-pane="paneCaption">FastVLM Description</button>
+          <button class="tab-btn" data-pane="paneEvidence">Evidence Schema (JSON)</button>
+          <button class="tab-btn" data-pane="panePrompts">Adjudication Prompts</button>
         </div>
         <div class="inspector-content">
-          <!-- Caption Pane -->
           <div id="paneCaption" class="tab-pane active">
             <div class="caption-box">
               <span class="caption-icon">✨</span>
               <p id="dashCaptionText">Load or capture an image to generate FastVLM 0.5B multimodal visual reasoning and captioning.</p>
             </div>
           </div>
-          <!-- Evidence Pane -->
           <div id="paneEvidence" class="tab-pane">
             <pre class="json-viewer" id="dashJsonViewer">// Evidence JSON will be populated here</pre>
           </div>
-          <!-- Prompts Pane -->
           <div id="panePrompts" class="tab-pane">
             <pre class="prompt-viewer" id="dashPromptViewer">// FastVLM adjudication prompt will appear here</pre>
           </div>
@@ -180,6 +792,12 @@
     </main>
   </div>
 
+  <!-- NOTE: dashboard logic lives in dashboard.js (external file). MV3
+       extension pages run under "script-src 'self' 'wasm-unsafe-eval'"
+       (see manifest.json), which blocks inline scripts and inline event
+       handlers — the preview-only inline <script> from the supplied mockups
+       would silently never execute once packaged. dashboard.js implements
+       the same interactions plus the real on-device pipeline wiring. -->
   <script type="module" src="dashboard.js"></script>
 </body>
 </html>

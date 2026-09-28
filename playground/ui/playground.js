@@ -1767,6 +1767,12 @@ function showLatency(ms) {
     );
 
     renderEventLog();
+
+    // Non-blocking mirror for notable outcomes (toast module is additive;
+    // the event log remains the record of truth).
+    if ((status === "error" || status === "warning" || status === "success") && window.PGToast) {
+        window.PGToast.show(message, status);
+    }
 }
 
 
@@ -2150,6 +2156,57 @@ if (threadListEl) {
 
 const modelClient = createModelClient();
 
+/* Local-models header pill (first .status-card) mirrors the server-card
+   pattern: Ready only while the provider is proven reachable, else
+   Disconnected. Proven means a successful Test; any config change resets
+   to Disconnected until the new endpoint is tested. */
+function updateLocalModelsCard(reachable) {
+    const cards =
+        document.querySelectorAll(
+            ".status-card"
+        );
+
+    if (cards.length < 1) {
+        return;
+    }
+
+    const card = cards[0];
+
+    const text =
+        card.querySelector(
+            "strong"
+        );
+
+    const dot =
+        card.querySelector(
+            ".status-dot"
+        );
+
+    if (text) {
+        text.textContent =
+            reachable
+                ? "Ready"
+                : "Disconnected";
+
+        text.style.color =
+            reachable
+                ? "var(--green)"
+                : "var(--red)";
+    }
+
+    if (dot) {
+        if (reachable) {
+            dot.classList.add(
+                "green"
+            );
+        } else {
+            dot.classList.remove(
+                "green"
+            );
+        }
+    }
+}
+
 function refreshModelForm() {
     const config = modelClient.getConfig();
     const modeEl = $("model-mode");
@@ -2213,6 +2270,7 @@ if (modelModeEl) {
             modelClient.setConfig({ mode });
         }
         refreshModelForm();
+        updateLocalModelsCard(false);
     });
 }
 
@@ -2247,6 +2305,7 @@ if (modelSaveButton) {
         const keyEl = $("model-key");
         if (keyEl) keyEl.value = "";
         refreshModelForm();
+        updateLocalModelsCard(false);
         addUIEvent(`Model config saved (${config.mode}).`, "success", "Playground");
     });
 }
@@ -2263,10 +2322,12 @@ if (modelTestButton) {
                 : "";
             const config = modelClient.getConfig();
             if (statusEl) statusEl.textContent = `Reachable (${config.mode})${detail}.`;
+            updateLocalModelsCard(true);
             addUIEvent(`Model reachable (${config.mode})${detail}.`, "success", "Playground");
         } catch (err) {
             const config = modelClient.getConfig();
             if (statusEl) statusEl.textContent = "Unreachable — check endpoint, CORS, model name.";
+            updateLocalModelsCard(false);
             addUIEvent(
                 `Model unreachable (${config.mode}): ` + (err?.message || err),
                 "error",
