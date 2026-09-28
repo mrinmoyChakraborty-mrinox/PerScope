@@ -313,11 +313,34 @@ function buildPerceptionPrompt(evidence) {
     }
 }
 
+// Per-candidate crop adjudication prompt (T2 replan 2026-09-28). The old
+// full-page call failed because it asked a 0.5B VLM to read 14px text
+// smeared to ~4px at 448px AND emit a 128-token captioned JSON essay.
+// This asks one legible question about one native-resolution crop:
+// ~150 prompt tokens in, <=48 out. No caption, no evidence dump, no
+// "don't repeat PII" rules — the crop is shown, the verdict is binary,
+// and the value never needs re-emitting (the pipeline already holds it).
+function buildCandidateCheckPrompt(candidate, lineText) {
+    const span = String(candidate?.text ?? "").slice(0, 120);
+    const ctx = String(lineText ?? "").slice(0, 200);
+    const types = Array.isArray(candidate?.candidate_types) ? candidate.candidate_types.join("/") : "PII";
+    return (
+        `Decide if the highlighted text region contains sensitive personal data.\n` +
+        `Text in region: "${span}"\n` +
+        `Nearby text: "${ctx}"\n` +
+        `Suspected type: ${types}\n` +
+        `Reply with exactly this JSON and nothing else: {"verdict":"yes","confidence":0.9} or {"verdict":"no","confidence":0.9}.\n` +
+        `Example: region "Tamluk@2019" near "Gate Pass valid till Friday" -> {"verdict":"yes","confidence":0.9}\n` +
+        `verdict "yes" means redact (passwords, account numbers, ID codes, private emails). "no" means ordinary words, masked values (98XXX-XX210), hashtags, filenames.`
+    );
+}
+
 
 
 export {
     ALLOWED_FASTVLM_TYPES,
     buildFastVLMRedactionEvidence,
     buildFastVLMRedactionPrompt,
+    buildCandidateCheckPrompt,
     buildPerceptionPrompt
 };

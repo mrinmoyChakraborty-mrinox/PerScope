@@ -25,6 +25,7 @@ import {
   resolveStructuralHint,
   getBlockRole,
   reconstructDocument,
+  extractSpokenEmailSpans,
 } from "./dom-heuristics.js";
 
 export const IGNORED_TAGS = new Set([
@@ -418,7 +419,14 @@ export function runTier0OnSegments(segments, detector) {
       continue;
     }
     const detection = detector.detectPII(text);
-    const detections = (detection && detection.detections) || [];
+    const detections = [...((detection && detection.detections) || [])];
+    // Spoken-email spans (extension-side, piidetector contract untouched):
+    // merge spans that don't overlap a piidetector hit, then redact jointly
+    // so offsets stay consistent (redactPII sorts right-to-left).
+    for (const span of extractSpokenEmailSpans(text)) {
+      const collides = detections.some((d) => span.start < d.end && span.end > d.start);
+      if (!collides) detections.push(span);
+    }
     const redactedText = detector.redactPII(detection ? detection.text : text, detections);
     segmentResults.push({ segment, redactedText, detections });
     for (const d of detections) {

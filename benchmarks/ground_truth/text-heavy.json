@@ -1,0 +1,31 @@
+{
+  "_schema": "perscope-benchmark-ground-truth/v1",
+  "_fixture": "text-heavy.html",
+  "_note": "All values are synthetic and fictitious (fixture disclaimer). Placeholder-domain emails are LEAVE decoys BY DESIGN: the pipeline intentionally ignores @example.com/@example.org/@example.net (heuristics.js EXAMPLE_EMAIL_DOMAINS). Do NOT use them as positive recall examples.",
+  "_entity_fields": "id, fixture, entity_type, text, action REDACT|LEAVE, source, note",
+  "_bbox_policy": "text entities carry bbox:null and are matched by deterministic normalized-text matching (see benchmarks/lib/accuracy.mjs)",
+  "entities": [
+    { "id": "th-r1", "fixture": "text-heavy.html", "entity_type": "PERSON_NAME", "text": "Eleanor Rigby", "action": "REDACT", "source": "div.meta 'Billed to'", "note": "customer name" },
+    { "id": "th-r2", "fixture": "text-heavy.html", "entity_type": "ADDRESS", "text": "14 Penny Lane, Liverpool L18 1DG", "action": "REDACT", "source": "div.meta billing address", "note": "customer address" },
+    { "id": "th-r3", "fixture": "text-heavy.html", "entity_type": "PHONE", "text": "+1-555-014-2288", "action": "REDACT", "source": "div.meta billing block", "note": "customer phone" },
+    { "id": "th-r4", "fixture": "text-heavy.html", "entity_type": "PHONE", "text": "+1-555-019-3344", "action": "REDACT", "source": "p 'Call accounts on +1-555-019-3344'", "note": "accounts phone" },
+    { "id": "th-r5", "fixture": "text-heavy.html", "entity_type": "DATE", "text": "03/14/2026", "action": "REDACT", "source": "div.meta 'Invoice date'", "note": "invoice date" },
+    { "id": "th-r6", "fixture": "text-heavy.html", "entity_type": "DATE", "text": "04/13/2026", "action": "REDACT", "source": "div.meta 'Due date' + payment paragraph", "note": "due/charge date (same value twice)" },
+    { "id": "th-r7", "fixture": "text-heavy.html", "entity_type": "DATE", "text": "09/27/1981", "action": "REDACT", "source": "p 'DOB 09/27/1981'", "note": "signatory date of birth" },
+    { "id": "th-r8", "fixture": "text-heavy.html", "entity_type": "PERSON_NAME", "text": "Marcus Chen", "action": "REDACT", "source": "p 'Authorized signatory'", "note": "signatory name" },
+    { "id": "th-r9", "fixture": "text-heavy.html", "entity_type": "EMPLOYEE_ID", "text": "MC-4471", "action": "REDACT", "source": "p 'employee ID MC-4471'", "note": "employee id" },
+    { "id": "th-r10", "fixture": "text-heavy.html", "entity_type": "CARD_LAST4", "text": "4111", "action": "REDACT", "source": "p 'Card on file ending 4111'", "note": "card last-4" },
+    { "id": "th-r11", "fixture": "text-heavy.html", "entity_type": "ADDRESS", "text": "88 Harbor View Apartments, Apt 4B, Springfield, IL 62704", "action": "REDACT", "source": "p 'Ship to'", "note": "shipping address" },
+    { "id": "th-r12", "fixture": "text-heavy.html", "entity_type": "TAX_ID", "text": "GB 123 4567 89", "action": "REDACT", "source": "div.meta 'VAT ID'", "note": "fictitious VAT id" },
+    { "id": "th-r13", "fixture": "text-heavy.html", "entity_type": "ORDER_REF", "text": "WB-1904-SC-3524", "action": "REDACT", "source": "div.meta 'Order ref'", "note": "order reference" },
+    { "id": "th-r14", "fixture": "text-heavy.html", "entity_type": "TRACKING", "text": "1Z 999 999 99 9999 999 9", "action": "REDACT", "source": "p 'Tracking'", "note": "shipment identifier" },
+    { "id": "th-r15", "fixture": "text-heavy.html", "entity_type": "ACCESS_CODE", "text": "4410", "action": "REDACT", "source": "p 'gate code 4410'", "note": "gate access code" },
+    { "id": "th-r16", "fixture": "text-heavy.html", "entity_type": "DATE", "text": "02/28/2026", "action": "REDACT", "source": "p 'paid 02/28/2026'", "note": "payment date" },
+    { "id": "th-l1", "fixture": "text-heavy.html", "entity_type": "EMAIL", "text": "eleanor.rigby@example.com", "action": "LEAVE", "source": "div.meta billing block", "note": "placeholder domain; pipeline ignores by design, NEVER a positive recall example" },
+    { "id": "th-l2", "fixture": "text-heavy.html", "entity_type": "EMAIL", "text": "billing@example.org", "action": "LEAVE", "source": "p accounts contact", "note": "placeholder domain decoy" },
+    { "id": "th-l3", "fixture": "text-heavy.html", "entity_type": "DECOY", "text": "PAY-88112", "action": "LEAVE", "source": "p 'ref PAY-88112'", "note": "internal payment ref decoy (digit-bearing)" },
+    { "id": "th-l4", "fixture": "text-heavy.html", "entity_type": "DECOY", "text": "$1,858.00", "action": "LEAVE", "source": "p charge amount", "note": "money amount, not PII" },
+    { "id": "th-l5", "fixture": "text-heavy.html", "entity_type": "DECOY", "text": "INV-2026-0481", "action": "LEAVE", "source": "h1 invoice number", "note": "document number decoy" },
+    { "id": "th-l6", "fixture": "text-heavy.html", "entity_type": "DECOY", "text": "fictitious", "action": "LEAVE", "source": "p disclaimer", "note": "disclaimer word, never sensitive" }
+  ]
+}

@@ -91,6 +91,12 @@ Measurement:
    fixtures must use fictitious but NON-placeholder domains
    (e.g. @acme-invoice.test) or ground truth will disagree with the pipeline
    by design.
+   APPROVED 2026-09-28 - ambiguous.html ground truth (M3 list, user-confirmed
+   "redact them also"): REDACT = {3524, 8810, WBSC0LM1234, Tamluk@2019,
+   jeet-dot-routh-at-gmail}; LEAVE = {98XXX-XX210 (source-masked), #WB1904SC,
+   filename, meter readings, wifi description (no value), seven-in-August
+   (dateless), fictitious, department, verify}. Acceptance for all Tier-0
+   fix scopes on both paths.
 4. [M4] First live CPU table from the full run; decide verdicts later, if ever.
 
 ## Harness changes made during shakedown (in tree, unpushed)

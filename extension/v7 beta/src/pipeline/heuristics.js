@@ -488,6 +488,8 @@ const SENSITIVE_FIELD_VOCABULARY = [
     { label: "Admission Number", field_type: "ADMISSION_NUMBER" },
     { label: "Employee ID", field_type: "EMPLOYEE_ID" },
     { label: "Employee Number", field_type: "EMPLOYEE_ID" },
+    { label: "Password", field_type: "PASSWORD" },
+    { label: "Gate Pass", field_type: "PASSWORD" },
     { label: "Passport No", field_type: "PASSPORT_NUMBER" },
     { label: "Passport Number", field_type: "PASSPORT_NUMBER" },
     { label: "License No", field_type: "LICENSE_NUMBER" },
@@ -539,11 +541,14 @@ NORMALIZED_VOCAB.sort((a, b) => b.normalized.length - a.normalized.length);
 function findFieldLabelMatch(text) {
     const norm = normalizeLabelForMatch(text);
     for (const entry of NORMALIZED_VOCAB) {
-        if (norm === entry.normalized || norm.includes(entry.normalized) || entry.normalized.includes(norm)) {
-            // require word-boundary-ish: check that matched label is not just substring of unrelated word
-            // by ensuring normalized label appears as substring
-            if (norm.includes(entry.normalized)) return entry;
-            if (entry.normalized.includes(norm) && norm.length >= 3) return entry;
+        if (norm === entry.normalized) return entry;
+        if (norm.includes(entry.normalized)) {
+            if (entry.normalized.length / norm.length >= 0.4) return entry;
+            continue;
+        }
+        if (entry.normalized.includes(norm) && norm.length >= 3) {
+            if (norm.length / entry.normalized.length >= 0.4) return entry;
+            continue;
         }
     }
     // fuzzy: allow one-char difference for labels >=6 chars
@@ -557,6 +562,44 @@ function findFieldLabelMatch(text) {
         if (diffs <= 2) return entry;
     }
     return null;
+}
+
+/* Lead-or-validate doctrine, second half (M3): a low-coverage prose label
+   ("gate pass" inside "Temporary gate pass for the contractor") may still
+   anchor when the VALUE validates strongly for the field type. This is the
+   weak-match companion to findFieldLabelMatch: longest low-coverage hit or
+   null. Callers combine: strong match proceeds; weak match proceeds only
+   when fieldValuePasses(field_type, valuePart) holds. */
+function findFieldLabelMatchWeak(text) {
+    const norm = normalizeLabelForMatch(text);
+    let best = null;
+    for (const entry of NORMALIZED_VOCAB) {
+        if (norm === entry.normalized) return { entry, weak: false };
+        if (norm.includes(entry.normalized) && entry.normalized.length / norm.length < 0.4) {
+            if (!best || entry.normalized.length > best.entry.normalized.length) best = { entry, weak: true };
+        }
+    }
+    return best;
+}
+
+/* Value-side validation per field type: the "validate" in lead-or-validate.
+   Short, structural, no ML. Returns true when the value is shaped like the
+   field claims (EMAIL has @, PHONE/CARD carry digit runs, DATE has date
+   structure, IFSC matches its format, PASSWORD is credential-shaped).
+   Unknown types return null (no opinion — coverage rule alone decides). */
+function fieldValuePasses(fieldType, value) {
+    const v = String(value ?? "");
+    switch (fieldType) {
+        case "EMAIL": return /@/.test(v);
+        case "PHONE": return (v.replace(/\D/g, "").length >= 7);
+        case "CARD_NUMBER": return /\d{4}/.test(v);
+        case "DATE_OF_BIRTH":
+        case "DATE":
+            return /\d{1,4}[\/-]\d{1,2}[\/-]\d{2,4}/.test(v);
+        case "IFSC": return /^[A-Z]{4}0[A-Z0-9]{6}$/i.test(v.trim().replace(/[.,;:]+$/, ""));
+        case "PASSWORD": return /@/.test(v) || (/(?=.*[a-zA-Z])(?=.*\d).{6,}/.test(v));
+        default: return null;
+    }
 }
 
 function isPlausibleValue(text) {
@@ -606,6 +649,7 @@ function extractLabelValueSameLine(ocrItems) {
         let labelPart = null;
         let valuePart = null;
         let labelMatch = null;
+        let weakLabel = false;
         // Try each separator in order; keep first that BOTH matches regex AND is a known label
         for (const re of SEPARATOR_PATTERNS) {
             const m = raw.match(re);
@@ -614,11 +658,24 @@ function extractLabelValueSameLine(ocrItems) {
             const candValue = m[2] ? m[2].trim() : "";
             if (!candLabel || !candValue) continue;
             const lm = findFieldLabelMatch(candLabel);
-            if (!lm) continue; // hyphen split on non-label text â€” try next pattern (or skip)
-            labelPart = candLabel;
-            valuePart = candValue;
-            labelMatch = lm;
-            break;
+            if (lm) {
+                labelPart = candLabel;
+                valuePart = candValue;
+                labelMatch = lm;
+                weakLabel = false;
+                break;
+            }
+            // Weak prose label: proceed ONLY when the value validates
+            // strongly for the type (lead-or-validate, second half).
+            const wm = findFieldLabelMatchWeak(candLabel);
+            if (wm && fieldValuePasses(wm.entry.field_type, candValue) === true) {
+                labelPart = candLabel;
+                valuePart = candValue;
+                labelMatch = wm.entry;
+                weakLabel = true;
+                break;
+            }
+            continue; // hyphen split on non-label text — try next pattern (or skip)
         }
         if (!labelPart || !valuePart || !labelMatch) continue;
         if (!isPlausibleValue(valuePart)) continue;
@@ -630,8 +687,8 @@ function extractLabelValueSameLine(ocrItems) {
             label: labelMatch.label,
             value: cleanText(valuePart),
             field_type: labelMatch.field_type,
-            confidence: 0.98,
-            reason: `Sensitive identifier value associated with ${labelMatch.label} label (same line)`,
+            confidence: weakLabel ? 0.9 : 0.98,
+            reason: `Sensitive identifier value associated with ${labelMatch.label} label (same line${weakLabel ? ", prose label + validated value" : ""})`,
             bbox: valueBBox ?? null,
             raw_text: raw,
         });
@@ -793,8 +850,14 @@ const UNLABELED_FORMAT_TYPES = [
     {
         field_type: "EMAIL",
         confidence: 0.95,
-        // piidetector EMAIL_ID shape.
-        regexes: [/\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/gi],
+        // piidetector EMAIL_ID shape + run-on guards: the greedy domain eats
+        // sentence continuations ("billing@example.org. Authorized" ->
+        // "...org.Authorizedsignatory"). Two guards: TLD capped at 8
+        // (real-world TLDs; exotic longer ones stay NER's job — Ettin tags
+        // emails robustly) and (?!\.[A-Za-z]) blocking dot-letter
+        // continuations. Legit trailing punctuation ("user@example.com.
+        // Next") still matches.
+        regexes: [/\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,8}(?!\.[A-Za-z])\b/gi],
         skipValue: (v) => isExampleEmail(v) || isPlaceholderText(v),
     },
     {
@@ -828,9 +891,41 @@ const UNLABELED_FORMAT_TYPES = [
         field_type: "CARD_NUMBER",
         confidence: 0.9,
         // Label-anchored ONLY — freestanding 4-digit runs (gate codes,
-        // amounts, years) are explicitly out of scope.
-        regexes: [/(?:ending|ends?\s+in|last\s*4)\D{0,10}(\d{4})(?!\d)/gi],
+        // amounts, years) are explicitly out of scope. Anchors cover
+        // "ending 3524" and "ends 8810" (bare "ends" without "in" included
+        // per M3); the (?<![a-z]) guard keeps "weekends 2024" out.
+        regexes: [/(?<![a-z])(?:ending|ends?)(?:\s+in)?\D{0,10}(\d{4})(?!\d)/gi],
         valueGroup: 1,
+    },
+    {
+        field_type: "EMAIL",
+        confidence: 0.85,
+        // Spoken/obfuscated form: "jeet dot routh at gmail". The VALUE is
+        // the original span (geometry resolves on it). Dot-chain required
+        // on at least one side keeps "meet me at noon" out. Intra-word OCR
+        // splits ("em ail") are NOT covered here (no word boundaries exist
+        // in collapsed text to anchor the local part — attempted, gobbled);
+        // that case stays with NER, which tags email entities on spaced
+        // text robustly (verified live).
+        regexes: [/\b[a-z0-9._-]+(?:\s+dot\s+[a-z0-9._-]+)+\s+at\s+[a-z0-9-]+(?:\s+dot\s+[a-z0-9-]+)*\b/gi],
+    },
+    {
+        field_type: "PASSWORD",
+        confidence: 0.85,
+        // Pure shape rule (M3): credential-shaped tokens need no label and
+        // no NER confidence. No spaces, >=8 chars, letters + @ with a digit
+        // or symbol ("Tamluk@2019"). Real addresses lose the overlap to the
+        // EMAIL type (0.95 wins ties after longer-span); letter-only
+        // "name@host" forms stay NER's job (validateValue rejects them).
+        regexes: [/\b(?=[A-Za-z0-9._-]*@)(?=[A-Za-z0-9._-]*[A-Za-z])[A-Za-z0-9._-]+@[A-Za-z0-9.-]+\b/gi],
+        validateValue: (v) => v.length >= 8 && (/\d/.test(v) || /[#$%&*!?_]/.test(v)),
+    },
+    {
+        field_type: "IFSC",
+        confidence: 0.95,
+        // Exact format port (piidetector IFSC_CODE shape): 4 letters + 0 +
+        // 6 alphanumerics. Catches WBSC0LM1234 with no label needed.
+        regexes: [/\b[A-Z]{4}0[A-Z0-9]{6}\b/gi],
     },
     {
         field_type: "TRACKING_NUMBER",
@@ -851,7 +946,13 @@ const UNLABELED_FORMAT_TYPES = [
             // GB VAT: GB 123 4567 89, spaced or solid.
             /\bGB\s?\d{3}\s?\d{4}\s?\d{2}\b/gi,
             // Small EU set, format-only (no checksum — stated limitation).
-            /\b(?:DE|FR|IT|ES|NL|BE|IE|AT|DK|SE|FI|PT|GR|PL|CZ|HU)\s?[A-Z0-9]{8,12}\b/gi,
+            // Digit-led is LOAD-BEARING: bare 2-letter prefixes match English
+            // word starts under /i ("FI"+"ctitious", "DE"+"partment" both
+            // matched the looser form live 2026-09-28 — title and
+            // "department" false positives). Real VATs are near-universally
+            // digit-led after the prefix; letter-led forms (some FR/IE)
+            // are knowingly out of scope.
+            /\b(?:DE|FR|IT|ES|NL|BE|IE|AT|DK|SE|FI|PT|GR|PL|CZ|HU)\s?\d[A-Z0-9]{7,11}\b/gi,
         ],
     },
 ];
@@ -887,7 +988,13 @@ function extractUnlabeledFormatCandidates(ocrItems) {
                     if (!value) continue;
                     if (type.skipValue && type.skipValue(value)) continue;
                     if (type.validateValue && !type.validateValue(value)) continue;
-                    if (!isPlausibleValue(value)) continue;
+                    // EMAIL carries its own shape guarantee (@ or dot/at
+                    // spoken structure from the pattern itself); the generic
+                    // prose guard would reject 5-word spoken addresses as
+                    // sentences, so it gets a lighter length/alnum check.
+                    if (type.field_type === "EMAIL") {
+                        if (!/[a-z0-9]/i.test(value) || value.length < 6 || value.length > 80) continue;
+                    } else if (!isPlausibleValue(value)) continue;
                     raw.push({
                         field_type: type.field_type,
                         confidence: type.confidence,
@@ -928,6 +1035,134 @@ function extractUnlabeledFormatCandidates(ocrItems) {
     return candidates;
 }
 
+/* Cross-item anchor pass (M3): the unlabeled CARD pattern needs its anchor
+   ("ending 3524") in ONE OCR item, but PaddleOCR may split label and digits
+   into adjacent boxes ("ending" | "3524"). For a bare 4-digit item whose
+   LEFT neighbor in the same row TRAILS with an anchor word (ending/ends/
+   card/account + optional period), emit the digits as CARD_NUMBER. The
+   trailing-anchor rule is the FP guard: "gate code 4410" does not end with
+   an anchor word, so gate codes/years/amounts stay out. */
+function extractCrossItemAnchored(orderedItems, rows) {
+    const candidates = [];
+    for (const row of rows || []) {
+        const rowItems = [...row.items].sort((a, b) => a.bbox[0] - b.bbox[0]);
+        for (let i = 1; i < rowItems.length; i++) {
+            const digitItem = rowItems[i];
+            const anchorItem = rowItems[i - 1];
+            const digits = cleanText(digitItem.text);
+            if (!/^\d{4}$/.test(digits)) continue;
+            const anchorText = cleanText(anchorItem.text);
+            if (!/\b(ending|ends|last\s*4|card|account)\.?$/i.test(anchorText)) continue;
+            const gap = digitItem.bbox[0] - anchorItem.bbox[2];
+            if (gap < -5 || gap > 120) continue;
+            candidates.push({
+                source: "deterministic_format",
+                ocr_ids: [digitItem.id],
+                label: cleanText(anchorItem.text),
+                value: digits,
+                field_type: "CARD_NUMBER",
+                confidence: 0.88,
+                reason: "Bare last-4 digits anchored by trailing label in neighboring OCR box (cross-item anchor)",
+                bbox: digitItem.bbox ?? null,
+                raw_text: `${anchorItem.text} ${digitItem.text}`,
+            });
+        }
+    }
+    return candidates;
+}
+
+/* Row-joined spaceless matching (live-OCR fix): PaddleOCR inserts spaces
+   inside tokens ("Tamluk @ 2019", "W BSC0LM 1234") and splits them across
+   boxes, so per-item contiguous patterns miss everything the audit catches
+   on clean text. This pass concatenates each row's items with whitespace
+   REMOVED, matches all unlabeled formats against that, and maps each hit
+   back to its contributing boxes (union bbox). Candidates flow through the
+   same cross-source suppression/dedup as per-item hits below. */
+function extractRowJoinedFormats(rows) {
+    const candidates = [];
+    for (const row of rows || []) {
+        const rowItems = [...row.items].sort((a, b) => a.bbox[0] - b.bbox[0]);
+        // nospace string + per-char provenance (item + original offset, so
+        // condensed-pattern values rebuild to the TRUE original span, not
+        // whole boxes).
+        let condensed = "";
+        const prov = [];
+        for (const it of rowItems) {
+            const t = String(it.text ?? "");
+            for (let oi = 0; oi < t.length; oi++) {
+                const ch = t[oi];
+                if (/\s/.test(ch)) continue;
+                condensed += ch;
+                prov.push({ it, off: oi });
+            }
+        }
+        if (!condensed) continue;
+        const raw = [];
+        for (const type of UNLABELED_FORMAT_TYPES) {
+            for (const re of type.regexes) {
+                re.lastIndex = 0;
+                let m;
+                while ((m = re.exec(condensed)) !== null) {
+                    const full = m[0];
+                    let value = full;
+                    let spanStart = m.index;
+                    if (type.valueGroup != null && m[type.valueGroup] != null) {
+                        value = m[type.valueGroup];
+                        spanStart = m.index + full.indexOf(value);
+                    }
+                    value = cleanText(value);
+                    if (!value) continue;
+                    if (type.skipValue && type.skipValue(value)) continue;
+                    if (type.validateValue && !type.validateValue(value)) continue;
+                    if (type.field_type === "EMAIL") {
+                        if (!/[a-z0-9]/i.test(value) || value.length < 6 || value.length > 80) continue;
+                    } else if (!isPlausibleValue(value)) continue;
+                    raw.push({ field_type: type.field_type, confidence: type.confidence, value, start: spanStart, end: spanStart + value.length });
+                    if (full.length === 0) re.lastIndex++;
+                }
+            }
+        }
+        raw.sort((a, b) => (b.end - b.start) - (a.end - a.start) || b.confidence - a.confidence ||
+            UNLABELED_TYPE_ORDER.indexOf(a.field_type) - UNLABELED_TYPE_ORDER.indexOf(b.field_type));
+        const kept = [];
+        for (const r of raw) {
+            if (kept.some((k) => r.start < k.end && r.end > k.start)) continue;
+            kept.push(r);
+        }
+        for (const k of kept) {
+            const boxes = [];
+            const ids = [];
+            for (let i = k.start; i < k.end && i < prov.length; i++) {
+                const pr = prov[i];
+                const it = pr && pr.it ? pr.it : null;
+                if (it && !ids.includes(it.id)) {
+                    ids.push(it.id);
+                    if (it.bbox) boxes.push(it.bbox);
+                }
+            }
+            if (!ids.length) continue;
+            const finalValue = k.value;
+            const nums = boxes.flat().map(Number).filter(Number.isFinite);
+            const union = nums.length >= 4
+                ? [Math.min(...nums.filter((_, i) => i % 4 === 0)), Math.min(...nums.filter((_, i) => i % 4 === 1)),
+                   Math.max(...nums.filter((_, i) => i % 4 === 2)), Math.max(...nums.filter((_, i) => i % 4 === 3))]
+                : null;
+            candidates.push({
+                source: "deterministic_format",
+                ocr_ids: ids,
+                label: null,
+                value: finalValue,
+                field_type: k.field_type,
+                confidence: k.confidence,
+                reason: "Bare format match on whitespace-collapsed row text (OCR spacing-tolerant)",
+                bbox: union,
+                raw_text: rowItems.map((it) => it.text).join(" "),
+            });
+        }
+    }
+    return candidates;
+}
+
 function extractSensitiveFieldCandidates(ocr) {
     if (!ocr?.items?.length) return [];
     const { ordered, rows } = buildReadingOrder(ocr);
@@ -937,6 +1172,8 @@ function extractSensitiveFieldCandidates(ocr) {
     const multiLine = extractMultiLineLabel(ocr.items, rows);
     const labeled = [...sameLine, ...sideBySide, ...vertical, ...multiLine];
     const formatBased = extractUnlabeledFormatCandidates(ocr.items);
+    const rowJoined = extractRowJoinedFormats(rows);
+    const crossItem = extractCrossItemAnchored(ordered, rows);
     // Cross-source preference: when a label-anchored candidate already covers
     // the same value text on shared OCR ids, keep the labeled (more specific)
     // hit and drop the bare-format duplicate. Trailing-punct-insensitive so
@@ -946,7 +1183,7 @@ function extractSensitiveFieldCandidates(ocr) {
         const v = _stripEdgePunct(c.value).toLowerCase();
         for (const id of c.ocr_ids || []) labeledKeys.add(`${v}|${id}`);
     }
-    const filteredFormat = formatBased.filter((c) => {
+    const filteredFormat = [...formatBased, ...rowJoined, ...crossItem].filter((c) => {
         const v = _stripEdgePunct(c.value).toLowerCase();
         return !(c.ocr_ids || []).some((id) => {
             if (labeledKeys.has(`${v}|${id}`)) return true;
@@ -988,7 +1225,15 @@ function isContained(smaller, larger) {
     const l = normalizeCandidateText(larger);
     if (!s || !l) return false;
     if (s === l) return false;
-    return l.includes(s);
+    if (l.includes(s)) return true;
+    // Spacing-insensitive: OCR inserts spaces inside tokens ("Tamluk @ 2019"
+    // vs "Tamluk@2019") — without this, spaced and canonical forms of the
+    // same value survive as duplicate findings on overlapping regions.
+    const ns = s.replace(/\s+/g, "");
+    const nl = l.replace(/\s+/g, "");
+    if (!ns || !nl) return false;
+    if (ns === nl) return true;
+    return nl.includes(ns);
 }
 
 function fuseRedactionCandidates({ ettinFindings = [], deterministicFindings = [] }) {
@@ -1043,17 +1288,38 @@ function fuseRedactionCandidates({ ettinFindings = [], deterministicFindings = [
     let candidates = [...byKey.values()];
 
     // Containment rule: if smaller text fully contained in larger text and shares OCR region or overlaps,
-    // keep larger only. Also handle same OCR region containment.
+    // keep larger only — EXCEPT the value-rescue below. Also handle same OCR region containment.
     // Sort by text length descending so larger wins.
     candidates.sort((a, b) => b.text.length - a.text.length || b.confidence - a.confidence);
     const keep = [];
     for (const c of candidates) {
         let contained = false;
-        for (const k of keep) {
+        for (let ki = 0; ki < keep.length; ki++) {
+            const k = keep[ki];
             const sameRegion = c.ocr_ids.length && k.ocr_ids.length && c.ocr_ids.some((id) => k.ocr_ids.includes(id));
             const textContained = isContained(c.text, k.text);
             if (textContained && sameRegion) {
                 contained = true;
+                // Value-rescue (live-OCR fix 2026-09-28, proven by [TRACE]:
+                // NER line-spans gobbled deterministic values — "Old account
+                // ending 3524 ... WBSC0LM1234" (85 chars) ate 3524/8810/IFSC,
+                // then Gate 5 dropped the sentence as prose. When the smaller
+                // span is a deterministic format, the larger is ettin-only
+                // prose, and the larger dwarfs it (>2x), the VALUE wins: it
+                // becomes the keeper with merged evidence (dual sources, max
+                // confidence, value-specific bbox). Near-equal duplicates
+                // ("Tamluk @ 2019" vs "Tamluk@2019") still keep the larger.
+                const cIsDeterministic = (c.sources || []).includes("deterministic_context");
+                const kIsEttinOnly = (k.sources || []).length > 0 && (k.sources || []).every((s) => s === "ettin");
+                if (cIsDeterministic && kIsEttinOnly && k.text.length > c.text.length * 2) {
+                    c.sources = [...new Set([...(c.sources || []), ...(k.sources || [])])];
+                    c.candidate_types = [...new Set([...(c.candidate_types || []), ...(k.candidate_types || [])])];
+                    c.confidence = Math.max(Number(c.confidence ?? 0), Number(k.confidence ?? 0));
+                    if (!c.label_context && k.label_context) c.label_context = k.label_context;
+                    if (!c.bbox && k.bbox) c.bbox = k.bbox;
+                    keep[ki] = c;
+                    break;
+                }
                 // merge evidence into keeper if smaller had deterministic label
                 if (!k.label_context && c.label_context) k.label_context = c.label_context;
                 k.sources = [...new Set([...k.sources, ...c.sources])];
@@ -1071,6 +1337,51 @@ function fuseRedactionCandidates({ ettinFindings = [], deterministicFindings = [
 
     // Do not merge adjacent non-overlapping entities solely by proximity
     return keep;
+}
+
+/* ============================================================
+   T2 GATE — HIGH / LOW split for gated crop adjudication.
+   T2 (FastVLM) fires IFF low-confidence entities exist; clean pages
+   never pay a millisecond, and every avoided T2 is one fewer chance
+   to wedge transformers.js's global webInferenceChain. Thresholds are
+   locked by the 2026-09-28 replan (H=0.90, F=0.50, N=6, margin 25%):
+   - HIGH: dual-source (ettin + deterministic agree) OR single-source
+     confidence >= H. Redacted synchronously, no T2. Deterministic
+     formats land at 0.85-0.95, so most land here by precision.
+   - LOW: single-source, F <= score < H. This is NER's
+     password-fragment / degraded-type population (observed 0.58-0.94
+     on ambiguous) — routed to per-candidate crop checks.
+   - Below F: dropped (existing Gate 6 floor drops them anyway).
+   Dual-source def mirrors Gate 6 in safety.js (sources must include
+   both "ettin" and "deterministic_context" — all deterministic
+   sub-passes share the latter tag, see fuseRedactionCandidates).
+   ============================================================ */
+
+const T2_HIGH_CONFIDENCE = 0.90;
+const T2_FLOOR = 0.50;
+const T2_CANDIDATE_CAP = 6;
+
+function isDualSourceCandidate(c) {
+    const s = c?.sources;
+    return Array.isArray(s) && s.length >= 2 && s.includes("ettin") && s.includes("deterministic_context");
+}
+
+function selectT2ReviewCandidates(fusedCandidates) {
+    const high = [];
+    const low = [];
+    for (const c of fusedCandidates || []) {
+        const conf = Number(c?.confidence ?? 0);
+        if (isDualSourceCandidate(c) || conf >= T2_HIGH_CONFIDENCE) {
+            high.push(c);
+            continue;
+        }
+        if (conf >= T2_FLOOR) low.push(c);
+        // Below floor: dropped (Gate 6 floor handles the stragglers).
+    }
+    // Lowest-confidence-first: the most uncertain gets reviewed; the cap
+    // bounds serialized iGPU burn (N x ~15s worst case).
+    low.sort((a, b) => Number(a.confidence ?? 0) - Number(b.confidence ?? 0));
+    return { high, low: low.slice(0, T2_CANDIDATE_CAP), droppedLow: Math.max(0, low.length - T2_CANDIDATE_CAP) };
 }
 
 /* ============================================================
@@ -1634,18 +1945,27 @@ export {
     SENSITIVE_FIELD_VOCABULARY,
     normalizeLabelForMatch,
     findFieldLabelMatch,
+    findFieldLabelMatchWeak,
+    fieldValuePasses,
     isPlausibleValue,
     extractLabelValueSameLine,
     extractLabelValueSideBySide,
     extractLabelValueVertical,
     extractMultiLineLabel,
     extractUnlabeledFormatCandidates,
+    extractRowJoinedFormats,
+    extractCrossItemAnchored,
     UNLABELED_FORMAT_TYPES,
     extractSensitiveFieldCandidates,
     resolveSensitiveValueBBox,
     normalizeCandidateText,
     isContained,
     fuseRedactionCandidates,
+    isDualSourceCandidate,
+    selectT2ReviewCandidates,
+    T2_HIGH_CONFIDENCE,
+    T2_FLOOR,
+    T2_CANDIDATE_CAP,
     normalizeOcrItem,
     computeRelationship,
     detectHorizontalGroups,

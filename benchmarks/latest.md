@@ -1,7 +1,7 @@
 # PerScope benchmark - latest
 
-- Date (UTC): 2026-09-27T21:47:54.312Z
-- Commit: de98121
+- Date (UTC): 2026-09-28T05:18:13.749Z
+- Commit: d8072c4
 - Device: integrated (amd GPU) (WebGPU tier/agent: record-only: per-run device forcing is not possible via bridge (offscreen passes options:{}))
 - Runs per fixture: 1 steady + 1 cold-start (reported separately, excluded from steady stats)
 - Fixtures: ambiguous
@@ -12,27 +12,27 @@
 | stage | mean | p50 | p95 | max | n |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | DEVICE | 0.0 | 0.0 | 0.0 | 0.0 | 1 |
-| IMAGE_DECODE | 1114.0 | 1114.0 | 1114.0 | 1114.0 | 1 |
-| FACE | 264.0 | 264.0 | 264.0 | 264.0 | 1 |
-| OCR | 0.0 | 0.0 | 0.0 | 0.0 | 1 |
-| NER | 271.0 | 271.0 | 271.0 | 271.0 | 1 |
-| HEURISTICS | 3.0 | 3.0 | 3.0 | 3.0 | 1 |
-| FASTVLM | 22275.0 | 22275.0 | 22275.0 | 22275.0 | 1 |
-| REDACT | 1234.0 | 1234.0 | 1234.0 | 1234.0 | 1 |
+| IMAGE_DECODE | 1087.0 | 1087.0 | 1087.0 | 1087.0 | 1 |
+| FACE | 76.0 | 76.0 | 76.0 | 76.0 | 1 |
+| OCR | 1.0 | 1.0 | 1.0 | 1.0 | 1 |
+| NER | 229.0 | 229.0 | 229.0 | 229.0 | 1 |
+| HEURISTICS | 4.0 | 4.0 | 4.0 | 4.0 | 1 |
+| FASTVLM | 12758.0 | 12758.0 | 12758.0 | 12758.0 | 1 |
+| REDACT | 1230.0 | 1230.0 | 1230.0 | 1230.0 | 1 |
 
-Total (pipeline totalTimeMs): | total | 25163.0 | 25163.0 | 25163.0 | 25163.0 | 1 |
+Total (pipeline totalTimeMs): | total | 15387.0 | 15387.0 | 15387.0 | 15387.0 | 1 |
 
 ## Cold start vs steady (total ms per fixture)
 
 | fixture | cold (run 1) | steady p50 | steady p95 |
 | --- | ---: | ---: | ---: |
-| ambiguous | 34804 | 25163 | 25163 |
+| ambiguous | 34795 | 15387 | 15387 |
 
 ## Memory (JS heap, offscreen document, per capture_tab run)
 
 | fixture | p50 before (MB) | p50 delta/run (KB) | drift slope (KB/run) | verdict |
 | --- | ---: | ---: | ---: | --- |
-| ambiguous | 49.3 | 1015566.4 | - | single sample - no drift measurable |
+| ambiguous | 49.0 | 964725.8 | - | single sample - no drift measurable |
 
 > Heap sampled in the offscreen document immediately before/after each capture (post-cleanup number). A rising post-run baseline across identical runs is the leak signal - slope >256KB/run with >1MB total growth flags it.
 
@@ -52,19 +52,19 @@ Wall time says WHERE time goes; CPU seconds say WHAT burns. Per-stage CPU attrib
 
 | fixture | CPU/run p50 (s) | utilization p50 (%) |
 | --- | ---: | ---: |
-| ambiguous | 10.2 | 39 |
+| ambiguous | 6.2 | 38 |
 
 ## Per-fixture breakdown
 
 | fixture | designed to exercise | steady p50 total (ms) | findings/run (p50) | entity types seen | T2 rate |
 | --- | --- | ---: | ---: | --- | ---: |
-| ambiguous | masked/partial PII strings; forces Tier 2 adjudication | 25163 | 3 | IFSC, VAT_ID | 100% |
+| ambiguous | masked/partial PII strings; forces Tier 2 adjudication | 15387 | 0 |  | 100% |
 
 ## Accuracy proxies (no ground truth - counts only, never precision/recall)
 
 | fixture | finding-type histogram (steady runs pooled) | confidence bins (p25/median/p75 of scores) | adjudication fallback share |
 | --- | --- | --- | ---: |
-| ambiguous | VAT_ID:2, IFSC:1 | 0.900/0.900/0.900 | 100% |
+| ambiguous | - | - | 100% |
 
 > Follow-up: labeled fixtures with span-level ground truth for real precision/recall (PS metrics 1-3).
 > Until then these proxies are the baseline to diff against.

@@ -1,0 +1,27 @@
+{
+  "_schema": "perscope-benchmark-ground-truth/v1",
+  "_fixture": "invoice-v2.html",
+  "_note": "Phase-3 dataset fix: uses NON-placeholder domains (@acme-invoice.test) so emails are genuine positive recall examples, unlike text-heavy.html placeholder addresses. support@example.com stays a LEAVE decoy proving the placeholder filter. All values synthetic and fictitious.",
+  "_entity_fields": "id, fixture, entity_type, text, action REDACT|LEAVE, source, note",
+  "_bbox_policy": "text entities carry bbox:null and are matched by deterministic normalized-text matching (see benchmarks/lib/accuracy.mjs)",
+  "entities": [
+    { "id": "v2-r1", "fixture": "invoice-v2.html", "entity_type": "PERSON_NAME", "text": "Arjun Mehta", "action": "REDACT", "source": "div.meta 'Billed to'", "note": "customer name; fictitious" },
+    { "id": "v2-r2", "fixture": "invoice-v2.html", "entity_type": "ADDRESS", "text": "21 Lake View Road, Tamluk WB 721636", "action": "REDACT", "source": "div.meta billing address", "note": "customer address; fictitious" },
+    { "id": "v2-r3", "fixture": "invoice-v2.html", "entity_type": "EMAIL", "text": "arjun.mehta@acme-invoice.test", "action": "REDACT", "source": "div.meta billing block", "note": "POSITIVE recall example: non-placeholder domain, must be detected" },
+    { "id": "v2-r4", "fixture": "invoice-v2.html", "entity_type": "EMAIL", "text": "accounts@acme-invoice.test", "action": "REDACT", "source": "p contact line", "note": "POSITIVE recall example: non-placeholder domain" },
+    { "id": "v2-r5", "fixture": "invoice-v2.html", "entity_type": "PHONE", "text": "+91-98765-43210", "action": "REDACT", "source": "div.meta billing block", "note": "customer phone; fictitious" },
+    { "id": "v2-r6", "fixture": "invoice-v2.html", "entity_type": "DATE", "text": "02/11/2026", "action": "REDACT", "source": "div.meta 'Invoice date'", "note": "invoice date" },
+    { "id": "v2-r7", "fixture": "invoice-v2.html", "entity_type": "DATE", "text": "03/13/2026", "action": "REDACT", "source": "div.meta 'Due date' + charge line", "note": "due/charge date" },
+    { "id": "v2-r8", "fixture": "invoice-v2.html", "entity_type": "DATE", "text": "11/02/1988", "action": "REDACT", "source": "p 'DOB 11/02/1988'", "note": "signatory date of birth" },
+    { "id": "v2-r9", "fixture": "invoice-v2.html", "entity_type": "PERSON_NAME", "text": "Rina Das", "action": "REDACT", "source": "p 'Authorized signatory'", "note": "signatory name; fictitious" },
+    { "id": "v2-r10", "fixture": "invoice-v2.html", "entity_type": "IFSC", "text": "HDFC0001234", "action": "REDACT", "source": "div.meta 'IFSC'", "note": "fictitious IFSC pattern" },
+    { "id": "v2-r11", "fixture": "invoice-v2.html", "entity_type": "ACCOUNT_NUMBER", "text": "6692", "action": "REDACT", "source": "p 'Account ending 6692'", "note": "account last-4" },
+    { "id": "v2-r12", "fixture": "invoice-v2.html", "entity_type": "ORDER_REF", "text": "OD-2026-7719", "action": "REDACT", "source": "div.meta 'Order ref'", "note": "order reference; fictitious" },
+    { "id": "v2-l1", "fixture": "invoice-v2.html", "entity_type": "EMAIL", "text": "support@example.com", "action": "LEAVE", "source": "p contact line", "note": "placeholder-domain decoy; pipeline ignores by design" },
+    { "id": "v2-l2", "fixture": "invoice-v2.html", "entity_type": "DECOY", "text": "invoice_final_FINAL.pdf", "action": "LEAVE", "source": "p reference file", "note": "filename decoy" },
+    { "id": "v2-l3", "fixture": "invoice-v2.html", "entity_type": "DECOY", "text": "$339.50", "action": "LEAVE", "source": "p charge amount", "note": "money amount, not PII" },
+    { "id": "v2-l4", "fixture": "invoice-v2.html", "entity_type": "DECOY", "text": "seven items", "action": "LEAVE", "source": "p 'seven items in this version'", "note": "dateless quantity decoy" },
+    { "id": "v2-l5", "fixture": "invoice-v2.html", "entity_type": "DECOY", "text": "INV-2026-0771", "action": "LEAVE", "source": "h1 invoice number", "note": "document number decoy" },
+    { "id": "v2-l6", "fixture": "invoice-v2.html", "entity_type": "DECOY", "text": "fictitious", "action": "LEAVE", "source": "p disclaimer", "note": "disclaimer word, never sensitive" }
+  ]
+}

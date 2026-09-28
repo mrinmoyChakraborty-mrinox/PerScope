@@ -17,6 +17,9 @@ import { isDestructive } from "../shared/is-destructive.js";
 import { startBridgeLink } from "./bridge-link.js";
 
 console.log("[PerScope Offscreen] Initialized and listening for pipeline tasks.");
+try {
+  if (globalThis.__PERSCOPE_BUILD) console.log("[BUILD]", JSON.stringify(globalThis.__PERSCOPE_BUILD));
+} catch {}
 
 // -- Helpers -----------------------------------------------------------------
 

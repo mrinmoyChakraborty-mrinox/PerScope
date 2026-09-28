@@ -1,0 +1,24 @@
+{
+  "_schema": "perscope-benchmark-ground-truth/v1",
+  "_fixture": "ambiguous.html",
+  "_source": "benchmarks/shakedown.md M3 list, user-approved 2026-09-28 (do not silently re-decide sensitivity)",
+  "_entity_fields": "id, fixture, entity_type, text (exact sensitive value as rendered, or canonical pattern), action REDACT|LEAVE, source (CSS-ish location in fixture), note",
+  "_bbox_policy": "text entities carry bbox:null and are matched by deterministic normalized-text matching (see benchmarks/lib/accuracy.mjs); visual-object bboxes are NOT hand-invented",
+  "entities": [
+    { "id": "amb-r1", "fixture": "ambiguous.html", "entity_type": "ACCOUNT_NUMBER", "text": "3524", "action": "REDACT", "source": "li[4] 'Old account ending 3524 is closed'", "note": "approved REDACT list" },
+    { "id": "amb-r2", "fixture": "ambiguous.html", "entity_type": "ACCOUNT_NUMBER", "text": "8810", "action": "REDACT", "source": "li[4] 'new one ends 8810'", "note": "approved REDACT list" },
+    { "id": "amb-r3", "fixture": "ambiguous.html", "entity_type": "IFSC", "text": "WBSC0LM1234", "action": "REDACT", "source": "li[4] 'IFSC looks like WBSC0LM1234'", "note": "approved REDACT list; fictitious pattern" },
+    { "id": "amb-r4", "fixture": "ambiguous.html", "entity_type": "PASSWORD", "text": "Tamluk@2019", "action": "REDACT", "source": "li[3] 'Temporary gate pass ... Tamluk@2019'", "note": "approved REDACT list; temporary gate pass" },
+    { "id": "amb-r5", "fixture": "ambiguous.html", "entity_type": "EMAIL", "text": "jeet dot routh at gmail", "action": "REDACT", "source": "li[2] 'His email is something like jeet dot routh at gmail'", "note": "approved REDACT list in obfuscated spoken form; matcher normalizes obfuscation" },
+    { "id": "amb-l1", "fixture": "ambiguous.html", "entity_type": "PHONE", "text": "98XXX-XX210", "action": "LEAVE", "source": "li[1] 'ring back on 98XXX-XX210'", "note": "source-masked already; must NOT be redacted" },
+    { "id": "amb-l2", "fixture": "ambiguous.html", "entity_type": "ORDER_REF", "text": "#WB1904SC", "action": "LEAVE", "source": "li[5] 'Order hashtag on the box read #WB1904SC'", "note": "order hashtag, not PII" },
+    { "id": "amb-l3", "fixture": "ambiguous.html", "entity_type": "DECOY", "text": "quarterly_report_final_FINAL2.pdf", "action": "LEAVE", "source": "li[8] filename", "note": "filename decoy, explicitly 'leave it alone'" },
+    { "id": "amb-l4", "fixture": "ambiguous.html", "entity_type": "DECOY", "text": "004811", "action": "LEAVE", "source": "li[9] 'Meter reading 004811 kWh'", "note": "meter-reading decoy" },
+    { "id": "amb-l5", "fixture": "ambiguous.html", "entity_type": "DECOY", "text": "004402", "action": "LEAVE", "source": "li[9] 'previous 004402 kWh'", "note": "meter-reading decoy" },
+    { "id": "amb-l6", "fixture": "ambiguous.html", "entity_type": "DECOY", "text": "starts with \"Jeet\" and ends with numbers", "action": "LEAVE", "source": "li[7] wifi description without a value", "note": "description of a secret, no value present" },
+    { "id": "amb-l7", "fixture": "ambiguous.html", "entity_type": "DECOY", "text": "seven in August", "action": "LEAVE", "source": "li[6] 'son just turned seven in August'", "note": "dateless age reference" },
+    { "id": "amb-l8", "fixture": "ambiguous.html", "entity_type": "DECOY", "text": "fictitious", "action": "LEAVE", "source": "h1 '(synthetic fixture, all data fictitious)'", "note": "disclaimer word, never sensitive" },
+    { "id": "amb-l9", "fixture": "ambiguous.html", "entity_type": "DECOY", "text": "department", "action": "LEAVE", "source": "li[10] 'no department name'", "note": "absent department, nothing to redact" },
+    { "id": "amb-l10", "fixture": "ambiguous.html", "entity_type": "DECOY", "text": "verify", "action": "LEAVE", "source": "li[4]/li[9] 'verify/recheck' instruction words", "note": "instruction word, never sensitive" }
+  ]
+}

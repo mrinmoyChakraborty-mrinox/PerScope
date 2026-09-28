@@ -1036,15 +1036,15 @@ function reconstructDocument(segments) {
   return lines.join("\n").replace(/\n{3,}/g, "\n\n").replace(/\n+$/, "");
 }
 var SECRET_LABEL_VOCABULARY = [
-  { match: ["password", "passwd", "pwd", "passcode"], type: "PASSWORD" },
+  { match: ["password", "passwd", "pwd", "passcode", "gate pass"], type: "PASSWORD", valueTest: /@|(?=.*[a-zA-Z])(?=.*\d).{6,}/ },
   { match: ["one time password", "one-time password", "otp"], type: "OTP" },
   { match: ["pin number", "pin"], type: "PIN" },
-  { match: ["email address", "e-mail", "email"], type: "EMAIL_ID" },
-  { match: ["phone number", "mobile number", "contact number", "telephone", "mobile", "phone"], type: "PHONE_NUMBER" },
+  { match: ["email address", "e-mail", "email"], type: "EMAIL_ID", valueTest: /@/ },
+  { match: ["phone number", "mobile number", "contact number", "telephone", "mobile", "phone"], type: "PHONE_NUMBER", valueTest: (v) => String(v).replace(/\D/g, "").length >= 7 },
   { match: ["upi id", "upi", "vpa"], type: "UPI_VPA" },
   { match: ["account number", "account no", "acct"], type: "BANK_ACCOUNT" },
-  { match: ["card number"], type: "CARD_NUMBER" },
-  { match: ["ifsc"], type: "IFSC_CODE" },
+  { match: ["card number"], type: "CARD_NUMBER", valueTest: /\d{4}/ },
+  { match: ["ifsc"], type: "IFSC_CODE", valueTest: /^[A-Z]{4}0[A-Z0-9]{6}$/i },
   { match: ["date of birth", "birth date", "dob"], type: "DATE_OF_BIRTH" },
   { match: ["aadhaar", "aadhar", "uidai"], type: "AADHAAR" },
   { match: ["passport number", "passport no"], type: "PASSPORT_NUMBER" }
@@ -1057,16 +1057,55 @@ function escapeRegExp(s) {
 }
 var SECRET_LABEL_PATTERNS = SECRET_LABEL_VOCABULARY.map((entry) => {
   const alts = [...entry.match].sort((a, b) => b.length - a.length).map(escapeRegExp);
-  return { type: entry.type, re: new RegExp(`\\b(?:${alts.join("|")})\\b`) };
+  return { type: entry.type, valueTest: entry.valueTest ?? null, re: new RegExp(`\\b(?:${alts.join("|")})\\b`) };
 });
 function findSecretLabelMatch(text) {
   const norm = normalizeSecretLabel(text);
   if (!norm) return null;
-  for (const { type, re } of SECRET_LABEL_PATTERNS) {
+  let weak = null;
+  for (const { type, valueTest, re } of SECRET_LABEL_PATTERNS) {
     const m = norm.match(re);
-    if (m) return { label: m[0], type };
+    if (!m) continue;
+    if (norm === m[0]) return { label: m[0], type, valueTest, weak: false };
+    if (m[0].length / norm.length >= 0.4) return { label: m[0], type, valueTest, weak: false };
+    if (!weak) weak = { label: m[0], type, valueTest, weak: true };
+  }
+  return weak;
+}
+function valuePassesSecretTest(hit, value) {
+  if (!hit || !hit.valueTest) return null;
+  const t = hit.valueTest;
+  const v = String(value ?? "");
+  if (t instanceof RegExp) return t.test(v);
+  if (typeof t === "function") {
+    try {
+      return !!t(v);
+    } catch {
+      return false;
+    }
   }
   return null;
+}
+var SPOKEN_EMAIL_RE = /\b[a-z0-9._-]+(?:\s+dot\s+[a-z0-9._-]+)+\s+at\s+[a-z0-9-]+(?:\s+dot\s+[a-z0-9-]+)*\b/gi;
+function extractSpokenEmailSpans(text) {
+  const src = String(text ?? "");
+  const spans = [];
+  SPOKEN_EMAIL_RE.lastIndex = 0;
+  let m;
+  while ((m = SPOKEN_EMAIL_RE.exec(src)) !== null) {
+    const value = m[0];
+    if (value.length < 6 || value.length > 80) continue;
+    spans.push({
+      type: "EMAIL_ID",
+      value,
+      start: m.index,
+      end: m.index + value.length,
+      confidence: 0.85,
+      spoken: true
+    });
+    if (value.length === 0) SPOKEN_EMAIL_RE.lastIndex++;
+  }
+  return spans;
 }
 function isPlausibleValueDom(text) {
   const v = String(text ?? "").trim();
@@ -1082,7 +1121,7 @@ function isBareLabelSegment(text) {
   const norm = normalizeSecretLabel(text);
   if (!norm || norm.length > 60) return null;
   const hit = findSecretLabelMatch(norm);
-  if (!hit) return null;
+  if (!hit || hit.weak) return null;
   const remainder = norm.replace(hit.label, "").replace(/[:\s]+/g, " ").trim();
   if (remainder && isPlausibleValueDom(remainder)) return null;
   return hit;
@@ -1147,6 +1186,7 @@ function splitLabelValueSegment(seg) {
   const hit = findSecretLabelMatch(labelPart);
   if (!hit) return null;
   if (!isPlausibleValueDom(valuePart)) return null;
+  if (hit.weak && valuePassesSecretTest(hit, valuePart) !== true) return null;
   const valueLabelHit = findSecretLabelMatch(valuePart);
   if (valueLabelHit && !isPlausibleValueDom(valuePart.replace(valueLabelHit.label, ""))) {
     return null;
@@ -1594,7 +1634,11 @@ function runTier0OnSegments(segments, detector) {
       continue;
     }
     const detection = detector.detectPII(text);
-    const detections = detection && detection.detections || [];
+    const detections = [...detection && detection.detections || []];
+    for (const span of extractSpokenEmailSpans(text)) {
+      const collides = detections.some((d) => span.start < d.end && span.end > d.start);
+      if (!collides) detections.push(span);
+    }
     const redactedText = detector.redactPII(detection ? detection.text : text, detections);
     segmentResults.push({ segment, redactedText, detections });
     for (const d of detections) {
@@ -2191,3 +2235,4 @@ if (typeof chrome !== "undefined" && chrome?.runtime?.onMessage) {
     return true;
   });
 }
+;globalThis.__PERSCOPE_BUILD={"commit":"d8072c4","time":"2026-09-28T17:26:47.256Z"};
