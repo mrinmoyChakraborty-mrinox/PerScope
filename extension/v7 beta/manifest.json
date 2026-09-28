@@ -15,7 +15,21 @@
   ],
   "action": {
     "default_popup": "popup.html",
-    "default_title": "PerScope Privacy Redactor"
+    "default_title": "PerScope Privacy Redactor",
+    "default_icon": {
+      "16": "assets/icon16.png",
+      "32": "assets/icon32.png",
+      "48": "assets/icon48.png",
+      "128": "assets/icon128.png"
+    }
+  },
+  "commands": {
+    "_execute_action": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+X"
+      },
+      "description": "Open the PerScope popup (matches the Capture button hint)"
+    }
   },
   "background": {
     "service_worker": "background.js",
@@ -44,6 +58,9 @@
     "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
   },
   "icons": {
+    "16": "assets/icon16.png",
+    "32": "assets/icon32.png",
+    "48": "assets/icon48.png",
     "128": "assets/icon128.png"
   }
 }

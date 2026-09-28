@@ -1,0 +1,24 @@
+{
+  "_schema": "perscope-benchmark-visual-tasks/v1",
+  "_note": "Deterministic task suite over the existing fixture pages. kind=static checks run against the fixture file source (no model involved); kind=live checks run against a capture_tab run record (evidence-derived fields the bench already stores). Every task records expected, actual, pass/fail plus the evidence used — never a fake accuracy number.",
+  "_task_fields": "id, fixture, description, kind, check, expected",
+  "tasks": [
+    { "id": "amb-heading", "fixture": "ambiguous", "description": "identify the visible page heading", "kind": "static", "check": "heading-equals", "expected": "Field notes — follow-ups (synthetic fixture, all data fictitious)" },
+    { "id": "amb-item-count", "fixture": "ambiguous", "description": "count follow-up list items", "kind": "static", "check": "li-count", "expected": 10 },
+    { "id": "amb-ocr-nonempty", "fixture": "ambiguous", "description": "OCR recovers visible text from the render", "kind": "live", "check": "ocr-items-gt", "expected": 0 },
+    { "id": "amb-tier2-fires", "fixture": "ambiguous", "description": "ambiguous content escalates to Tier-2 adjudication", "kind": "live", "check": "tier2-fired", "expected": true },
+    { "id": "th-invoice-id", "fixture": "text-heavy", "description": "recover the invoice number heading", "kind": "static", "check": "contains-text", "expected": "INV-2026-0481" },
+    { "id": "th-table-rows", "fixture": "text-heavy", "description": "count invoice table rows (header + items)", "kind": "static", "check": "tr-count", "expected": 4 },
+    { "id": "th-ocr-nonempty", "fixture": "text-heavy", "description": "OCR recovers dense invoice text", "kind": "live", "check": "ocr-items-gt", "expected": 0 },
+    { "id": "clean-no-text", "fixture": "clean", "description": "determine page state: no readable text nodes", "kind": "static", "check": "body-text-empty", "expected": true },
+    { "id": "clean-tier2-skips", "fixture": "clean", "description": "clean page stays on the fast path (Tier 2 skips)", "kind": "live", "check": "tier2-fired", "expected": false },
+    { "id": "clean-no-findings", "fixture": "clean", "description": "clean page yields zero findings", "kind": "live", "check": "findings-eq", "expected": 0 },
+    { "id": "face-photo-present", "fixture": "face", "description": "locate the applicant photo element", "kind": "static", "check": "contains-text", "expected": "/img/doc-face.png" },
+    { "id": "face-name-present", "fixture": "face", "description": "identify the applicant name label", "kind": "static", "check": "contains-text", "expected": "Priya Nair" },
+    { "id": "face-detects-face", "fixture": "face", "description": "face detector fires on the photo card", "kind": "live", "check": "face-done-with-count", "expected": true },
+    { "id": "doc-image-present", "fixture": "document", "description": "locate the scanned-document image element", "kind": "static", "check": "contains-text", "expected": "/img/doc-face.png" },
+    { "id": "v2-invoice-id", "fixture": "invoice-v2", "description": "recover the invoice number heading", "kind": "static", "check": "contains-text", "expected": "INV-2026-0771" },
+    { "id": "v2-email-present", "fixture": "invoice-v2", "description": "recover the non-placeholder contact email", "kind": "static", "check": "contains-text", "expected": "arjun.mehta@acme-invoice.test" },
+    { "id": "v2-ocr-nonempty", "fixture": "invoice-v2", "description": "OCR recovers invoice-v2 text", "kind": "live", "check": "ocr-items-gt", "expected": 0 }
+  ]
+}

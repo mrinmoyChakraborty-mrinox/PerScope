@@ -17,6 +17,9 @@ import { isDestructive } from "../shared/is-destructive.js";
 import { startBridgeLink } from "./bridge-link.js";
 
 console.log("[PerScope Offscreen] Initialized and listening for pipeline tasks.");
+try {
+  if (globalThis.__PERSCOPE_BUILD) console.log("[BUILD]", JSON.stringify(globalThis.__PERSCOPE_BUILD));
+} catch {}
 
 // -- Helpers -----------------------------------------------------------------
 
@@ -49,6 +52,52 @@ function schedulePrewarm() {
 
 schedulePrewarm();
 
+// -- Phase 4: offscreen recycling (MITIGATION, not a fix) -------------------
+// Session degradation (F3) recovers on reload, so bound a document's life:
+// after N completed captures (default 15, where F3 was observed) or on a
+// newly-logged GPU event, ask the service worker to tear down + recreate
+// this document (models reload fresh). Pairing survives: bridge-link
+// reconnects with the stored token/clientId in chrome.storage.local.
+// The request fires on a delay AFTER the current result is returned, so an
+// in-flight capture never loses its response to the teardown. Expect one
+// slower (cold-model) run right after a recycle, and possibly one failed
+// run if a capture lands inside the ~4s recreate gap — both are visible
+// in the harness flags, not silent.
+const DEFAULT_RECYCLE_AFTER_CAPTURES = 15;
+let _completedCaptures = 0;
+let _lastGpuEventSeenT = 0;
+
+function _resolveRecycleAfter(options) {
+  if (options && typeof options.recycleAfterCaptures === "number") return options.recycleAfterCaptures;
+  return DEFAULT_RECYCLE_AFTER_CAPTURES;
+}
+
+function _maybeRequestRecycle({ options, evidence }) {
+  try {
+    _completedCaptures++;
+    const recycleAfter = _resolveRecycleAfter(options);
+    const gpuEvents = evidence?.pipeline_perf?.gpuEvents || [];
+    const freshGpuEvents = gpuEvents.filter((e) => Number(e?.t || 0) > _lastGpuEventSeenT);
+    for (const e of gpuEvents) {
+      const t = Number(e?.t || 0);
+      if (Number.isFinite(t) && t > _lastGpuEventSeenT) _lastGpuEventSeenT = t;
+    }
+    let reason = null;
+    if (freshGpuEvents.length > 0) {
+      reason = `gpu-event (${freshGpuEvents.length} new: ${freshGpuEvents.map((e) => e.kind).join(",")})`;
+    } else if (recycleAfter > 0 && _completedCaptures >= recycleAfter) {
+      reason = `capture-count ${_completedCaptures} >= ${recycleAfter}`;
+    }
+    if (!reason) return;
+    console.warn(`[RECYCLE] capture #${_completedCaptures} triggered recycle (${reason}) — requesting offscreen reload after result delivery.`);
+    setTimeout(() => {
+      try {
+        chrome.runtime.sendMessage({ target: "background", action: "REQUEST_OFFSCREEN_RECYCLE", reason }).catch?.(() => {});
+      } catch {}
+    }, 1500);
+  } catch {}
+}
+
 // -- Pipeline job (shared by popup UI and bridge capture_tab) ----------------
 // Refactored out of the RUN_PIPELINE handler so the bridge route invokes the
 // exact same path the popup's Capture button triggers — no divergent logic.
@@ -62,6 +111,9 @@ async function runPipelineJob({ jobId, imageBytes, options, onProgress }) {
   // serialisation that was the primary source of UI jitter.
   const outputArrayBuffer = await result.outputBlob.arrayBuffer();
   const outputBase64 = uint8ToBase64(new Uint8Array(outputArrayBuffer));
+
+  // Phase 4: count + maybe schedule a recycle AFTER this result returns.
+  _maybeRequestRecycle({ options, evidence: result.evidence });
 
   return {
     status: "SUCCESS",
@@ -144,7 +196,14 @@ async function handleBridgeTool({ tool, params }) {
       const blob = await (await fetch(cap.dataUrl)).blob();
       const imageBytes = Array.from(new Uint8Array(await blob.arrayBuffer()));
       const jobId = `bridge_${Date.now()}`;
-      const res = await runPipelineJob({ jobId, imageBytes, options: {}, onProgress: () => {} });
+      // recycleAfterCaptures override (Phase 4):lets the benchmark disable
+      // recycling for the Phase 3 correlation run (recycle would mask the
+      // very degradation being measured) while production defaults to 15.
+      const bridgeOptions = {};
+      if (params && typeof params.recycleAfterCaptures === "number") {
+        bridgeOptions.recycleAfterCaptures = params.recycleAfterCaptures;
+      }
+      const res = await runPipelineJob({ jobId, imageBytes, options: bridgeOptions, onProgress: () => {} });
       return {
         status: "ok",
         redactedImage: res.outputBase64,

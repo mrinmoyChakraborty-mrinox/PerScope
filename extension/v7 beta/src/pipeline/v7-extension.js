@@ -12,18 +12,20 @@ import {
   AutoModelForImageTextToText,
   AutoTokenizer,
   AutoModelForTokenClassification,
+  StoppingCriteria,
   load_image,
   env,
 } from "@huggingface/transformers";
 import { PaddleOcrService, V6_SMALL_MODEL } from "ppu-paddle-ocr/web";
 
-import { resolveComputeDevice, configureOrtEnvironment } from "./gpu.js";
+import { resolveComputeDevice, configureOrtEnvironment, getGpuErrorLog } from "./gpu.js";
 import {
   cleanText,
   buildOCRGlobalSpans,
   buildReadingOrder,
   extractSensitiveFieldCandidates,
   fuseRedactionCandidates,
+  selectT2ReviewCandidates,
   buildUIStructure,
   buildFindingsFromEntity,
   isPlaceholderText,
@@ -38,7 +40,7 @@ import {
 } from "./ner-utils.js";
 import {
   buildFastVLMRedactionEvidence,
-  buildFastVLMRedactionPrompt,
+  buildCandidateCheckPrompt,
   buildPerceptionPrompt,
 } from "./prompts.js";
 import {
@@ -63,9 +65,49 @@ const FASTVLM_DTYPE = {
   decoder_model_merged: "q4f16",
 };
 // 512 tokens of greedy decode was never needed for the fixed JSON schema
-// FastVLM returns (caption + a short redactions array) — 160 is generous
-// headroom and roughly a 3x cut in decode time/memory churn.
-const FASTVLM_MAX_NEW_TOKENS = 160;
+// FastVLM returns (caption + a short redactions array) — 128 is generous
+// headroom (Phase 1 optimization; was 160, shaved after the schema output
+// on all fixtures validated well under 100 tokens) and cuts decode
+// time/memory churn proportionally.
+// NOTE (attribution): this and the fused-evidence prompt cap both shrink
+// the decode/prefill workload — a FASTVLM latency drop in the live batch
+// cannot be naively split between them. Read finding-count + validation
+// status alongside latency: truncation harm shows up as invalid JSON
+// (token cap), missing-evidence harm as fewer/weaker findings (prompt cap).
+const FASTVLM_MAX_NEW_TOKENS = 128;
+
+// Hang-guard around generate(), NOT a fail-fast: transformers generate()
+// has no AbortSignal support (verified in @huggingface/transformers
+// generation sources), so a timeout stops the pipeline WAITING — the
+// underlying op keeps burning in the background. An abandoned op that
+// overlaps the NEXT capture's generate is a ~1GB pile-up that OOM-kills
+// the renderer (observed live 2026-09-28: timeouts at 01:35/03:08, then
+// +1GB/run deltas and document deaths). Two consequences encoded below:
+// (1) the value sits at 2x the slowest legitimate generate observed
+// (61s), so it fires only on true hangs; (2) a firing arms a cooldown
+// that keeps the next capture off the GPU while the orphan burns out.
+// The aggressive direction (<=30s fail-fast) stays a human decision:
+// natural ambiguous/text-heavy generates run 20-60s and would be
+// amputated by it.
+const FASTVLM_GENERATE_TIMEOUT_MS = 120_000;
+// Cooldown after an abandoned generate: skip T2 (fallback covers findings)
+// while the orphan may still be burning. Prevents pile-up, not a fix for
+// the un-cancellable op itself.
+const FASTVLM_TIMEOUT_COOLDOWN_MS = 90_000;
+let _fastvlmCooldownUntil = 0;
+
+// Crop-check decode budget (T2 replan 2026-09-28): a binary verdict needs
+// ~20 tokens; 48 is 2x headroom. Decode on iGPU is dispatch-overhead +
+// GPU->CPU-sync bound per token, so this cap (vs the old 128-token essay)
+// is the primary burn lever: worst case 48 steps instead of 128.
+const FASTVLM_CANDIDATE_MAX_TOKENS = 48;
+// Per-check wait bound: a legible crop + ~150-token prompt answers in
+// ~10-20s on iGPU; 30s fires only on true hangs. Same orphan semantics
+// as the 120s guard (no abort handle) — arms the same cooldown.
+const FASTVLM_CANDIDATE_TIMEOUT_MS = 30_000;
+// Native-res crop margin per side (locked 25%): short numeric spans
+// ("3524") need surrounding context to be legible; clamped to the frame.
+const T2_CROP_MARGIN = 0.25;
 
 // Verbose per-item OCR/NER/heuristics/finding dumps are useful when actively
 // debugging the pipeline but are pure overhead (console + string building +
@@ -598,143 +640,216 @@ async function loadFastVLM(computeDevice) {
 }
 
 /**
- * Resizes large image to max 448px to avoid WebGPU freeze/OOM.
- * The redaction JSON schema doesn't need fine detail — dropping from 672px
- * cuts vision-token count (and the decode-time memory that scales with it)
- * substantially with no measurable loss in adjudication quality.
+ * Crops a candidate bbox (±T2_CROP_MARGIN, clamped) at NATIVE working
+ * resolution. The retired full-page path downscaled dense pages to 448px,
+ * smearing 14px text to ~4px — T2 was blind by construction and answered
+ * with layout prose ("Indian ID" that isn't there). A ~200x60px native
+ * crop is tiny prefill AND legible. Coordinates are working-res
+ * (decoded.blob is capped by capWorkingResolution, bboxes map 1:1).
+ * Degenerate boxes fall back to the full frame rather than throwing.
  */
-async function prepareFastVLMImage(imageBlob) {
+async function cropCandidateImage(imageBlob, bbox, imageW, imageH) {
+  const bitmap = await createImageBitmap(imageBlob);
   try {
-    const bitmap = await createImageBitmap(imageBlob);
-    const max = 448;
-    const w = bitmap.width;
-    const h = bitmap.height;
-    if (!w || !h || (w <= max && h <= max)) {
-      // Sizing check is the only use of this bitmap; load_image decodes from
-      // the blob independently, so release the GPU copy before continuing.
-      closeBitmap(bitmap);
-      return await load_image(imageBlob);
-    }
-    const scale = Math.min(max / w, max / h);
-    const targetW = Math.max(1, Math.round(w * scale));
-    const targetH = Math.max(1, Math.round(h * scale));
-    const canvas = new OffscreenCanvas(targetW, targetH);
-    const ctx = canvas.getContext("2d");
-    ctx.drawImage(bitmap, 0, 0, targetW, targetH);
-    // Full-res source no longer needed once the 448px canvas holds the pixels.
+    const nums = (bbox || []).map(Number);
+    const bx1 = Number.isFinite(nums[0]) ? nums[0] : 0;
+    const by1 = Number.isFinite(nums[1]) ? nums[1] : 0;
+    const bx2 = Number.isFinite(nums[2]) ? nums[2] : imageW;
+    const by2 = Number.isFinite(nums[3]) ? nums[3] : imageH;
+    const w = Math.max(1, bx2 - bx1);
+    const h = Math.max(1, by2 - by1);
+    const mx = w * T2_CROP_MARGIN;
+    const my = h * T2_CROP_MARGIN;
+    const cx = Math.max(0, Math.floor(bx1 - mx));
+    const cy = Math.max(0, Math.floor(by1 - my));
+    const cw = Math.min(imageW - cx, Math.ceil(w + mx * 2));
+    const ch = Math.min(imageH - cy, Math.ceil(h + my * 2));
+    if (cw < 2 || ch < 2) return imageBlob;
+    const canvas = new OffscreenCanvas(cw, ch);
+    canvas.getContext("2d").drawImage(bitmap, cx, cy, cw, ch, 0, 0, cw, ch);
+    return await canvas.convertToBlob({ type: "image/png" });
+  } finally {
     closeBitmap(bitmap);
-    const resizedBlob = await canvas.convertToBlob({ type: "image/png" });
-    console.log(`[FASTVLM] Resized image from ${w}x${h} to ${targetW}x${targetH} for stability`);
-    return await load_image(resizedBlob);
-  } catch (err) {
-    console.warn(`[FASTVLM] Image resize failed, using original:`, err.message);
-    return await load_image(imageBlob);
   }
 }
 
 /**
- * Runs FastVLM multimodal adjudication on image and extracted evidence
+ * Early-exit decode guard (the JSON-completion exit): stop the moment the
+ * verdict object is brace-balanced and ends with }. Subclasses the
+ * package-root StoppingCriteria (public surface; verified against the
+ * vendored bundle — generate() ORs custom criteria per batch, so a
+ * single [true] stops decode). decode() per step is CPU-trivial next to
+ * a GPU decode step. minNewTokens guards degenerate instant stops; any
+ * throw inside _call returns [false] (a throwing criterion would abort
+ * the whole generate, so this degrades to the 48-token cap, never worse).
  */
-async function runFastVLMAdjudication({ imageBlob, evidence, computeDevice }) {
-  const fastvlm = await loadFastVLM(computeDevice);
-  const prompt = buildFastVLMRedactionPrompt(evidence);
-  const startTime = performance.now();
+class BalancedJsonStoppingCriteria extends StoppingCriteria {
+  constructor(decodeFn, promptLength, minNewTokens = 8) {
+    super();
+    this.decodeFn = decodeFn;
+    this.promptLength = promptLength;
+    this.minNewTokens = minNewTokens;
+  }
+  _call(input_ids, _scores) {
+    try {
+      const ids = (input_ids?.[0] || []).slice(this.promptLength).map(Number);
+      if (ids.length < this.minNewTokens) return [false];
+      const text = this.decodeFn(ids);
+      let depth = 0;
+      let seen = false;
+      for (const ch of text) {
+        if (ch === "{") { depth++; seen = true; }
+        else if (ch === "}") depth--;
+      }
+      return [seen && depth <= 0 && text.trimEnd().endsWith("}")];
+    } catch {
+      return [false];
+    }
+  }
+}
 
-  const image = await prepareFastVLMImage(imageBlob);
+/**
+ * One legible question about one crop: span + line context in, binary
+ * verdict out (<=48 tokens). Serialized by the caller (pile-up lesson);
+ * same orphan semantics as the old guard (no abort handle exists, so a
+ * timeout arms the shared cooldown instead of cancelling).
+ */
+async function runFastVLMCandidateCheck({ fastvlm, cropBlob, prompt }) {
+  const cropImage = await load_image(cropBlob);
   const messages = [{ role: "user", content: `<image>${prompt}` }];
-  const renderedPrompt = fastvlm.processor.apply_chat_template(messages, {
+  const rendered = fastvlm.processor.apply_chat_template(messages, {
     add_generation_prompt: true,
   });
-
-  const inputs = await fastvlm.processor(image, renderedPrompt, {
+  // Assistant prefill (carried over from the retired call): forces a JSON
+  // start so the 0.5B never leads with "The image shows..." prose.
+  const renderedForced = `${rendered}{`;
+  const inputs = await fastvlm.processor(cropImage, renderedForced, {
     add_special_tokens: false,
   });
-
-  const generated = await fastvlm.model.generate({
-    ...inputs,
-    max_new_tokens: FASTVLM_MAX_NEW_TOKENS,
-    do_sample: false,
-    repetition_penalty: 1.15,
-    no_repeat_ngram_size: 3,
-  });
-
-  // Prefill/input tensors (448px pixel_values + prompt ids) are the per-image
-  // spike: generate() has consumed them, so release before the decode stage
-  // rather than holding them alongside the output through adjudication.
-  // inputLength is plain JS metadata — capture it before releasing.
   const inputLength = Number(inputs?.input_ids?.dims?.at(-1) ?? 0);
+  let criteria = null;
+  try {
+    criteria = new BalancedJsonStoppingCriteria(
+      (ids) => fastvlm.processor.batch_decode([ids], { skip_special_tokens: true })[0] ?? "",
+      inputLength
+    );
+  } catch {
+    criteria = null;
+  }
+  const genArgs = {
+    ...inputs,
+    max_new_tokens: FASTVLM_CANDIDATE_MAX_TOKENS,
+    do_sample: false,
+    repetition_penalty: 1.05,
+  };
+  if (criteria) genArgs.stopping_criteria = [criteria];
+  const generatePromise = fastvlm.model.generate(genArgs);
+  // Swallow the loser's late rejection (same race pattern as retired call).
+  generatePromise.catch(() => {});
+  let generated;
+  try {
+    generated = await Promise.race([
+      generatePromise,
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error(`FastVLM candidate check timed out after ${FASTVLM_CANDIDATE_TIMEOUT_MS}ms`)), FASTVLM_CANDIDATE_TIMEOUT_MS),
+      ),
+    ]);
+  } catch (err) {
+    if (String(err?.message || "").includes("timed out")) {
+      _fastvlmCooldownUntil = Date.now() + FASTVLM_TIMEOUT_COOLDOWN_MS;
+      console.warn(`[FASTVLM] Candidate check timeout — cooling down T2 for ${FASTVLM_TIMEOUT_COOLDOWN_MS / 1000}s (orphaned op still burning)`);
+    }
+    throw err;
+  }
+
+  const inputLengthSnapshot = inputLength;
   disposeTensors(inputs);
 
   let outputText = "";
   let generatedOnly = null;
-
   try {
-    generatedOnly = inputLength > 0 ? generated.slice(null, [inputLength, null]) : generated;
+    generatedOnly = inputLengthSnapshot > 0 ? generated.slice(null, [inputLengthSnapshot, null]) : generated;
     outputText = fastvlm.processor.batch_decode(generatedOnly, { skip_special_tokens: true })[0] ?? "";
   } catch {
     outputText = fastvlm.processor.batch_decode(generated, { skip_special_tokens: true })[0] ?? "";
   } finally {
-    // generatedOnly may alias generated (slice view or same ref on the
-    // fallback path) — never double-dispose the same handle.
     if (generatedOnly && generatedOnly !== generated) disposeTensors({ generatedOnly });
     disposeTensors({ generated });
   }
 
+  // Restore the prefilled brace (same convention as the retired call).
   outputText = String(outputText).trim();
-  if (!outputText) throw new Error("FastVLM generated an empty response");
-
-  let parsed = null;
-  let parseError = null;
+  if (outputText && !outputText.startsWith("{")) outputText = `{${outputText}`;
+  if (!outputText) throw new Error("FastVLM candidate check generated an empty response");
+  let parsed;
   try {
-    const jsonStr = extractJsonObject(outputText);
-    parsed = JSON.parse(jsonStr);
+    parsed = JSON.parse(extractJsonObject(outputText));
   } catch (err) {
-    parseError = err;
-    console.warn(`[FASTVLM] JSON parse failed: ${err.message}`);
+    throw new Error(`FastVLM candidate check JSON parse failed: ${err.message} :: ${outputText.slice(0, 80)}`);
   }
+  const verdict = String(parsed?.verdict || "").toLowerCase();
+  if (verdict !== "yes" && verdict !== "no") {
+    throw new Error(`FastVLM candidate check verdict not binary: ${outputText.slice(0, 80)}`);
+  }
+  return { verdict, confidence: Number(parsed?.confidence ?? 0.5), raw: outputText };
+}
 
-  const latencyMs = Math.round(performance.now() - startTime);
-
-  // If FastVLM output was descriptive prose without JSON schema:
-  // Salvage the outputText as the visual caption so the user ALWAYS gets a description!
-  if (!parsed || !parsed.caption) {
-    const cleanCaption = outputText.replace(/```(?:json)?[\s\S]*?```/gi, "").trim();
-    if (cleanCaption) {
-      if (!parsed) parsed = {};
-      parsed.caption = cleanCaption;
+/**
+ * Serialized per-LOW-candidate review (cap N=6, lowest-confidence-first —
+ * selection happened in selectT2ReviewCandidates). One model load, one
+ * generate at a time: transformers.js chains WebGPU inference globally,
+ * so concurrency buys nothing and risks everything.
+ *
+ * Returns status "candidate_checks" (all decided) or "partial" (some
+ * errored — errored/unchecked stay in the fallback via fail-closed).
+ * Throws only when EVERYTHING failed (load or all checks), so the caller
+ * takes the load_failed path with the FULL list — a T2 failure must
+ * never mean less protection. Confirmed candidates carry _t2_confirmed
+ * (Gate 6 clears them at 0.5 honestly); clean rejects are the caller's
+ * to remove ("logged drop").
+ */
+async function runFastVLMCandidateChecks({ imageBlob, imageW, imageH, reviewCandidates, ocrItems, computeDevice }) {
+  // Post-timeout cooldown (same guard as the retired call): an abandoned
+  // op may still be burning — fail over, don't pile on.
+  if (Date.now() < _fastvlmCooldownUntil) {
+    throw new Error("FastVLM cooling down after abandoned generate (timeout pile-up guard)");
+  }
+  const fastvlm = await loadFastVLM(computeDevice);
+  const confirmed = [];
+  const rejected = [];
+  const errored = [];
+  for (const c of reviewCandidates) {
+    const lineText =
+      (ocrItems || [])
+        .filter((o) => (c.ocr_ids || []).includes(o.id))
+        .map((o) => o.text)
+        .join(" ") || String(c.text || "");
+    const prompt = buildCandidateCheckPrompt(c, lineText);
+    try {
+      const cropBlob = await cropCandidateImage(imageBlob, c.bbox, imageW, imageH);
+      const { verdict, confidence } = await runFastVLMCandidateCheck({ fastvlm, cropBlob, prompt });
+      if (verdict === "yes") {
+        c._t2_confirmed = true;
+        c._t2_confidence = confidence;
+        confirmed.push(c.candidate_id);
+        console.log(`[FASTVLM] crop check CONFIRM ${c.candidate_id} '${String(c.text).slice(0, 40)}' t2conf=${confidence}`);
+      } else {
+        rejected.push(c.candidate_id);
+        console.log(`[FASTVLM] crop check reject ${c.candidate_id} '${String(c.text).slice(0, 40)}'`);
+      }
+    } catch (err) {
+      console.warn(`[FASTVLM] crop check error ${c.candidate_id}: ${err.message}`);
+      errored.push(c.candidate_id);
     }
   }
-
-  // Deterministic scrub: the 0.5B model echoes OCR values into the caption
-  // despite prompt rule 10. Never let raw model text reach evidence/UI.
-  if (parsed?.caption) {
-    parsed.caption = sanitizeCaption(parsed.caption, evidence);
+  if (errored.length > 0 && confirmed.length === 0 && rejected.length === 0) {
+    throw new Error(`All ${reviewCandidates.length} FastVLM crop checks failed`);
   }
-
-  if (parseError && (!parsed.redactions || parsed.redactions.length === 0)) {
-    // Return with error status so adjudicateOrFallback uses fusion_fallback,
-    // but keep parsed.caption so caption is displayed to the user!
-    return {
-      status: "error",
-      reason: parseError.message,
-      raw: outputText,
-      parsed,
-      prompt,
-      renderedPrompt,
-      latencyMs,
-    };
-  }
-
   return {
-    status: "ok",
-    raw: outputText,
-    parsed,
-    prompt,
-    renderedPrompt,
-    inputTokens: inputLength,
-    outputTokens: outputText.split(/\s+/).filter(Boolean).length,
-    genMs: latencyMs,
-    latencyMs,
+    status: errored.length === 0 ? "candidate_checks" : "partial",
+    confirmed,
+    rejected,
+    errored,
   };
 }
 
@@ -894,6 +1009,11 @@ async function _runExtensionPipelineInner(inputImage, options = {}, onProgress =
     deterministicFindings,
   });
   console.log(`[HEURISTICS] deterministicFindings=${deterministicFindings.length} fusedCandidates=${fusedCandidates.length}`);
+  // Content-free fusion trace (always on): candidate shape without values —
+  // this is what tells HIGH-apart from LOW-apart from dropped at the gate.
+  for (const c of fusedCandidates) {
+    console.log(`[TRACE] fused ${c.candidate_id}[${(c.candidate_types || []).join("+")}|${(c.sources || []).join("+")}|${Number(c.confidence ?? 0).toFixed(2)}|len=${String(c.text ?? "").length}|ocr=${(c.ocr_ids || []).length}]`);
+  }
   if (PII_DEBUG) {
     for (const c of fusedCandidates) {
       console.log(`[HEURISTICS] candidate: ${c.candidate_id} text='${c.text}' types=${c.candidate_types.join('+')} sources=${c.sources.join('+')} conf=${Number(c.confidence).toFixed(3)}`);
@@ -919,25 +1039,75 @@ async function _runExtensionPipelineInner(inputImage, options = {}, onProgress =
     nerCount: nerFindings.length,
   });
 
-  /* ---------------- FASTVLM 0.5B ADJUDICATION ---------------- */
+    /* ---------------- FASTVLM 0.5B ADJUDICATION (gated crop checks) ---------------- */
+  // Gate (T2 replan 2026-09-28): T2 fires IFF low-confidence entities exist
+  // (single-source below H). Clean pages skip with zero T2 cost — and skip
+  // one more chance to wedge the global webInferenceChain. HIGH findings
+  // never see the model. The retired full-page call is deleted (was blind
+  // at 448px by construction); LOW candidates get native-res crop checks.
   const fastvlmEnabled = options.fastvlmEnabled !== false;
+  const { high: highConfCandidates, low: reviewCandidates, droppedLow } =
+    selectT2ReviewCandidates(fusedCandidates);
   let fastvlmResult = null;
+  // Adjudication input: HIGH + T2-confirmed + errored/over-cap survive;
+  // clean T2 rejects are removed ("logged drop"). Full-list fallback only
+  // when T2 itself fails (fail-closed keeps >=F, never less protection).
+  let adjudicationCandidates = fusedCandidates;
 
-  if (fastvlmEnabled && (fusedCandidates.length > 0 || (ocr.items && ocr.items.length > 0))) {
-    emit("FASTVLM", "START");
+  if (!fastvlmEnabled) {
+    emit("FASTVLM", "SKIPPED", { reason: "FastVLM disabled by user" });
+    fastvlmResult = {
+      status: "skipped",
+      reason: "FastVLM disabled by user",
+      raw: JSON.stringify({ status: "skipped" }),
+    };
+  } else if (reviewCandidates.length === 0) {
+    emit("FASTVLM", "SKIPPED", {
+      reason: "No low-confidence candidates (gate)",
+      highCount: highConfCandidates.length,
+    });
+    console.log(`[FASTVLM] Gate closed: ${highConfCandidates.length} HIGH, 0 LOW — T2 skipped`);
+    console.log(`[TRACE] HIGH: ${highConfCandidates.map((c) => c.candidate_id).join(",") || "(none)"}`);
+    fastvlmResult = {
+      status: "skipped",
+      reason: "No low-confidence candidates (gate)",
+      raw: JSON.stringify({ status: "skipped" }),
+    };
+  } else {
+    emit("FASTVLM", "START", {
+      checks: reviewCandidates.length,
+      high: highConfCandidates.length,
+      droppedLow,
+    });
+    console.log(`[FASTVLM] Gate open: ${highConfCandidates.length} HIGH direct, ${reviewCandidates.length} LOW crop checks${droppedLow ? ` (${droppedLow} over cap, kept in fallback)` : ""}`);
+    console.log(`[TRACE] HIGH: ${highConfCandidates.map((c) => c.candidate_id).join(",") || "(none)"} LOW: ${reviewCandidates.map((c) => c.candidate_id).join(",")}`);
     try {
-      fastvlmResult = await runFastVLMAdjudication({
+      const checks = await runFastVLMCandidateChecks({
         imageBlob: decoded.blob,
-        evidence: fastvlmEvidence,
+        imageW: decoded.width,
+        imageH: decoded.height,
+        reviewCandidates,
+        ocrItems: ocr.items,
         computeDevice,
       });
+      const rejectSet = new Set(checks.rejected);
+      adjudicationCandidates = fusedCandidates.filter((c) => !rejectSet.has(c.candidate_id));
+      fastvlmResult = {
+        status: checks.status,
+        reason: `crop checks: ${checks.confirmed.length} confirmed, ${checks.rejected.length} rejected, ${checks.errored.length} errored`,
+        raw: "",
+        confirmed: checks.confirmed,
+        rejected: checks.rejected,
+        errored: checks.errored,
+      };
       emit("FASTVLM", "DONE", {
-        status: fastvlmResult.status,
-        caption: fastvlmResult.parsed?.caption,
-        redactionsCount: fastvlmResult.parsed?.redactions?.length || 0,
+        status: checks.status,
+        confirmed: checks.confirmed.length,
+        rejected: checks.rejected.length,
+        errored: checks.errored.length,
       });
     } catch (err) {
-      console.warn("[WARN] FastVLM adjudication failed:", err.message);
+      console.warn("[WARN] FastVLM crop checks failed:", err.message);
       fastvlmResult = {
         status: "load_failed",
         reason: err.message,
@@ -945,22 +1115,13 @@ async function _runExtensionPipelineInner(inputImage, options = {}, onProgress =
       };
       emit("FASTVLM", "ERROR", { error: err.message });
     }
-  } else {
-    emit("FASTVLM", "SKIPPED", {
-      reason: fastvlmEnabled ? "No candidates found" : "FastVLM disabled by user",
-    });
-    fastvlmResult = {
-      status: "skipped",
-      reason: fastvlmEnabled ? "No candidates found" : "FastVLM disabled by user",
-      raw: JSON.stringify({ status: "skipped" }),
-    };
   }
 
-  /* ---------------- SAFETY & ADJUDICATION FALLBACK ---------------- */
+/* ---------------- SAFETY & ADJUDICATION FALLBACK ---------------- */
   const adjudication = adjudicateOrFallback({
     ettinFindings: nerFindings,
     deterministicFindings,
-    fusedCandidates,
+    fusedCandidates: adjudicationCandidates,
     fastvlmResult,
     evidence: {
       fastvlm_evidence: fastvlmEvidence,
@@ -1106,6 +1267,8 @@ async function _runExtensionPipelineInner(inputImage, options = {}, onProgress =
       totalTimeMs,
       stages: buildStagePerf(stageMarks),
       memory: { before: memBefore, after: memAfter },
+      gpuEvents: getGpuErrorLog(),
+      build: (typeof globalThis !== "undefined" && globalThis.__PERSCOPE_BUILD) || null,
     },
   };
 

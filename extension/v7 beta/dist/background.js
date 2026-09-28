@@ -112,6 +112,29 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     ensureOffscreenDocument().then(() => sendResponse({ status: "SUCCESS" })).catch((err) => sendResponse({ status: "ERROR", error: err.message }));
     return true;
   }
+  if (message.action === "REQUEST_OFFSCREEN_RECYCLE") {
+    (async () => {
+      const reason = String(message.reason || "unknown");
+      try {
+        await new Promise((resolve) => setTimeout(resolve, 2e3));
+        try {
+          await chrome.offscreen.closeDocument();
+        } catch (err) {
+          console.warn("[Service Worker] Recycle: closeDocument:", err?.message || err);
+        }
+        await ensureOffscreenDocument();
+        console.warn(`[RECYCLE] offscreen document recreated (reason: ${reason}). Next capture pays cold-model reload.`);
+        sendResponse({ status: "SUCCESS", recycled: true });
+      } catch (err) {
+        console.error("[Service Worker] Recycle failed:", err?.message || err);
+        try {
+          sendResponse({ status: "ERROR", error: err?.message || String(err) });
+        } catch {
+        }
+      }
+    })();
+    return true;
+  }
   const BRIDGE_READY_POLL_MS = 500;
   const BRIDGE_READY_TIMEOUT_MS = 6e3;
   async function queryOffscreenBridge() {
@@ -326,3 +349,4 @@ async function updateBridgeBadge(s) {
 export {
   ensureOffscreenDocument
 };
+;globalThis.__PERSCOPE_BUILD={"commit":"d8072c4","time":"2026-09-28T17:26:47.256Z"};

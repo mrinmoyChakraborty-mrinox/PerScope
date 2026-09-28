@@ -1,10 +1,21 @@
 import * as esbuild from "esbuild";
 import { rmSync, mkdirSync, copyFileSync, cpSync, existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
+import { execSync } from "node:child_process";
 
 const root = resolve(import.meta.dirname);
 const dist = resolve(root, "dist");
 const src = resolve(root, "src");
+
+// P0 version marker: every bundle stamps its origin so a console line or
+// evidence blob always answers "which code ran" (ended the stale-build vs
+// new-bug confusion 2026-09-28). No source edits needed — esbuild footer.
+let buildCommit = "unknown";
+try {
+  buildCommit = execSync("git rev-parse --short HEAD", { cwd: root }).toString().trim() || "unknown";
+} catch {}
+const buildStamp = `;globalThis.__PERSCOPE_BUILD=${JSON.stringify({ commit: buildCommit, time: new Date().toISOString() })};`;
+console.log(`[BUILD] marker: ${buildStamp.slice(0, 120)}`);
 
 console.log("[BUILD] Cleaning dist directory...");
 rmSync(dist, { recursive: true, force: true });
@@ -56,6 +67,7 @@ for (const { in: entryIn, out, external: extraExternal = [] } of entries) {
     conditions: ["browser", "module", "import"],
     external: ["fs", "crypto", "path", "os", "module", "readline", ...extraExternal],
     loader: { ".wasm": "file" },
+    footer: { js: buildStamp },
     define: {
       "process.env.NODE_ENV": '"production"',
     },
@@ -104,19 +116,19 @@ if (existsSync(ortSrc)) {
 
 // 6. Copy required v7 models to dist/models/
 //
-// Slim-share default: bundle ONLY the small offline-critical models
-// (paddleocr ~168MB + blazeface ~0.5MB). The big models (Ettin ~788MB,
-// FastVLM ~1.4GB) download on first run from HuggingFace and are cached
-// by the browser (see v7-extension.js: NER resolveNERModelPath fallback,
-// FastVLM from_pretrained remote fallback, face/paddle HEAD->remote).
-// This keeps the shareable zip at ~170MB instead of ~3.9GB.
+// Default: bundle paddleocr (~168MB) + blazeface (~0.5MB) + Ettin NER
+// (~270MB, complete in models/ettin-68m-nemotron-pii-onnx/). Ettin ships
+// because NER runs on EVERY capture: a first-run 270MB download plus an
+// unpinned remote revision would make the benchmarked model differ from
+// the run model (offline-claim + drift fix, 2026-09-28). FastVLM stays
+// first-run-download + browser-cached (too big to ship; fires rarely
+// under the gate) — see v7-extension.js resolveNERModelPath fallback,
+// FastVLM from_pretrained remote fallback, face/paddle HEAD->remote.
 //
 // For a personal full-offline build: INCLUDE_BIG_MODELS=1 npm run build
+// (adds FastVLM from the local HF cache on top of the always-shipped set)
 const includeBigModels = process.env.INCLUDE_BIG_MODELS === "1";
-const requiredModelDirs = ["paddleocr", "blazeface"];
-if (includeBigModels) {
-  requiredModelDirs.push("ettin-68m-nemotron-pii-onnx");
-}
+const requiredModelDirs = ["paddleocr", "blazeface", "ettin-68m-nemotron-pii-onnx"];
 for (const sub of requiredModelDirs) {
   const srcSub = resolve(root, "models", sub);
   if (existsSync(srcSub)) {
@@ -141,7 +153,7 @@ if (includeBigModels) {
     console.log("[BUILD] INCLUDE_BIG_MODELS=1 but FastVLM HF cache not found, skipping.");
   }
 } else {
-  console.log("[BUILD] Slim build: Ettin + FastVLM excluded (first-run download). Set INCLUDE_BIG_MODELS=1 for full-offline.");
+  console.log("[BUILD] Standard build: FastVLM excluded (first-run download, gated). Set INCLUDE_BIG_MODELS=1 for full-offline.");
 }
 
 // 7. Patch any remaining CDN strings in bundles to local chrome.runtime.getURL for MV3 CSP

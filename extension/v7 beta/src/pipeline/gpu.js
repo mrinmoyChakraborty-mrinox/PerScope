@@ -43,6 +43,42 @@ export function classifyGpuTier(info, isFallback = false) {
 
 let _cachedDeviceResolution = null;
 
+// Ring buffer of GPU-level events for the benchmark/session-degradation
+// investigation (Phase 3). ORT creates its own WebGPU device internally, so
+// this observability device cannot see ORT's uncaptured errors directly —
+// but device-loss is usually physical-GPU-wide, and a lost observability
+// device correlating with pipeline stage errors is the signal we need.
+// performance.memory (JS heap only) can never show this.
+const _gpuEventLog = [];
+
+function _logGpuEvent(kind, detail) {
+  _gpuEventLog.push({ t: Date.now(), kind, detail: String(detail ?? "").slice(0, 300) });
+  if (_gpuEventLog.length > 50) _gpuEventLog.shift();
+  console.warn(`[GPU-EVENT] ${kind}: ${String(detail ?? "").slice(0, 300)}`);
+}
+
+export function getGpuErrorLog() {
+  return [..._gpuEventLog];
+}
+
+async function _attachObservabilityDevice(adapter) {
+  // Best-effort only: failure here must never break device resolution.
+  try {
+    if (!adapter || typeof adapter.requestDevice !== "function") return null;
+    const device = await adapter.requestDevice();
+    device.addEventListener?.("uncapturederror", (e) => {
+      _logGpuEvent("uncapturederror", e?.error?.message ?? e?.message ?? "unknown");
+    });
+    device.lost?.then?.((info) => {
+      _logGpuEvent("device-lost", `${info?.reason ?? "unknown"}: ${info?.message ?? ""}`);
+    });
+    return device;
+  } catch (e) {
+    console.warn("[GPU] Observability device unavailable:", e?.message ?? e);
+    return null;
+  }
+}
+
 /**
  * Resolves the best available hardware tier with graceful fallback:
  * 1. Dedicated GPU -> 2. Integrated GPU -> 3. CPU (WASM)
@@ -144,6 +180,8 @@ export async function resolveComputeDevice(forceTier = null) {
       isFallback: Boolean(adapter.isFallbackAdapter),
       highPerformance,
       adapter,
+      // Observability handle only — the pipeline never renders through it.
+      observabilityDevice: await _attachObservabilityDevice(adapter),
     };
 
     console.log(`[GPU] Hardware Selected: ${resolution.label} (${resolution.tier.toUpperCase()} GPU, highPerformance=${highPerformance})`);

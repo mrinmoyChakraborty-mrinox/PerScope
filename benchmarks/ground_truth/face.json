@@ -1,0 +1,11 @@
+{
+  "_schema": "perscope-benchmark-ground-truth/v1",
+  "_fixture": "face.html",
+  "_note": "Identity-photo card. The photo region is sensitive (FACE). No pixel bbox is hand-invented: the region is identified by DOM selector and resolved at runtime against evidence.image dimensions and evidence.face_detection.faces. Name/application text are REDACT text entities matched by text.",
+  "entities": [
+    { "id": "face-r1", "fixture": "face.html", "entity_type": "FACE", "text": null, "action": "REDACT", "source": "div.card > img (applicant photo)", "note": "visual-sensitive object; bbox resolved at runtime, never hand-invented", "bbox": null, "bbox_method": "runtime: evidence.face_detection.faces[*].bbox in evidence.image WxH pixels" },
+    { "id": "face-r2", "fixture": "face.html", "entity_type": "PERSON_NAME", "text": "Priya Nair", "action": "REDACT", "source": "div.card > h2", "note": "applicant name; fictitious", "bbox": null },
+    { "id": "face-r3", "fixture": "face.html", "entity_type": "APPLICATION_ID", "text": "AP-2026-0917", "action": "REDACT", "source": "div.card > p", "note": "application id; fictitious", "bbox": null },
+    { "id": "face-l1", "fixture": "face.html", "entity_type": "DECOY", "text": "photo review pending", "action": "LEAVE", "source": "div.card > p status words", "note": "status text, not PII", "bbox": null }
+  ]
+}

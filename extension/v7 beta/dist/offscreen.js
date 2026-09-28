@@ -31,6 +31,30 @@ function classifyGpuTier(info, isFallback = false) {
   if (isIntegrated) return "integrated";
   return info?.vendor || info?.description ? "integrated" : "unknown";
 }
+function _logGpuEvent(kind, detail) {
+  _gpuEventLog.push({ t: Date.now(), kind, detail: String(detail ?? "").slice(0, 300) });
+  if (_gpuEventLog.length > 50) _gpuEventLog.shift();
+  console.warn(`[GPU-EVENT] ${kind}: ${String(detail ?? "").slice(0, 300)}`);
+}
+function getGpuErrorLog() {
+  return [..._gpuEventLog];
+}
+async function _attachObservabilityDevice(adapter) {
+  try {
+    if (!adapter || typeof adapter.requestDevice !== "function") return null;
+    const device = await adapter.requestDevice();
+    device.addEventListener?.("uncapturederror", (e) => {
+      _logGpuEvent("uncapturederror", e?.error?.message ?? e?.message ?? "unknown");
+    });
+    device.lost?.then?.((info) => {
+      _logGpuEvent("device-lost", `${info?.reason ?? "unknown"}: ${info?.message ?? ""}`);
+    });
+    return device;
+  } catch (e) {
+    console.warn("[GPU] Observability device unavailable:", e?.message ?? e);
+    return null;
+  }
+}
 async function resolveComputeDevice(forceTier = null) {
   if (_cachedDeviceResolution && !forceTier) {
     return _cachedDeviceResolution;
@@ -115,7 +139,9 @@ async function resolveComputeDevice(forceTier = null) {
       description: info.description || label,
       isFallback: Boolean(adapter.isFallbackAdapter),
       highPerformance,
-      adapter
+      adapter,
+      // Observability handle only — the pipeline never renders through it.
+      observabilityDevice: await _attachObservabilityDevice(adapter)
     };
     console.log(`[GPU] Hardware Selected: ${resolution.label} (${resolution.tier.toUpperCase()} GPU, highPerformance=${highPerformance})`);
     _cachedDeviceResolution = resolution;
@@ -163,10 +189,11 @@ function configureOrtEnvironment(Ort, env3, computeDevice) {
     console.warn("[GPU] Failed configuring ORT environment:", e.message);
   }
 }
-var _cachedDeviceResolution;
+var _cachedDeviceResolution, _gpuEventLog;
 var init_gpu = __esm({
   "src/pipeline/gpu.js"() {
     _cachedDeviceResolution = null;
+    _gpuEventLog = [];
   }
 });
 
@@ -45777,9 +45804,14 @@ function normalizeLabelForMatch(text) {
 function findFieldLabelMatch(text) {
   const norm = normalizeLabelForMatch(text);
   for (const entry of NORMALIZED_VOCAB) {
-    if (norm === entry.normalized || norm.includes(entry.normalized) || entry.normalized.includes(norm)) {
-      if (norm.includes(entry.normalized)) return entry;
-      if (entry.normalized.includes(norm) && norm.length >= 3) return entry;
+    if (norm === entry.normalized) return entry;
+    if (norm.includes(entry.normalized)) {
+      if (entry.normalized.length / norm.length >= 0.4) return entry;
+      continue;
+    }
+    if (entry.normalized.includes(norm) && norm.length >= 3) {
+      if (norm.length / entry.normalized.length >= 0.4) return entry;
+      continue;
     }
   }
   for (const entry of NORMALIZED_VOCAB) {
@@ -45792,6 +45824,37 @@ function findFieldLabelMatch(text) {
     if (diffs <= 2) return entry;
   }
   return null;
+}
+function findFieldLabelMatchWeak(text) {
+  const norm = normalizeLabelForMatch(text);
+  let best = null;
+  for (const entry of NORMALIZED_VOCAB) {
+    if (norm === entry.normalized) return { entry, weak: false };
+    if (norm.includes(entry.normalized) && entry.normalized.length / norm.length < 0.4) {
+      if (!best || entry.normalized.length > best.entry.normalized.length) best = { entry, weak: true };
+    }
+  }
+  return best;
+}
+function fieldValuePasses(fieldType, value) {
+  const v = String(value ?? "");
+  switch (fieldType) {
+    case "EMAIL":
+      return /@/.test(v);
+    case "PHONE":
+      return v.replace(/\D/g, "").length >= 7;
+    case "CARD_NUMBER":
+      return /\d{4}/.test(v);
+    case "DATE_OF_BIRTH":
+    case "DATE":
+      return /\d{1,4}[\/-]\d{1,2}[\/-]\d{2,4}/.test(v);
+    case "IFSC":
+      return /^[A-Z]{4}0[A-Z0-9]{6}$/i.test(v.trim().replace(/[.,;:]+$/, ""));
+    case "PASSWORD":
+      return /@/.test(v) || /(?=.*[a-zA-Z])(?=.*\d).{6,}/.test(v);
+    default:
+      return null;
+  }
 }
 function isPlausibleValue(text) {
   const v = String(text ?? "").trim();
@@ -45829,6 +45892,7 @@ function extractLabelValueSameLine(ocrItems) {
     let labelPart = null;
     let valuePart = null;
     let labelMatch = null;
+    let weakLabel = false;
     for (const re of SEPARATOR_PATTERNS) {
       const m = raw.match(re);
       if (!m) continue;
@@ -45836,11 +45900,22 @@ function extractLabelValueSameLine(ocrItems) {
       const candValue = m[2] ? m[2].trim() : "";
       if (!candLabel || !candValue) continue;
       const lm = findFieldLabelMatch(candLabel);
-      if (!lm) continue;
-      labelPart = candLabel;
-      valuePart = candValue;
-      labelMatch = lm;
-      break;
+      if (lm) {
+        labelPart = candLabel;
+        valuePart = candValue;
+        labelMatch = lm;
+        weakLabel = false;
+        break;
+      }
+      const wm = findFieldLabelMatchWeak(candLabel);
+      if (wm && fieldValuePasses(wm.entry.field_type, candValue) === true) {
+        labelPart = candLabel;
+        valuePart = candValue;
+        labelMatch = wm.entry;
+        weakLabel = true;
+        break;
+      }
+      continue;
     }
     if (!labelPart || !valuePart || !labelMatch) continue;
     if (!isPlausibleValue(valuePart)) continue;
@@ -45851,8 +45926,8 @@ function extractLabelValueSameLine(ocrItems) {
       label: labelMatch.label,
       value: cleanText(valuePart),
       field_type: labelMatch.field_type,
-      confidence: 0.98,
-      reason: `Sensitive identifier value associated with ${labelMatch.label} label (same line)`,
+      confidence: weakLabel ? 0.9 : 0.98,
+      reason: `Sensitive identifier value associated with ${labelMatch.label} label (same line${weakLabel ? ", prose label + validated value" : ""})`,
       bbox: valueBBox ?? null,
       raw_text: raw
     });
@@ -45977,6 +46052,179 @@ function extractMultiLineLabel(ocrItems, rows) {
   }
   return candidates;
 }
+function _stripEdgePunct(t) {
+  return cleanText(t).replace(/^[.,:;]+/, "").replace(/[.,:;]+$/, "");
+}
+function extractUnlabeledFormatCandidates(ocrItems) {
+  const candidates = [];
+  for (const item of ocrItems || []) {
+    const text = String(item?.text ?? "");
+    if (!text || isPlaceholderText(text)) continue;
+    const raw = [];
+    for (const type of UNLABELED_FORMAT_TYPES) {
+      for (const re of type.regexes) {
+        re.lastIndex = 0;
+        let m;
+        while ((m = re.exec(text)) !== null) {
+          const full2 = m[0];
+          let value = full2;
+          let spanStart = m.index;
+          if (type.valueGroup != null && m[type.valueGroup] != null) {
+            value = m[type.valueGroup];
+            spanStart = m.index + full2.indexOf(value);
+          }
+          value = cleanText(value);
+          if (!value) continue;
+          if (type.skipValue && type.skipValue(value)) continue;
+          if (type.validateValue && !type.validateValue(value)) continue;
+          if (type.field_type === "EMAIL") {
+            if (!/[a-z0-9]/i.test(value) || value.length < 6 || value.length > 80) continue;
+          } else if (!isPlausibleValue(value)) continue;
+          raw.push({
+            field_type: type.field_type,
+            confidence: type.confidence,
+            value,
+            start: spanStart,
+            end: spanStart + value.length,
+            item
+          });
+          if (full2.length === 0) re.lastIndex++;
+        }
+      }
+    }
+    raw.sort((a, b) => b.end - b.start - (a.end - a.start) || b.confidence - a.confidence || UNLABELED_TYPE_ORDER.indexOf(a.field_type) - UNLABELED_TYPE_ORDER.indexOf(b.field_type));
+    const kept = [];
+    for (const r of raw) {
+      if (kept.some((k3) => r.start < k3.end && r.end > k3.start)) continue;
+      kept.push(r);
+    }
+    for (const k3 of kept) {
+      const valueBBox = estimateTextSubBBox(k3.item, k3.value);
+      candidates.push({
+        source: "deterministic_format",
+        ocr_ids: [k3.item.id],
+        label: null,
+        value: k3.value,
+        field_type: k3.field_type,
+        confidence: k3.confidence,
+        reason: `Bare ${k3.field_type} format match without adjacent label (unlabeled-format sub-pass)`,
+        bbox: valueBBox ?? null,
+        raw_text: text
+      });
+    }
+  }
+  return candidates;
+}
+function extractCrossItemAnchored(orderedItems, rows) {
+  const candidates = [];
+  for (const row of rows || []) {
+    const rowItems = [...row.items].sort((a, b) => a.bbox[0] - b.bbox[0]);
+    for (let i = 1; i < rowItems.length; i++) {
+      const digitItem = rowItems[i];
+      const anchorItem = rowItems[i - 1];
+      const digits = cleanText(digitItem.text);
+      if (!/^\d{4}$/.test(digits)) continue;
+      const anchorText = cleanText(anchorItem.text);
+      if (!/\b(ending|ends|last\s*4|card|account)\.?$/i.test(anchorText)) continue;
+      const gap = digitItem.bbox[0] - anchorItem.bbox[2];
+      if (gap < -5 || gap > 120) continue;
+      candidates.push({
+        source: "deterministic_format",
+        ocr_ids: [digitItem.id],
+        label: cleanText(anchorItem.text),
+        value: digits,
+        field_type: "CARD_NUMBER",
+        confidence: 0.88,
+        reason: "Bare last-4 digits anchored by trailing label in neighboring OCR box (cross-item anchor)",
+        bbox: digitItem.bbox ?? null,
+        raw_text: `${anchorItem.text} ${digitItem.text}`
+      });
+    }
+  }
+  return candidates;
+}
+function extractRowJoinedFormats(rows) {
+  const candidates = [];
+  for (const row of rows || []) {
+    const rowItems = [...row.items].sort((a, b) => a.bbox[0] - b.bbox[0]);
+    let condensed = "";
+    const prov = [];
+    for (const it3 of rowItems) {
+      const t = String(it3.text ?? "");
+      for (let oi = 0; oi < t.length; oi++) {
+        const ch2 = t[oi];
+        if (/\s/.test(ch2)) continue;
+        condensed += ch2;
+        prov.push({ it: it3, off: oi });
+      }
+    }
+    if (!condensed) continue;
+    const raw = [];
+    for (const type of UNLABELED_FORMAT_TYPES) {
+      for (const re of type.regexes) {
+        re.lastIndex = 0;
+        let m;
+        while ((m = re.exec(condensed)) !== null) {
+          const full2 = m[0];
+          let value = full2;
+          let spanStart = m.index;
+          if (type.valueGroup != null && m[type.valueGroup] != null) {
+            value = m[type.valueGroup];
+            spanStart = m.index + full2.indexOf(value);
+          }
+          value = cleanText(value);
+          if (!value) continue;
+          if (type.skipValue && type.skipValue(value)) continue;
+          if (type.validateValue && !type.validateValue(value)) continue;
+          if (type.field_type === "EMAIL") {
+            if (!/[a-z0-9]/i.test(value) || value.length < 6 || value.length > 80) continue;
+          } else if (!isPlausibleValue(value)) continue;
+          raw.push({ field_type: type.field_type, confidence: type.confidence, value, start: spanStart, end: spanStart + value.length });
+          if (full2.length === 0) re.lastIndex++;
+        }
+      }
+    }
+    raw.sort((a, b) => b.end - b.start - (a.end - a.start) || b.confidence - a.confidence || UNLABELED_TYPE_ORDER.indexOf(a.field_type) - UNLABELED_TYPE_ORDER.indexOf(b.field_type));
+    const kept = [];
+    for (const r of raw) {
+      if (kept.some((k3) => r.start < k3.end && r.end > k3.start)) continue;
+      kept.push(r);
+    }
+    for (const k3 of kept) {
+      const boxes = [];
+      const ids = [];
+      for (let i = k3.start; i < k3.end && i < prov.length; i++) {
+        const pr2 = prov[i];
+        const it3 = pr2 && pr2.it ? pr2.it : null;
+        if (it3 && !ids.includes(it3.id)) {
+          ids.push(it3.id);
+          if (it3.bbox) boxes.push(it3.bbox);
+        }
+      }
+      if (!ids.length) continue;
+      const finalValue = k3.value;
+      const nums = boxes.flat().map(Number).filter(Number.isFinite);
+      const union = nums.length >= 4 ? [
+        Math.min(...nums.filter((_, i) => i % 4 === 0)),
+        Math.min(...nums.filter((_, i) => i % 4 === 1)),
+        Math.max(...nums.filter((_, i) => i % 4 === 2)),
+        Math.max(...nums.filter((_, i) => i % 4 === 3))
+      ] : null;
+      candidates.push({
+        source: "deterministic_format",
+        ocr_ids: ids,
+        label: null,
+        value: finalValue,
+        field_type: k3.field_type,
+        confidence: k3.confidence,
+        reason: "Bare format match on whitespace-collapsed row text (OCR spacing-tolerant)",
+        bbox: union,
+        raw_text: rowItems.map((it3) => it3.text).join(" ")
+      });
+    }
+  }
+  return candidates;
+}
 function extractSensitiveFieldCandidates(ocr) {
   if (!ocr?.items?.length) return [];
   const { ordered, rows } = buildReadingOrder(ocr);
@@ -45984,7 +46232,28 @@ function extractSensitiveFieldCandidates(ocr) {
   const sideBySide = extractLabelValueSideBySide(ordered, rows);
   const vertical = extractLabelValueVertical(ordered, rows);
   const multiLine = extractMultiLineLabel(ocr.items, rows);
-  const all = [...sameLine, ...sideBySide, ...vertical, ...multiLine];
+  const labeled = [...sameLine, ...sideBySide, ...vertical, ...multiLine];
+  const formatBased = extractUnlabeledFormatCandidates(ocr.items);
+  const rowJoined = extractRowJoinedFormats(rows);
+  const crossItem = extractCrossItemAnchored(ordered, rows);
+  const labeledKeys = /* @__PURE__ */ new Set();
+  for (const c of labeled) {
+    const v = _stripEdgePunct(c.value).toLowerCase();
+    for (const id2 of c.ocr_ids || []) labeledKeys.add(`${v}|${id2}`);
+  }
+  const filteredFormat = [...formatBased, ...rowJoined, ...crossItem].filter((c) => {
+    const v = _stripEdgePunct(c.value).toLowerCase();
+    return !(c.ocr_ids || []).some((id2) => {
+      if (labeledKeys.has(`${v}|${id2}`)) return true;
+      for (const key of labeledKeys) {
+        const [lv, lid] = key.split("|");
+        if (lid !== String(id2)) continue;
+        if (lv && v && (lv.includes(v) || v.includes(lv))) return true;
+      }
+      return false;
+    });
+  });
+  const all = [...labeled, ...filteredFormat];
   const seen = /* @__PURE__ */ new Map();
   for (const c of all) {
     const key = `${c.field_type}|${c.value}|${[...c.ocr_ids].sort().join(",")}`;
@@ -46007,7 +46276,12 @@ function isContained(smaller, larger) {
   const l = normalizeCandidateText(larger);
   if (!s || !l) return false;
   if (s === l) return false;
-  return l.includes(s);
+  if (l.includes(s)) return true;
+  const ns3 = s.replace(/\s+/g, "");
+  const nl2 = l.replace(/\s+/g, "");
+  if (!ns3 || !nl2) return false;
+  if (ns3 === nl2) return true;
+  return nl2.includes(ns3);
 }
 function fuseRedactionCandidates({ ettinFindings = [], deterministicFindings = [] }) {
   const raw = [];
@@ -46060,11 +46334,23 @@ function fuseRedactionCandidates({ ettinFindings = [], deterministicFindings = [
   const keep = [];
   for (const c of candidates) {
     let contained = false;
-    for (const k3 of keep) {
+    for (let ki = 0; ki < keep.length; ki++) {
+      const k3 = keep[ki];
       const sameRegion = c.ocr_ids.length && k3.ocr_ids.length && c.ocr_ids.some((id2) => k3.ocr_ids.includes(id2));
       const textContained = isContained(c.text, k3.text);
       if (textContained && sameRegion) {
         contained = true;
+        const cIsDeterministic = (c.sources || []).includes("deterministic_context");
+        const kIsEttinOnly = (k3.sources || []).length > 0 && (k3.sources || []).every((s) => s === "ettin");
+        if (cIsDeterministic && kIsEttinOnly && k3.text.length > c.text.length * 2) {
+          c.sources = [.../* @__PURE__ */ new Set([...c.sources || [], ...k3.sources || []])];
+          c.candidate_types = [.../* @__PURE__ */ new Set([...c.candidate_types || [], ...k3.candidate_types || []])];
+          c.confidence = Math.max(Number(c.confidence ?? 0), Number(k3.confidence ?? 0));
+          if (!c.label_context && k3.label_context) c.label_context = k3.label_context;
+          if (!c.bbox && k3.bbox) c.bbox = k3.bbox;
+          keep[ki] = c;
+          break;
+        }
         if (!k3.label_context && c.label_context) k3.label_context = c.label_context;
         k3.sources = [.../* @__PURE__ */ new Set([...k3.sources, ...c.sources])];
         k3.candidate_types = [.../* @__PURE__ */ new Set([...k3.candidate_types, ...c.candidate_types])];
@@ -46081,6 +46367,24 @@ function fuseRedactionCandidates({ ettinFindings = [], deterministicFindings = [
     if (!contained) keep.push(c);
   }
   return keep;
+}
+function isDualSourceCandidate(c) {
+  const s = c?.sources;
+  return Array.isArray(s) && s.length >= 2 && s.includes("ettin") && s.includes("deterministic_context");
+}
+function selectT2ReviewCandidates(fusedCandidates) {
+  const high = [];
+  const low = [];
+  for (const c of fusedCandidates || []) {
+    const conf = Number(c?.confidence ?? 0);
+    if (isDualSourceCandidate(c) || conf >= T2_HIGH_CONFIDENCE) {
+      high.push(c);
+      continue;
+    }
+    if (conf >= T2_FLOOR) low.push(c);
+  }
+  low.sort((a, b) => Number(a.confidence ?? 0) - Number(b.confidence ?? 0));
+  return { high, low: low.slice(0, T2_CANDIDATE_CAP), droppedLow: Math.max(0, low.length - T2_CANDIDATE_CAP) };
 }
 function normalizeOcrItem(item, imageWidth, imageHeight) {
   const bbox = item.bbox ? item.bbox : [0, 0, 0, 0];
@@ -46444,7 +46748,7 @@ function buildUIStructure({ image, ocr, fastvlm }) {
     containers
   };
 }
-var FASTVLM_DEBUG, EXACT_PLACEHOLDERS, EXAMPLE_EMAIL_DOMAINS, SENSITIVE_FIELD_VOCABULARY, NORMALIZED_VOCAB;
+var FASTVLM_DEBUG, EXACT_PLACEHOLDERS, EXAMPLE_EMAIL_DOMAINS, SENSITIVE_FIELD_VOCABULARY, NORMALIZED_VOCAB, UNLABELED_FORMAT_TYPES, UNLABELED_TYPE_ORDER, T2_HIGH_CONFIDENCE, T2_FLOOR, T2_CANDIDATE_CAP;
 var init_heuristics = __esm({
   "src/pipeline/heuristics.js"() {
     FASTVLM_DEBUG = false;
@@ -46496,6 +46800,8 @@ var init_heuristics = __esm({
       { label: "Admission Number", field_type: "ADMISSION_NUMBER" },
       { label: "Employee ID", field_type: "EMPLOYEE_ID" },
       { label: "Employee Number", field_type: "EMPLOYEE_ID" },
+      { label: "Password", field_type: "PASSWORD" },
+      { label: "Gate Pass", field_type: "PASSWORD" },
       { label: "Passport No", field_type: "PASSPORT_NUMBER" },
       { label: "Passport Number", field_type: "PASSPORT_NUMBER" },
       { label: "License No", field_type: "LICENSE_NUMBER" },
@@ -46528,6 +46834,120 @@ var init_heuristics = __esm({
       normalized: normalizeLabelForMatch(entry.label)
     }));
     NORMALIZED_VOCAB.sort((a, b) => b.normalized.length - a.normalized.length);
+    UNLABELED_FORMAT_TYPES = [
+      {
+        field_type: "EMAIL",
+        confidence: 0.95,
+        // piidetector EMAIL_ID shape + run-on guards: the greedy domain eats
+        // sentence continuations ("billing@example.org. Authorized" ->
+        // "...org.Authorizedsignatory"). Two guards: TLD capped at 8
+        // (real-world TLDs; exotic longer ones stay NER's job — Ettin tags
+        // emails robustly) and (?!\.[A-Za-z]) blocking dot-letter
+        // continuations. Legit trailing punctuation ("user@example.com.
+        // Next") still matches.
+        regexes: [/\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,8}(?!\.[A-Za-z])\b/gi],
+        skipValue: (v) => isExampleEmail(v) || isPlaceholderText(v)
+      },
+      {
+        field_type: "PHONE",
+        confidence: 0.9,
+        regexes: [
+          // US NANP, lenient exchange (fictional ranges like 555-01xx must hit):
+          // +1-555-014-2288, (555) 014-2288, 555-014-2288, dotted/spaced.
+          /(?<!\d)(?:\+?1[\s.\-]?)?(?:\(?[2-9]\d{2}\)?[\s.\-]?)\d{3}[\s.\-]\d{4}(?!\d)/g,
+          // Generic E.164 fallback for non-NANP internationals.
+          /(?<!\d)\+\d[\d\s.\-()]{7,16}(?!\d)/g
+        ],
+        validateValue: (v) => {
+          const digits = String(v).replace(/\D/g, "");
+          return digits.length >= 10 && digits.length <= 15;
+        }
+      },
+      {
+        field_type: "DATE",
+        confidence: 0.85,
+        regexes: [
+          // MM/DD/YYYY (also matches DD/MM — accepted, marked DATE, no locale split).
+          /(?<!\d)(0?[1-9]|1[0-2])\/(0?[1-9]|[12]\d|3[01])\/(\d{2}|\d{4})(?!\d)/g,
+          // MM-DD-YYYY / DD-MM-YYYY (dash form; same acceptance rule).
+          /(?<!\d)(0?[1-9]|[12]\d|3[01])-(0?[1-9]|1[0-2])-(\d{2}|\d{4})(?!\d)/g,
+          // ISO YYYY-MM-DD.
+          /(?<!\d)(\d{4})-(0?[1-9]|1[0-2])-(0?[1-9]|[12]\d|3[01])(?!\d)/g
+        ]
+      },
+      {
+        field_type: "CARD_NUMBER",
+        confidence: 0.9,
+        // Label-anchored ONLY — freestanding 4-digit runs (gate codes,
+        // amounts, years) are explicitly out of scope. Anchors cover
+        // "ending 3524" and "ends 8810" (bare "ends" without "in" included
+        // per M3); the (?<![a-z]) guard keeps "weekends 2024" out.
+        regexes: [/(?<![a-z])(?:ending|ends?)(?:\s+in)?\D{0,10}(\d{4})(?!\d)/gi],
+        valueGroup: 1
+      },
+      {
+        field_type: "EMAIL",
+        confidence: 0.85,
+        // Spoken/obfuscated form: "jeet dot routh at gmail". The VALUE is
+        // the original span (geometry resolves on it). Dot-chain required
+        // on at least one side keeps "meet me at noon" out. Intra-word OCR
+        // splits ("em ail") are NOT covered here (no word boundaries exist
+        // in collapsed text to anchor the local part — attempted, gobbled);
+        // that case stays with NER, which tags email entities on spaced
+        // text robustly (verified live).
+        regexes: [/\b[a-z0-9._-]+(?:\s+dot\s+[a-z0-9._-]+)+\s+at\s+[a-z0-9-]+(?:\s+dot\s+[a-z0-9-]+)*\b/gi]
+      },
+      {
+        field_type: "PASSWORD",
+        confidence: 0.85,
+        // Pure shape rule (M3): credential-shaped tokens need no label and
+        // no NER confidence. No spaces, >=8 chars, letters + @ with a digit
+        // or symbol ("Tamluk@2019"). Real addresses lose the overlap to the
+        // EMAIL type (0.95 wins ties after longer-span); letter-only
+        // "name@host" forms stay NER's job (validateValue rejects them).
+        regexes: [/\b(?=[A-Za-z0-9._-]*@)(?=[A-Za-z0-9._-]*[A-Za-z])[A-Za-z0-9._-]+@[A-Za-z0-9.-]+\b/gi],
+        validateValue: (v) => v.length >= 8 && (/\d/.test(v) || /[#$%&*!?_]/.test(v))
+      },
+      {
+        field_type: "IFSC",
+        confidence: 0.95,
+        // Exact format port (piidetector IFSC_CODE shape): 4 letters + 0 +
+        // 6 alphanumerics. Catches WBSC0LM1234 with no label needed.
+        regexes: [/\b[A-Z]{4}0[A-Z0-9]{6}\b/gi]
+      },
+      {
+        field_type: "TRACKING_NUMBER",
+        confidence: 0.9,
+        regexes: [
+          // UPS 1Z + 16 alphanumerics, spaced or solid.
+          /\b1Z(?:\s?[A-Z0-9]){16}\b/gi,
+          // FedEx 12 / 15 digit, USPS 20-22 digit.
+          /(?<!\d)\d{12}(?!\d)/g,
+          /(?<!\d)\d{15}(?!\d)/g,
+          /(?<!\d)\d{20,22}(?!\d)/g
+        ]
+      },
+      {
+        field_type: "VAT_ID",
+        confidence: 0.85,
+        regexes: [
+          // GB VAT: GB 123 4567 89, spaced or solid.
+          /\bGB\s?\d{3}\s?\d{4}\s?\d{2}\b/gi,
+          // Small EU set, format-only (no checksum — stated limitation).
+          // Digit-led is LOAD-BEARING: bare 2-letter prefixes match English
+          // word starts under /i ("FI"+"ctitious", "DE"+"partment" both
+          // matched the looser form live 2026-09-28 — title and
+          // "department" false positives). Real VATs are near-universally
+          // digit-led after the prefix; letter-led forms (some FR/IE)
+          // are knowingly out of scope.
+          /\b(?:DE|FR|IT|ES|NL|BE|IE|AT|DK|SE|FI|PT|GR|PL|CZ|HU)\s?\d[A-Z0-9]{7,11}\b/gi
+        ]
+      }
+    ];
+    UNLABELED_TYPE_ORDER = ["EMAIL", "PHONE", "TRACKING_NUMBER", "VAT_ID", "DATE", "CARD_NUMBER"];
+    T2_HIGH_CONFIDENCE = 0.9;
+    T2_FLOOR = 0.5;
+    T2_CANDIDATE_CAP = 6;
   }
 });
 
@@ -46725,19 +47145,26 @@ function buildFastVLMRedactionEvidence({ image, ocr, ettinFindings, deterministi
   };
 }
 function buildFastVLMRedactionPrompt(evidence) {
+  const MAX_FUSED_PROMPT_LINES = 40;
+  const MAX_OCR_IDS_PROMPT = 120;
   const ocrJoined = evidence.ocr.map(
     (o) => o.text
   ).join(" | ").slice(0, 12e3) || "(no OCR)";
-  const ocrIds = evidence.ocr.map(
+  const ocrIdsAll = evidence.ocr.map(
     (o) => o.id
-  ).join(",") || "(none)";
-  const fusedLines = evidence.fused_candidates.map(
+  );
+  const ocrIds = ocrIdsAll.slice(0, MAX_OCR_IDS_PROMPT).join(",") || "(none)";
+  const ocrIdsTruncNote = ocrIdsAll.length > MAX_OCR_IDS_PROMPT ? ` [+${ocrIdsAll.length - MAX_OCR_IDS_PROMPT} more OCR ids omitted]` : "";
+  const fusedAll = evidence.fused_candidates || [];
+  const fusedLines = fusedAll.slice(0, MAX_FUSED_PROMPT_LINES).map(
     (c) => `${c.candidate_id} "${c.text}" types=[${(c.candidate_types || []).join(",")}] conf=${Number(
       c.confidence ?? 0
     ).toFixed(
       2
     )} ocr=${(c.ocr_ids || []).join(",")}`
   ).join("\n") || "(none)";
+  const fusedTruncNote = fusedAll.length > MAX_FUSED_PROMPT_LINES ? `
+[+${fusedAll.length - MAX_FUSED_PROMPT_LINES} more candidates omitted for length; prefer listed candidate_ids]` : "";
   return `
 You are PerScope's local multimodal
 privacy-redaction adjudicator.
@@ -46757,13 +47184,24 @@ NO CODE FENCES.
 NO EXPLANATION.
 NO REASONING.
 
-Schema:
+Schema (machine-readable FIRST, prose LAST \u2014 under a token cap the tail
+is what gets cut, and a cut caption is recoverable while cut redactions
+are not):
 
 {
-  "caption": "detailed visual description of everything visible, without repeating sensitive values",
   "redactions": [],
   "additional_redactions": [],
-  "rejected_candidates": []
+  "rejected_candidates": [],
+  "caption": "detailed visual description of everything visible, without repeating sensitive values"
+}
+
+Minimal valid example (exact shape, short values):
+
+{
+  "redactions": [{"candidate_id": "cand_000", "confidence": 0.97}],
+  "additional_redactions": [],
+  "rejected_candidates": ["cand_001"],
+  "caption": "Invoice page with a table and contact block."
 }
 
 RULES:
@@ -46829,10 +47267,10 @@ RULES:
  11. Confidence must be between 0 and 1.
 
 OCR IDS:
-${ocrIds}
+${ocrIds}${ocrIdsTruncNote}
 
 FUSED CANDIDATES:
-${fusedLines}
+${fusedLines}${fusedTruncNote}
 
 OCR:
 ${ocrJoined}
@@ -46845,6 +47283,18 @@ function buildPerceptionPrompt(evidence) {
   } catch {
     return "Perception prompt unavailable";
   }
+}
+function buildCandidateCheckPrompt(candidate, lineText) {
+  const span = String(candidate?.text ?? "").slice(0, 120);
+  const ctx = String(lineText ?? "").slice(0, 200);
+  const types = Array.isArray(candidate?.candidate_types) ? candidate.candidate_types.join("/") : "PII";
+  return `Decide if the highlighted text region contains sensitive personal data.
+Text in region: "${span}"
+Nearby text: "${ctx}"
+Suspected type: ${types}
+Reply with exactly this JSON and nothing else: {"verdict":"yes","confidence":0.9} or {"verdict":"no","confidence":0.9}.
+Example: region "Tamluk@2019" near "Gate Pass valid till Friday" -> {"verdict":"yes","confidence":0.9}
+verdict "yes" means redact (passwords, account numbers, ID codes, private emails). "no" means ordinary words, masked values (98XXX-XX210), hashtags, filenames.`;
 }
 var ALLOWED_FASTVLM_TYPES;
 var init_prompts = __esm({
@@ -47107,8 +47557,17 @@ function extractJsonObject(text) {
     }
     throw new Error("JSON output truncated or incomplete. Preview: " + src.slice(base, base + 500));
   }
-  const jsonStr = src.slice(base, end + 1);
-  return jsonStr;
+  const rawSlice = src.slice(base, end + 1);
+  const repairedSlice = rawSlice.replace(/([{,]\s*)([A-Za-z_][A-Za-z0-9_]*)(\s*:)/g, '$1"$2"$3');
+  if (repairedSlice !== rawSlice) {
+    try {
+      JSON.parse(repairedSlice);
+      console.warn("[FASTVLM] Repaired unquoted JSON keys");
+      return repairedSlice;
+    } catch {
+    }
+  }
+  return rawSlice;
 }
 function normalizeFastVLMRedactionItem(r, evidence) {
   if (!r) return null;
@@ -47412,18 +47871,35 @@ function resolveFinalRedactionRegions(fastvlmResult, evidence) {
 function applySafetyGates(findings, evidence, imageWidth, imageHeight) {
   const ocrById = new Map((evidence.ocr || []).map((o) => [o.id, o]));
   const ocrTexts = new Map((evidence.ocr || []).map((o) => [o.id, normalizeCandidateText(o.text)]));
+  const traceId = (f) => `${f.candidate_id ?? f.source_id ?? "?"}[${(f.candidate_types || [f.entity]).filter(Boolean).join("+")}|${(f.sources || []).join("+")}|${Number(f.score ?? f.confidence ?? 0).toFixed(2)}|len=${String(f.text ?? "").length}]`;
+  const traceDrop = (f, gate, note) => console.log(`[TRACE] drop ${traceId(f)} gate=${gate}${note ? ` ${note}` : ""}`);
   const filtered = [];
   for (const f of findings) {
-    if (!Array.isArray(f.bbox) || f.bbox.length !== 4) continue;
+    if (!Array.isArray(f.bbox) || f.bbox.length !== 4) {
+      traceDrop(f, 1, "bbox-shape");
+      continue;
+    }
     const nums = f.bbox.map(Number);
-    if (!nums.every(Number.isFinite)) continue;
+    if (!nums.every(Number.isFinite)) {
+      traceDrop(f, 1, "bbox-nan");
+      continue;
+    }
     const w = Math.abs(nums[2] - nums[0]);
     const h = Math.abs(nums[3] - nums[1]);
-    if (w <= 0 || h <= 0) continue;
+    if (w <= 0 || h <= 0) {
+      traceDrop(f, 1, "bbox-area");
+      continue;
+    }
     const rect = clampBBox(f.bbox, imageWidth, imageHeight, 0);
-    if (!rect) continue;
+    if (!rect) {
+      traceDrop(f, 1, "bbox-clamp");
+      continue;
+    }
     const hasKnownOcr = (f.ocr_ids ?? []).some((id2) => ocrTexts.has(id2)) || ocrTexts.has(f.source_id) || !!f.bbox;
-    if (!hasKnownOcr) continue;
+    if (!hasKnownOcr) {
+      traceDrop(f, 2, "ocr-map");
+      continue;
+    }
     if (f.text) {
       const nt2 = normalizeCandidateText(f.text);
       const ocrId = f.ocr_ids?.[0] ?? f.source_id;
@@ -47438,7 +47914,11 @@ function applySafetyGates(findings, evidence, imageWidth, imageHeight) {
       if (ocrItem && f.text && ocrItem.text) {
         const normOcr = normalizeCandidateText(ocrItem.text);
         const normVal = normalizeCandidateText(f.text);
-        if (normOcr.includes(normVal) && normOcr.length > normVal.length + 3) {
+        const flatOcr = normOcr.replace(/\s+/g, "");
+        const flatVal = normVal.replace(/\s+/g, "");
+        const rawIncludes = normOcr.includes(normVal) && normOcr.length > normVal.length + 3;
+        const flatIncludes = flatOcr.includes(flatVal) && flatOcr.length > flatVal.length + 3;
+        if (rawIncludes) {
           const expected = estimateTextSubBBox(ocrItem, f.text);
           if (expected) {
             const expW = Math.abs(expected[2] - expected[0]);
@@ -47447,9 +47927,13 @@ function applySafetyGates(findings, evidence, imageWidth, imageHeight) {
               if (FASTVLM_DEBUG2) console.log(`[SECURITY] rejecting non-value-specific bbox at ${ocrId} expected ${expW.toFixed(1)} vs actual ${actW.toFixed(1)}`);
               const isValueOnly = isLikelyValueOnlyBBox({ bbox: expected, item: ocrItem, targetText: f.text });
               if (isValueOnly) f.bbox = expected;
-              else continue;
+              else {
+                traceDrop(f, 7, "wide-box");
+                continue;
+              }
             } else if (!isLikelyValueOnlyBBox({ bbox: f.bbox, item: ocrItem, targetText: f.text })) {
               console.log(`[SECURITY] rejecting non-value-specific bbox`);
+              traceDrop(f, 7, "not-value-only");
               continue;
             }
           } else {
@@ -47459,30 +47943,52 @@ function applySafetyGates(findings, evidence, imageWidth, imageHeight) {
               if (FASTVLM_DEBUG2) console.log(`[GATE] Geometry suspicious at ${ocrId}`);
               const est = estimateTextSubBBox(ocrItem, f.text);
               if (est && isLikelyValueOnlyBBox({ bbox: est, item: ocrItem, targetText: f.text })) f.bbox = est;
-              else continue;
+              else if (flatIncludes) {
+                if (FASTVLM_DEBUG2) console.log(`[GATE] keeping spacing-mismatched value bbox at ${ocrId}`);
+              } else {
+                traceDrop(f, 7, "geometry");
+                continue;
+              }
             }
           }
         }
       }
     }
-    if (!isPlausibleValue(f.text ?? "")) continue;
+    {
+      const gv = String(f.text ?? "");
+      const emailShaped = /@/.test(gv) || /\bdot\b/i.test(gv) && /\bat\b/i.test(gv);
+      if (emailShaped) {
+        if (!/[a-z0-9]/i.test(gv) || gv.length < 6 || gv.length > 80) {
+          traceDrop(f, 5, "email-shape");
+          continue;
+        }
+      } else if (!isPlausibleValue(f.text ?? "")) {
+        traceDrop(f, 5, "implausible");
+        continue;
+      }
+    }
     if (findFieldLabelMatch(f.text ?? "")) {
       const labelMatch = findFieldLabelMatch(f.text);
-      if (labelMatch && normalizeCandidateText(labelMatch.label) === normalizeCandidateText(f.text)) continue;
+      if (labelMatch && normalizeCandidateText(labelMatch.label) === normalizeCandidateText(f.text)) {
+        traceDrop(f, 5, "label-only");
+        continue;
+      }
     }
     {
       const isDualSource = f.decision_source === "fusion_fallback" && Array.isArray(f.sources) && f.sources.length >= 2 && f.sources.includes("ettin") && f.sources.includes("deterministic_context");
       const isProseSalvage = !!f._prose_salvage;
+      const isT2Confirmed = !!f._t2_confirmed;
       const entityType = String(f.entity || "").toLowerCase();
       const isNameEntity = entityType.includes("name") || entityType.includes("person") || Array.isArray(f.candidate_types) && f.candidate_types.some((t) => {
         const tl2 = String(t).toLowerCase();
         return tl2.includes("name") || tl2.includes("person");
       });
-      const threshold = f.decision_source !== "fusion_fallback" ? FINAL_REDACTION_CONFIDENCE_THRESHOLD : isDualSource || isProseSalvage || isNameEntity ? FINAL_REDACTION_CONFIDENCE_THRESHOLD : FALLBACK_CONFIDENCE_THRESHOLD;
+      const threshold = f.decision_source !== "fusion_fallback" ? FINAL_REDACTION_CONFIDENCE_THRESHOLD : isDualSource || isProseSalvage || isNameEntity || isT2Confirmed || f.t2Failed === true ? FINAL_REDACTION_CONFIDENCE_THRESHOLD : FALLBACK_CONFIDENCE_THRESHOLD;
       if (Number(f.score) < threshold) {
         if (FASTVLM_DEBUG2) console.log(
-          `[GATE6] filtered ${f.candidate_id ?? f.source_id} score=${Number(f.score).toFixed(3)} < ${threshold} (${f.decision_source}${isDualSource ? "/dual" : ""}${isProseSalvage ? "/salvage" : ""}${isNameEntity ? "/name" : ""})`
+          `[GATE6] filtered ${f.candidate_id ?? f.source_id} score=${Number(f.score).toFixed(3)} < ${threshold} (${f.decision_source}${isDualSource ? "/dual" : ""}${isProseSalvage ? "/salvage" : ""}${isNameEntity ? "/name" : ""}${isT2Confirmed ? "/t2confirmed" : ""}${f.t2Failed === true ? "/failclosed" : ""})`
         );
+        traceDrop(f, 6, `conf<${threshold}${isDualSource ? "/dual" : ""}${isNameEntity ? "/name" : ""}${isT2Confirmed ? "/t2confirmed" : ""}${f.t2Failed === true ? "/failclosed" : ""}`);
         continue;
       }
     }
@@ -47492,10 +47998,12 @@ function applySafetyGates(findings, evidence, imageWidth, imageHeight) {
   const deduped = [];
   for (const f of filtered) {
     const nt2 = normalizeCandidateText(f.text);
+    const nft = nt2.replace(/\s+/g, "");
     let contained = false;
     for (const k3 of deduped) {
       const kText = normalizeCandidateText(k3.text);
-      if (kText.includes(nt2) && nt2 !== kText) {
+      const kft = kText.replace(/\s+/g, "");
+      if (kText.includes(nt2) && nt2 !== kText || kft.includes(nft) && nft !== kft && nft && kft || nt2 === kText || nft === kft && nft) {
         const sameOcr = (f.ocr_ids || []).some((id2) => (k3.ocr_ids || []).includes(id2));
         const overlap = f.bbox && k3.bbox ? !(f.bbox[2] < k3.bbox[0] || f.bbox[0] > k3.bbox[2] || f.bbox[3] < k3.bbox[1] || f.bbox[1] > k3.bbox[3]) : false;
         if (sameOcr || overlap) {
@@ -47512,7 +48020,9 @@ function applySafetyGates(findings, evidence, imageWidth, imageHeight) {
       }
     }
     if (!contained) deduped.push(f);
+    else traceDrop(f, 4, "contained");
   }
+  console.log(`[TRACE] gates kept ${deduped.length}/${findings.length}${findings.length ? `: ${deduped.map((d) => d.candidate_id ?? d.source_id).join(",")}` : ""}`);
   return deduped;
 }
 function adjudicateOrFallback({
@@ -47581,6 +48091,7 @@ function adjudicateOrFallback({
     };
   }
   const fallback = [];
+  const t2Failed = !!fastvlmResult && !["ok", "skipped"].includes(fastvlmResult.status);
   for (const candidate of fusedCandidates || []) {
     const bbox = resolveSensitiveValueBBox({
       text: candidate.text,
@@ -47600,8 +48111,14 @@ function adjudicateOrFallback({
       candidate_id: candidate.candidate_id,
       ocr_ids: candidate.ocr_ids,
       // Preserve sources so Gate 6 in applySafetyGates can apply
-      // the dual-source threshold (NER + deterministic → 0.5 instead of 0.72)
+      // the dual-source threshold (NER + deterministic → 0.5 instead of 0.72).
+      // Fail-closed: when T2 was attempted but failed, every item keeps
+      // the 0.50 floor regardless of source count (see Gate 6).
       sources: candidate.sources ?? [],
+      t2Failed,
+      // T2 crop-check confirmation (see Gate 6): a "yes" verdict on a
+      // legible native-res crop clears the 0.5 floor honestly.
+      _t2_confirmed: candidate._t2_confirmed === true,
       reason: candidate.reason ?? "fusion fallback",
       decision_source: "fusion_fallback"
     });
@@ -48247,56 +48764,81 @@ async function loadFastVLM(computeDevice) {
     _fastvlmLoadPromise = null;
   }
 }
-async function prepareFastVLMImage(imageBlob) {
+async function cropCandidateImage(imageBlob, bbox, imageW, imageH) {
+  const bitmap = await createImageBitmap(imageBlob);
   try {
-    const bitmap = await createImageBitmap(imageBlob);
-    const max2 = 448;
-    const w = bitmap.width;
-    const h = bitmap.height;
-    if (!w || !h || w <= max2 && h <= max2) {
-      closeBitmap(bitmap);
-      return await load_image(imageBlob);
-    }
-    const scale = Math.min(max2 / w, max2 / h);
-    const targetW = Math.max(1, Math.round(w * scale));
-    const targetH = Math.max(1, Math.round(h * scale));
-    const canvas = new OffscreenCanvas(targetW, targetH);
-    const ctx = canvas.getContext("2d");
-    ctx.drawImage(bitmap, 0, 0, targetW, targetH);
+    const nums = (bbox || []).map(Number);
+    const bx1 = Number.isFinite(nums[0]) ? nums[0] : 0;
+    const by1 = Number.isFinite(nums[1]) ? nums[1] : 0;
+    const bx2 = Number.isFinite(nums[2]) ? nums[2] : imageW;
+    const by2 = Number.isFinite(nums[3]) ? nums[3] : imageH;
+    const w = Math.max(1, bx2 - bx1);
+    const h = Math.max(1, by2 - by1);
+    const mx = w * T2_CROP_MARGIN;
+    const my2 = h * T2_CROP_MARGIN;
+    const cx = Math.max(0, Math.floor(bx1 - mx));
+    const cy2 = Math.max(0, Math.floor(by1 - my2));
+    const cw = Math.min(imageW - cx, Math.ceil(w + mx * 2));
+    const ch2 = Math.min(imageH - cy2, Math.ceil(h + my2 * 2));
+    if (cw < 2 || ch2 < 2) return imageBlob;
+    const canvas = new OffscreenCanvas(cw, ch2);
+    canvas.getContext("2d").drawImage(bitmap, cx, cy2, cw, ch2, 0, 0, cw, ch2);
+    return await canvas.convertToBlob({ type: "image/png" });
+  } finally {
     closeBitmap(bitmap);
-    const resizedBlob = await canvas.convertToBlob({ type: "image/png" });
-    console.log(`[FASTVLM] Resized image from ${w}x${h} to ${targetW}x${targetH} for stability`);
-    return await load_image(resizedBlob);
-  } catch (err) {
-    console.warn(`[FASTVLM] Image resize failed, using original:`, err.message);
-    return await load_image(imageBlob);
   }
 }
-async function runFastVLMAdjudication({ imageBlob, evidence, computeDevice }) {
-  const fastvlm = await loadFastVLM(computeDevice);
-  const prompt = buildFastVLMRedactionPrompt(evidence);
-  const startTime = performance.now();
-  const image = await prepareFastVLMImage(imageBlob);
+async function runFastVLMCandidateCheck({ fastvlm, cropBlob, prompt }) {
+  const cropImage = await load_image(cropBlob);
   const messages = [{ role: "user", content: `<image>${prompt}` }];
-  const renderedPrompt = fastvlm.processor.apply_chat_template(messages, {
+  const rendered = fastvlm.processor.apply_chat_template(messages, {
     add_generation_prompt: true
   });
-  const inputs = await fastvlm.processor(image, renderedPrompt, {
+  const renderedForced = `${rendered}{`;
+  const inputs = await fastvlm.processor(cropImage, renderedForced, {
     add_special_tokens: false
   });
-  const generated = await fastvlm.model.generate({
-    ...inputs,
-    max_new_tokens: FASTVLM_MAX_NEW_TOKENS,
-    do_sample: false,
-    repetition_penalty: 1.15,
-    no_repeat_ngram_size: 3
-  });
   const inputLength = Number(inputs?.input_ids?.dims?.at(-1) ?? 0);
+  let criteria = null;
+  try {
+    criteria = new BalancedJsonStoppingCriteria(
+      (ids) => fastvlm.processor.batch_decode([ids], { skip_special_tokens: true })[0] ?? "",
+      inputLength
+    );
+  } catch {
+    criteria = null;
+  }
+  const genArgs = {
+    ...inputs,
+    max_new_tokens: FASTVLM_CANDIDATE_MAX_TOKENS,
+    do_sample: false,
+    repetition_penalty: 1.05
+  };
+  if (criteria) genArgs.stopping_criteria = [criteria];
+  const generatePromise = fastvlm.model.generate(genArgs);
+  generatePromise.catch(() => {
+  });
+  let generated;
+  try {
+    generated = await Promise.race([
+      generatePromise,
+      new Promise(
+        (_, reject) => setTimeout(() => reject(new Error(`FastVLM candidate check timed out after ${FASTVLM_CANDIDATE_TIMEOUT_MS}ms`)), FASTVLM_CANDIDATE_TIMEOUT_MS)
+      )
+    ]);
+  } catch (err) {
+    if (String(err?.message || "").includes("timed out")) {
+      _fastvlmCooldownUntil = Date.now() + FASTVLM_TIMEOUT_COOLDOWN_MS;
+      console.warn(`[FASTVLM] Candidate check timeout \u2014 cooling down T2 for ${FASTVLM_TIMEOUT_COOLDOWN_MS / 1e3}s (orphaned op still burning)`);
+    }
+    throw err;
+  }
+  const inputLengthSnapshot = inputLength;
   disposeTensors(inputs);
   let outputText = "";
   let generatedOnly = null;
   try {
-    generatedOnly = inputLength > 0 ? generated.slice(null, [inputLength, null]) : generated;
+    generatedOnly = inputLengthSnapshot > 0 ? generated.slice(null, [inputLengthSnapshot, null]) : generated;
     outputText = fastvlm.processor.batch_decode(generatedOnly, { skip_special_tokens: true })[0] ?? "";
   } catch {
     outputText = fastvlm.processor.batch_decode(generated, { skip_special_tokens: true })[0] ?? "";
@@ -48305,48 +48847,56 @@ async function runFastVLMAdjudication({ imageBlob, evidence, computeDevice }) {
     disposeTensors({ generated });
   }
   outputText = String(outputText).trim();
-  if (!outputText) throw new Error("FastVLM generated an empty response");
-  let parsed = null;
-  let parseError = null;
+  if (outputText && !outputText.startsWith("{")) outputText = `{${outputText}`;
+  if (!outputText) throw new Error("FastVLM candidate check generated an empty response");
+  let parsed;
   try {
-    const jsonStr = extractJsonObject(outputText);
-    parsed = JSON.parse(jsonStr);
+    parsed = JSON.parse(extractJsonObject(outputText));
   } catch (err) {
-    parseError = err;
-    console.warn(`[FASTVLM] JSON parse failed: ${err.message}`);
+    throw new Error(`FastVLM candidate check JSON parse failed: ${err.message} :: ${outputText.slice(0, 80)}`);
   }
-  const latencyMs = Math.round(performance.now() - startTime);
-  if (!parsed || !parsed.caption) {
-    const cleanCaption = outputText.replace(/```(?:json)?[\s\S]*?```/gi, "").trim();
-    if (cleanCaption) {
-      if (!parsed) parsed = {};
-      parsed.caption = cleanCaption;
+  const verdict = String(parsed?.verdict || "").toLowerCase();
+  if (verdict !== "yes" && verdict !== "no") {
+    throw new Error(`FastVLM candidate check verdict not binary: ${outputText.slice(0, 80)}`);
+  }
+  return { verdict, confidence: Number(parsed?.confidence ?? 0.5), raw: outputText };
+}
+async function runFastVLMCandidateChecks({ imageBlob, imageW, imageH, reviewCandidates, ocrItems, computeDevice }) {
+  if (Date.now() < _fastvlmCooldownUntil) {
+    throw new Error("FastVLM cooling down after abandoned generate (timeout pile-up guard)");
+  }
+  const fastvlm = await loadFastVLM(computeDevice);
+  const confirmed = [];
+  const rejected = [];
+  const errored = [];
+  for (const c of reviewCandidates) {
+    const lineText = (ocrItems || []).filter((o) => (c.ocr_ids || []).includes(o.id)).map((o) => o.text).join(" ") || String(c.text || "");
+    const prompt = buildCandidateCheckPrompt(c, lineText);
+    try {
+      const cropBlob = await cropCandidateImage(imageBlob, c.bbox, imageW, imageH);
+      const { verdict, confidence } = await runFastVLMCandidateCheck({ fastvlm, cropBlob, prompt });
+      if (verdict === "yes") {
+        c._t2_confirmed = true;
+        c._t2_confidence = confidence;
+        confirmed.push(c.candidate_id);
+        console.log(`[FASTVLM] crop check CONFIRM ${c.candidate_id} '${String(c.text).slice(0, 40)}' t2conf=${confidence}`);
+      } else {
+        rejected.push(c.candidate_id);
+        console.log(`[FASTVLM] crop check reject ${c.candidate_id} '${String(c.text).slice(0, 40)}'`);
+      }
+    } catch (err) {
+      console.warn(`[FASTVLM] crop check error ${c.candidate_id}: ${err.message}`);
+      errored.push(c.candidate_id);
     }
   }
-  if (parsed?.caption) {
-    parsed.caption = sanitizeCaption(parsed.caption, evidence);
-  }
-  if (parseError && (!parsed.redactions || parsed.redactions.length === 0)) {
-    return {
-      status: "error",
-      reason: parseError.message,
-      raw: outputText,
-      parsed,
-      prompt,
-      renderedPrompt,
-      latencyMs
-    };
+  if (errored.length > 0 && confirmed.length === 0 && rejected.length === 0) {
+    throw new Error(`All ${reviewCandidates.length} FastVLM crop checks failed`);
   }
   return {
-    status: "ok",
-    raw: outputText,
-    parsed,
-    prompt,
-    renderedPrompt,
-    inputTokens: inputLength,
-    outputTokens: outputText.split(/\s+/).filter(Boolean).length,
-    genMs: latencyMs,
-    latencyMs
+    status: errored.length === 0 ? "candidate_checks" : "partial",
+    confirmed,
+    rejected,
+    errored
   };
 }
 async function runExtensionPipeline(inputImage, options = {}, onProgress = null) {
@@ -48469,6 +49019,9 @@ async function _runExtensionPipelineInner(inputImage, options = {}, onProgress =
     deterministicFindings
   });
   console.log(`[HEURISTICS] deterministicFindings=${deterministicFindings.length} fusedCandidates=${fusedCandidates.length}`);
+  for (const c of fusedCandidates) {
+    console.log(`[TRACE] fused ${c.candidate_id}[${(c.candidate_types || []).join("+")}|${(c.sources || []).join("+")}|${Number(c.confidence ?? 0).toFixed(2)}|len=${String(c.text ?? "").length}|ocr=${(c.ocr_ids || []).length}]`);
+  }
   if (PII_DEBUG) {
     for (const c of fusedCandidates) {
       console.log(`[HEURISTICS] candidate: ${c.candidate_id} text='${c.text}' types=${c.candidate_types.join("+")} sources=${c.sources.join("+")} conf=${Number(c.confidence).toFixed(3)}`);
@@ -48492,22 +49045,63 @@ async function _runExtensionPipelineInner(inputImage, options = {}, onProgress =
     nerCount: nerFindings.length
   });
   const fastvlmEnabled = options.fastvlmEnabled !== false;
+  const { high: highConfCandidates, low: reviewCandidates, droppedLow } = selectT2ReviewCandidates(fusedCandidates);
   let fastvlmResult = null;
-  if (fastvlmEnabled && (fusedCandidates.length > 0 || ocr.items && ocr.items.length > 0)) {
-    emit("FASTVLM", "START");
+  let adjudicationCandidates = fusedCandidates;
+  if (!fastvlmEnabled) {
+    emit("FASTVLM", "SKIPPED", { reason: "FastVLM disabled by user" });
+    fastvlmResult = {
+      status: "skipped",
+      reason: "FastVLM disabled by user",
+      raw: JSON.stringify({ status: "skipped" })
+    };
+  } else if (reviewCandidates.length === 0) {
+    emit("FASTVLM", "SKIPPED", {
+      reason: "No low-confidence candidates (gate)",
+      highCount: highConfCandidates.length
+    });
+    console.log(`[FASTVLM] Gate closed: ${highConfCandidates.length} HIGH, 0 LOW \u2014 T2 skipped`);
+    console.log(`[TRACE] HIGH: ${highConfCandidates.map((c) => c.candidate_id).join(",") || "(none)"}`);
+    fastvlmResult = {
+      status: "skipped",
+      reason: "No low-confidence candidates (gate)",
+      raw: JSON.stringify({ status: "skipped" })
+    };
+  } else {
+    emit("FASTVLM", "START", {
+      checks: reviewCandidates.length,
+      high: highConfCandidates.length,
+      droppedLow
+    });
+    console.log(`[FASTVLM] Gate open: ${highConfCandidates.length} HIGH direct, ${reviewCandidates.length} LOW crop checks${droppedLow ? ` (${droppedLow} over cap, kept in fallback)` : ""}`);
+    console.log(`[TRACE] HIGH: ${highConfCandidates.map((c) => c.candidate_id).join(",") || "(none)"} LOW: ${reviewCandidates.map((c) => c.candidate_id).join(",")}`);
     try {
-      fastvlmResult = await runFastVLMAdjudication({
+      const checks = await runFastVLMCandidateChecks({
         imageBlob: decoded.blob,
-        evidence: fastvlmEvidence,
+        imageW: decoded.width,
+        imageH: decoded.height,
+        reviewCandidates,
+        ocrItems: ocr.items,
         computeDevice
       });
+      const rejectSet = new Set(checks.rejected);
+      adjudicationCandidates = fusedCandidates.filter((c) => !rejectSet.has(c.candidate_id));
+      fastvlmResult = {
+        status: checks.status,
+        reason: `crop checks: ${checks.confirmed.length} confirmed, ${checks.rejected.length} rejected, ${checks.errored.length} errored`,
+        raw: "",
+        confirmed: checks.confirmed,
+        rejected: checks.rejected,
+        errored: checks.errored
+      };
       emit("FASTVLM", "DONE", {
-        status: fastvlmResult.status,
-        caption: fastvlmResult.parsed?.caption,
-        redactionsCount: fastvlmResult.parsed?.redactions?.length || 0
+        status: checks.status,
+        confirmed: checks.confirmed.length,
+        rejected: checks.rejected.length,
+        errored: checks.errored.length
       });
     } catch (err) {
-      console.warn("[WARN] FastVLM adjudication failed:", err.message);
+      console.warn("[WARN] FastVLM crop checks failed:", err.message);
       fastvlmResult = {
         status: "load_failed",
         reason: err.message,
@@ -48515,20 +49109,11 @@ async function _runExtensionPipelineInner(inputImage, options = {}, onProgress =
       };
       emit("FASTVLM", "ERROR", { error: err.message });
     }
-  } else {
-    emit("FASTVLM", "SKIPPED", {
-      reason: fastvlmEnabled ? "No candidates found" : "FastVLM disabled by user"
-    });
-    fastvlmResult = {
-      status: "skipped",
-      reason: fastvlmEnabled ? "No candidates found" : "FastVLM disabled by user",
-      raw: JSON.stringify({ status: "skipped" })
-    };
   }
   const adjudication = adjudicateOrFallback({
     ettinFindings: nerFindings,
     deterministicFindings,
-    fusedCandidates,
+    fusedCandidates: adjudicationCandidates,
     fastvlmResult,
     evidence: {
       fastvlm_evidence: fastvlmEvidence
@@ -48654,7 +49239,9 @@ async function _runExtensionPipelineInner(inputImage, options = {}, onProgress =
     pipeline_perf: {
       totalTimeMs,
       stages: buildStagePerf(stageMarks),
-      memory: { before: memBefore, after: memAfter }
+      memory: { before: memBefore, after: memAfter },
+      gpuEvents: getGpuErrorLog(),
+      build: typeof globalThis !== "undefined" && globalThis.__PERSCOPE_BUILD || null
     }
   };
   const perceptionPrompt = buildPerceptionPrompt(evidenceOutput);
@@ -48666,7 +49253,7 @@ async function _runExtensionPipelineInner(inputImage, options = {}, onProgress =
     totalTimeMs
   };
 }
-var FASTVLM_MODEL, FASTVLM_DTYPE, FASTVLM_MAX_NEW_TOKENS, PII_DEBUG, _pipelineRunning, NER_MODEL_LOCAL, NER_MODEL_REMOTE, NER_MAX_TOKENS, _ocrServiceCache, _nerCache, _fastvlmCache, MAX_WORKING_DIMENSION, _nerLoadPromise, _fastvlmLoadPromise;
+var FASTVLM_MODEL, FASTVLM_DTYPE, FASTVLM_TIMEOUT_COOLDOWN_MS, _fastvlmCooldownUntil, FASTVLM_CANDIDATE_MAX_TOKENS, FASTVLM_CANDIDATE_TIMEOUT_MS, T2_CROP_MARGIN, PII_DEBUG, _pipelineRunning, NER_MODEL_LOCAL, NER_MODEL_REMOTE, NER_MAX_TOKENS, _ocrServiceCache, _nerCache, _fastvlmCache, MAX_WORKING_DIMENSION, _nerLoadPromise, _fastvlmLoadPromise, BalancedJsonStoppingCriteria;
 var init_v7_extension = __esm({
   "src/pipeline/v7-extension.js"() {
     init_ort_bundle_min();
@@ -48685,7 +49272,11 @@ var init_v7_extension = __esm({
       vision_encoder: "q4f16",
       decoder_model_merged: "q4f16"
     };
-    FASTVLM_MAX_NEW_TOKENS = 160;
+    FASTVLM_TIMEOUT_COOLDOWN_MS = 9e4;
+    _fastvlmCooldownUntil = 0;
+    FASTVLM_CANDIDATE_MAX_TOKENS = 48;
+    FASTVLM_CANDIDATE_TIMEOUT_MS = 3e4;
+    T2_CROP_MARGIN = 0.25;
     PII_DEBUG = false;
     _pipelineRunning = false;
     if (typeof chrome !== "undefined" && chrome?.runtime?.getURL) {
@@ -48702,6 +49293,32 @@ var init_v7_extension = __esm({
     MAX_WORKING_DIMENSION = 1600;
     _nerLoadPromise = null;
     _fastvlmLoadPromise = null;
+    BalancedJsonStoppingCriteria = class extends StoppingCriteria {
+      constructor(decodeFn, promptLength, minNewTokens = 8) {
+        super();
+        this.decodeFn = decodeFn;
+        this.promptLength = promptLength;
+        this.minNewTokens = minNewTokens;
+      }
+      _call(input_ids, _scores) {
+        try {
+          const ids = (input_ids?.[0] || []).slice(this.promptLength).map(Number);
+          if (ids.length < this.minNewTokens) return [false];
+          const text = this.decodeFn(ids);
+          let depth = 0;
+          let seen = false;
+          for (const ch2 of text) {
+            if (ch2 === "{") {
+              depth++;
+              seen = true;
+            } else if (ch2 === "}") depth--;
+          }
+          return [seen && depth <= 0 && text.trimEnd().endsWith("}")];
+        } catch {
+          return [false];
+        }
+      }
+    };
   }
 });
 
@@ -48983,6 +49600,10 @@ function startBridgeLink({ onToolRequest, onStatusChange } = {}) {
 
 // src/offscreen/offscreen.js
 console.log("[PerScope Offscreen] Initialized and listening for pipeline tasks.");
+try {
+  if (globalThis.__PERSCOPE_BUILD) console.log("[BUILD]", JSON.stringify(globalThis.__PERSCOPE_BUILD));
+} catch {
+}
 function uint8ToBase64(bytes) {
   let binary = "";
   const chunkSize = 8192;
@@ -49003,12 +49624,48 @@ function schedulePrewarm() {
   }
 }
 schedulePrewarm();
+var DEFAULT_RECYCLE_AFTER_CAPTURES = 15;
+var _completedCaptures = 0;
+var _lastGpuEventSeenT = 0;
+function _resolveRecycleAfter(options) {
+  if (options && typeof options.recycleAfterCaptures === "number") return options.recycleAfterCaptures;
+  return DEFAULT_RECYCLE_AFTER_CAPTURES;
+}
+function _maybeRequestRecycle({ options, evidence }) {
+  try {
+    _completedCaptures++;
+    const recycleAfter = _resolveRecycleAfter(options);
+    const gpuEvents = evidence?.pipeline_perf?.gpuEvents || [];
+    const freshGpuEvents = gpuEvents.filter((e) => Number(e?.t || 0) > _lastGpuEventSeenT);
+    for (const e of gpuEvents) {
+      const t = Number(e?.t || 0);
+      if (Number.isFinite(t) && t > _lastGpuEventSeenT) _lastGpuEventSeenT = t;
+    }
+    let reason = null;
+    if (freshGpuEvents.length > 0) {
+      reason = `gpu-event (${freshGpuEvents.length} new: ${freshGpuEvents.map((e) => e.kind).join(",")})`;
+    } else if (recycleAfter > 0 && _completedCaptures >= recycleAfter) {
+      reason = `capture-count ${_completedCaptures} >= ${recycleAfter}`;
+    }
+    if (!reason) return;
+    console.warn(`[RECYCLE] capture #${_completedCaptures} triggered recycle (${reason}) \u2014 requesting offscreen reload after result delivery.`);
+    setTimeout(() => {
+      try {
+        chrome.runtime.sendMessage({ target: "background", action: "REQUEST_OFFSCREEN_RECYCLE", reason }).catch?.(() => {
+        });
+      } catch {
+      }
+    }, 1500);
+  } catch {
+  }
+}
 async function runPipelineJob({ jobId, imageBytes, options, onProgress }) {
   const t0 = performance.now();
   const buffer = new Uint8Array(imageBytes).buffer;
   const result = await runExtensionPipeline(buffer, options || {}, onProgress);
   const outputArrayBuffer = await result.outputBlob.arrayBuffer();
   const outputBase64 = uint8ToBase64(new Uint8Array(outputArrayBuffer));
+  _maybeRequestRecycle({ options, evidence: result.evidence });
   return {
     status: "SUCCESS",
     jobId,
@@ -49070,7 +49727,11 @@ async function handleBridgeTool({ tool, params }) {
       const blob = await (await fetch(cap.dataUrl)).blob();
       const imageBytes = Array.from(new Uint8Array(await blob.arrayBuffer()));
       const jobId = `bridge_${Date.now()}`;
-      const res = await runPipelineJob({ jobId, imageBytes, options: {}, onProgress: () => {
+      const bridgeOptions = {};
+      if (params && typeof params.recycleAfterCaptures === "number") {
+        bridgeOptions.recycleAfterCaptures = params.recycleAfterCaptures;
+      }
+      const res = await runPipelineJob({ jobId, imageBytes, options: bridgeOptions, onProgress: () => {
       } });
       return {
         status: "ok",
@@ -49333,3 +49994,4 @@ onnxruntime-web/dist/ort.webgpu.bundle.min.mjs:
    * Licensed under the MIT License.
    *)
 */
+;globalThis.__PERSCOPE_BUILD={"commit":"d8072c4","time":"2026-09-28T17:26:47.256Z"};

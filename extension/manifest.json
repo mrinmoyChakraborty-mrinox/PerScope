@@ -1,1 +1,70 @@
-﻿# Owned by: Extension/Automation — see /docs/tasks/Extension-Automation.md for spec. Not implemented here.
+{
+  "manifest_version": 3,
+  "name": "PerScope Privacy Redactor",
+  "version": "1.0.1",
+  "description": "Local on-device PII detection and redaction for screenshots and page text. Human Mode popup, privacy dashboard and side panel. No data leaves your machine.",
+  "minimum_chrome_version": "116",
+  "permissions": ["offscreen", "storage", "activeTab", "scripting", "tabs"],
+  "host_permissions": ["<all_urls>"],
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content/dom-capture-entry.js"],
+      "all_frames": true,
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_title": "PerScope Privacy Redactor",
+    "default_icon": {
+      "16": "assets/icon16.png",
+      "32": "assets/icon32.png",
+      "48": "assets/icon48.png",
+      "128": "assets/icon128.png"
+    }
+  },
+  "background": {
+    "service_worker": "background/background.js",
+    "type": "module"
+  },
+  "side_panel": {
+    "default_path": "sidepanel/sidepanel.html"
+  },
+  "options_ui": {
+    "page": "dashboard/dashboard.html",
+    "open_in_tab": true
+  },
+  "commands": {
+    "_execute_action": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+X"
+      },
+      "description": "Open the PerScope popup (matches the Capture button hint)"
+    }
+  },
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "models/*",
+        "models/*/*",
+        "models/*/*/*",
+        "models/**/*",
+        "ort/*",
+        "ort/*/*",
+        "assets/*",
+        "dashboard/dashboard.html"
+      ],
+      "matches": ["<all_urls>"]
+    }
+  ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
+  },
+  "icons": {
+    "16": "assets/icon16.png",
+    "32": "assets/icon32.png",
+    "48": "assets/icon48.png",
+    "128": "assets/icon128.png"
+  }
+}

@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="perscope_logo.png" alt="PerScope logo" width="120">
+</p>
+
 # PerScope — Local PII Detection & Image Redaction (Working Test Prototype)
 
 Chrome MV3 extension + Node reference pipeline that detects personally identifying

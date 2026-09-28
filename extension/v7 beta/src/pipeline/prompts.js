@@ -119,6 +119,15 @@ function buildFastVLMRedactionEvidence({ image, ocr, ettinFindings, deterministi
 }
 
 function buildFastVLMRedactionPrompt(evidence) {
+    // Phase 1 optimization: the OCR text block was already capped (12000
+    // chars) but the fused-candidate and OCR-ID blocks were unbounded — on
+    // dense pages they dominate prefill tokens. Caps sit far above every
+    // fixture (text-heavy: 10 fused, 33 ids), so the live matrix measures
+    // the token-cap effect cleanly; pages denser than the caps trade a
+    // truncation note for bounded prefill. Rule 4 (ids must come from the
+    // FUSED list) still holds — the note tells the model the list is partial.
+    const MAX_FUSED_PROMPT_LINES = 40;
+    const MAX_OCR_IDS_PROMPT = 120;
     const ocrJoined =
         evidence.ocr
             .map(
@@ -128,16 +137,26 @@ function buildFastVLMRedactionPrompt(evidence) {
             .slice(0, 12000) ||
         "(no OCR)";
 
-    const ocrIds =
+    const ocrIdsAll =
         evidence.ocr
             .map(
                 o => o.id
-            )
-            .join(",") ||
+            );
+    const ocrIds =
+        ocrIdsAll.slice(0, MAX_OCR_IDS_PROMPT).join(",") ||
         "(none)";
+    const ocrIdsTruncNote =
+        ocrIdsAll.length > MAX_OCR_IDS_PROMPT
+            ? ` [+${ocrIdsAll.length - MAX_OCR_IDS_PROMPT} more OCR ids omitted]`
+            : "";
+
+    // Phase 1 prompt caps (constants declared at function top).
+    const fusedAll =
+        evidence.fused_candidates || [];
 
     const fusedLines =
-        evidence.fused_candidates
+        fusedAll
+            .slice(0, MAX_FUSED_PROMPT_LINES)
             .map(
                 c =>
                     `${c.candidate_id} "${c.text}" types=[${(
@@ -154,6 +173,10 @@ function buildFastVLMRedactionPrompt(evidence) {
             )
             .join("\n") ||
         "(none)";
+    const fusedTruncNote =
+        fusedAll.length > MAX_FUSED_PROMPT_LINES
+            ? `\n[+${fusedAll.length - MAX_FUSED_PROMPT_LINES} more candidates omitted for length; prefer listed candidate_ids]`
+            : "";
 
     return `
 You are PerScope's local multimodal
@@ -174,13 +197,24 @@ NO CODE FENCES.
 NO EXPLANATION.
 NO REASONING.
 
-Schema:
+Schema (machine-readable FIRST, prose LAST — under a token cap the tail
+is what gets cut, and a cut caption is recoverable while cut redactions
+are not):
 
 {
-  "caption": "detailed visual description of everything visible, without repeating sensitive values",
   "redactions": [],
   "additional_redactions": [],
-  "rejected_candidates": []
+  "rejected_candidates": [],
+  "caption": "detailed visual description of everything visible, without repeating sensitive values"
+}
+
+Minimal valid example (exact shape, short values):
+
+{
+  "redactions": [{"candidate_id": "cand_000", "confidence": 0.97}],
+  "additional_redactions": [],
+  "rejected_candidates": ["cand_001"],
+  "caption": "Invoice page with a table and contact block."
 }
 
 RULES:
@@ -246,10 +280,10 @@ RULES:
  11. Confidence must be between 0 and 1.
 
 OCR IDS:
-${ocrIds}
+${ocrIds}${ocrIdsTruncNote}
 
 FUSED CANDIDATES:
-${fusedLines}
+${fusedLines}${fusedTruncNote}
 
 OCR:
 ${ocrJoined}
@@ -279,11 +313,34 @@ function buildPerceptionPrompt(evidence) {
     }
 }
 
+// Per-candidate crop adjudication prompt (T2 replan 2026-09-28). The old
+// full-page call failed because it asked a 0.5B VLM to read 14px text
+// smeared to ~4px at 448px AND emit a 128-token captioned JSON essay.
+// This asks one legible question about one native-resolution crop:
+// ~150 prompt tokens in, <=48 out. No caption, no evidence dump, no
+// "don't repeat PII" rules — the crop is shown, the verdict is binary,
+// and the value never needs re-emitting (the pipeline already holds it).
+function buildCandidateCheckPrompt(candidate, lineText) {
+    const span = String(candidate?.text ?? "").slice(0, 120);
+    const ctx = String(lineText ?? "").slice(0, 200);
+    const types = Array.isArray(candidate?.candidate_types) ? candidate.candidate_types.join("/") : "PII";
+    return (
+        `Decide if the highlighted text region contains sensitive personal data.\n` +
+        `Text in region: "${span}"\n` +
+        `Nearby text: "${ctx}"\n` +
+        `Suspected type: ${types}\n` +
+        `Reply with exactly this JSON and nothing else: {"verdict":"yes","confidence":0.9} or {"verdict":"no","confidence":0.9}.\n` +
+        `Example: region "Tamluk@2019" near "Gate Pass valid till Friday" -> {"verdict":"yes","confidence":0.9}\n` +
+        `verdict "yes" means redact (passwords, account numbers, ID codes, private emails). "no" means ordinary words, masked values (98XXX-XX210), hashtags, filenames.`
+    );
+}
+
 
 
 export {
     ALLOWED_FASTVLM_TYPES,
     buildFastVLMRedactionEvidence,
     buildFastVLMRedactionPrompt,
+    buildCandidateCheckPrompt,
     buildPerceptionPrompt
 };

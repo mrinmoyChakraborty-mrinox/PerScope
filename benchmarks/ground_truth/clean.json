@@ -1,0 +1,6 @@
+{
+  "_schema": "perscope-benchmark-ground-truth/v1",
+  "_fixture": "clean.html",
+  "_note": "Text-free fixture (CSS shapes only; <title> is metadata invisible to OCR). Expectation: zero findings, Tier 2 skipped. Any finding here is a false positive by construction.",
+  "entities": []
+}

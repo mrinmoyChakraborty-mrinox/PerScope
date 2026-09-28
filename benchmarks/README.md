@@ -72,9 +72,20 @@ Client-measured wall time is recorded alongside but never mixed into stats.
 
 ## Metric honesty notes
 
-- **No precision/recall**: no labeled ground truth exists. Proxies only
-  (counts, type histograms, confidence bands) - the baseline to diff against
-  once labeled fixtures exist. Follow-up: span-level labeled fixtures.
+- **PII/redaction/visual accuracy (added): ground truth now exists**
+  (`ground_truth/*.json` + `invoice-v2.html` fixture). Each run scores
+  `final_findings` vs GT (TP/FP/FN → micro precision/recall/F1 overall, per
+  fixture, per entity type; code: `lib/accuracy.mjs`), redaction geometry/text
+  outcomes via `canvas-redactor.js` dedup+clamp semantics (`lib/redaction.mjs`),
+  and 17 deterministic visual tasks, static (fixture source) + live (run
+  evidence), reported separately (`lib/visual-tasks.mjs`,
+  `ground_truth/visual-tasks.json`). Definitions are in code; `latest.md`
+  carries the tables; `PPT_RESULTS.md` holds only verified numbers
+  (NOT MEASURED elsewhere); `VALIDITY.md` is the methodology record.
+  Text-heavy `@example.*` emails remain LEAVE decoys by pipeline design —
+  recall positives live in `invoice-v2.html` (`@acme-invoice.test`).
+- **Legacy proxies kept**: counts/type histograms/confidence bands still
+  reported alongside the GT metrics for continuity.
 - **Open measurement question (2026-09-27): OCR brackets at ~0ms** while
   downstream stages demonstrably consume OCR text (NER finds entities,
   FastVLM fires). Stage sums reconcile with totals, so the hook is pairing

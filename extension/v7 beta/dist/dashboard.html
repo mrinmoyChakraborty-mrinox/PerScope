@@ -3,15 +3,16 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>PerScope Privacy Redactor - Full Dashboard</title>
-  <link rel="stylesheet" href="dashboard.css">
+  <title>PerScope Privacy Redactor — Dashboard</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+    <link rel="stylesheet" href="dashboard.css">
 </head>
+
 <body>
-  <div class="dashboard-layout">
-    <!-- Sidebar -->
+  <div class="dashboard-layout" id="dashShell" data-theme="light">
     <aside class="sidebar">
       <div class="sidebar-brand">
         <div class="brand-icon">
@@ -27,43 +28,35 @@
         </div>
       </div>
 
-      <!-- Hardware Telemetry Card -->
       <div class="sidebar-card">
         <h3>Compute Device</h3>
         <div class="device-badge-row">
           <span class="badge" id="dashDeviceTier">Dedicated GPU</span>
           <span class="pulse-dot" id="dashPulseDot"></span>
         </div>
-        <p class="device-name" id="dashDeviceName">Detecting...</p>
+        <p class="device-name" id="dashDeviceName">NVIDIA GPU · Local</p>
         <div class="telemetry-list" id="dashTelemetryList">
-          <div class="telemetry-item">
-            <span>Backend:</span> <strong id="teleBackend">WebGPU</strong>
-          </div>
-          <div class="telemetry-item">
-            <span>Adapter:</span> <strong id="teleVendor">NVIDIA</strong>
-          </div>
-          <div class="telemetry-item">
-            <span>Power Mode:</span> <strong id="telePower">High-Performance</strong>
-          </div>
+          <div class="telemetry-item"><span>Backend:</span> <strong id="teleBackend">WebGPU</strong></div>
+          <div class="telemetry-item"><span>Adapter:</span> <strong id="teleVendor">NVIDIA</strong></div>
+          <div class="telemetry-item"><span>Power Mode:</span> <strong id="telePower">High-Performance</strong></div>
         </div>
       </div>
 
-      <!-- Controls & Toggles -->
       <div class="sidebar-card">
         <h3>Pipeline Settings</h3>
         <div class="form-group">
           <label for="dashSelectDevice">Hardware Preference</label>
           <select id="dashSelectDevice" class="form-control">
-            <option value="auto">Auto (Dedicated GPU Priority)</option>
-            <option value="integrated">Integrated GPU</option>
-            <option value="cpu">CPU (WASM SIMD Fallback)</option>
+            <option>Auto (Dedicated GPU Priority)</option>
+            <option>Integrated GPU</option>
+            <option>CPU (WASM SIMD Fallback)</option>
           </select>
         </div>
         <div class="form-group">
           <label for="dashSelectStyle">Redaction Style</label>
           <select id="dashSelectStyle" class="form-control">
-            <option value="blur">Blur (Dual Pass + Wash)</option>
-            <option value="black">Solid Black Box</option>
+            <option>Blur (Dual Pass + Wash)</option>
+            <option>Solid Black Box</option>
           </select>
         </div>
         <div class="form-check">
@@ -76,54 +69,48 @@
         </div>
       </div>
 
-      <!-- Bridge Connection (agent mode; Human Mode works without it) -->
       <div class="sidebar-card">
         <h3>Bridge Connection</h3>
         <p class="bridge-status">Status: <strong id="dashBridgeStatus">Checking…</strong></p>
         <div class="form-group">
           <label for="dashBridgeCode">Pairing code (from bridge dashboard)</label>
-          <input type="text" id="dashBridgeCode" class="form-control" inputmode="numeric"
-                 autocomplete="one-time-code" maxlength="6" placeholder="6-digit code">
+          <input type="text" id="dashBridgeCode" class="form-control" maxlength="6" placeholder="6-digit code">
         </div>
-        <button id="dashBridgePair" class="btn btn-secondary btn-full">Pair with Bridge</button>
+        <button class="btn btn-secondary btn-full" id="dashBridgePair">Pair with Bridge</button>
         <p class="bridge-msg" id="dashBridgeMsg"></p>
       </div>
 
-      <!-- Actions -->
       <div class="sidebar-actions">
-        <button id="dashBtnUpload" class="btn btn-primary btn-full">Upload New Image</button>
-        <button id="dashBtnCapture" class="btn btn-secondary btn-full">Capture Active Tab</button>
+        <button class="btn btn-primary btn-full" id="dashBtnUpload">Upload New Image</button>
+        <button class="btn btn-secondary btn-full" id="dashBtnCapture">Capture Active Tab</button>
         <input type="file" id="dashFileInput" accept="image/*" class="hidden">
       </div>
     </aside>
 
-    <!-- Main Workspace -->
     <main class="workspace">
-      <!-- Top Bar -->
       <header class="topbar">
         <div class="topbar-title">
-          <h1 id="dashTitle">PII Redaction Studio</h1>
-          <span class="status-indicator" id="dashStatusIndicator">Ready</span>
+          <h1>PII Redaction Studio</h1>
+          <span class="status-indicator" id="dashStatusIndicator">Ready · On-device processing</span>
         </div>
-        <div class="topbar-actions" id="dashResultsActions" style="display: none;">
-          <button id="dashBtnDownloadPNG" class="btn btn-primary">Download Redacted PNG</button>
-          <button id="dashBtnCopy" class="btn btn-secondary">Copy to Clipboard</button>
-          <button id="dashBtnDownloadJSON" class="btn btn-ghost">Export Evidence JSON</button>
+        <div class="topbar-actions">
+          <button class="btn btn-primary" id="dashBtnDownloadPNG">Download Redacted PNG</button>
+          <button class="btn btn-secondary" id="dashBtnCopy">Copy to Clipboard</button>
+          <button class="btn btn-ghost" id="dashBtnDownloadJSON">Export Evidence JSON</button>
+          <button class="btn btn-ghost theme-btn" id="dashBtnTheme" title="Toggle light / dark">
+            <svg id="dashThemeIcon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+          </button>
         </div>
       </header>
 
-      <!-- Viewer Container -->
       <div class="viewer-layout">
-        <!-- Left Image: Original / BBox Overlay -->
         <div class="image-panel">
           <div class="panel-header">
             <h3>Original Image</h3>
-            <div class="panel-controls">
-              <label class="toggle-switch">
-                <input type="checkbox" id="dashToggleOverlay" checked>
-                <span>Show Bounding Boxes</span>
-              </label>
-            </div>
+            <label class="toggle-switch">
+              <input type="checkbox" id="dashToggleOverlay" checked>
+              <span>Show Bounding Boxes</span>
+            </label>
           </div>
           <div class="image-viewport" id="viewportOriginal">
             <div class="drop-placeholder" id="dashDropZone">
@@ -135,46 +122,38 @@
               <p>Drag and drop an image or screenshot here</p>
               <span>or click to browse from disk</span>
             </div>
-            <img id="dashImgOriginal" class="viewport-img hidden" alt="Original Image">
-            <div id="dashBBoxContainer" class="bbox-container"></div>
           </div>
         </div>
 
-        <!-- Right Image: Redacted Result -->
         <div class="image-panel">
           <div class="panel-header">
             <h3>Redacted Image (On-Device)</h3>
-            <span class="redact-tag" id="dashRedactTag">100% Local</span>
+            <span class="redact-tag">100% Local</span>
           </div>
           <div class="image-viewport" id="viewportRedacted">
             <div class="empty-placeholder" id="dashEmptyPlaceholder">
               <p>Redacted image will appear here once processed</p>
             </div>
-            <img id="dashImgRedacted" class="viewport-img hidden" alt="Redacted Image">
           </div>
         </div>
       </div>
 
-      <!-- Bottom Inspector Tabs: FastVLM Caption & JSON Evidence -->
       <section class="inspector-section">
         <div class="inspector-tabs">
-          <button class="tab-btn active" id="tabBtnCaption">FastVLM Description</button>
-          <button class="tab-btn" id="tabBtnEvidence">Evidence Schema (JSON)</button>
-          <button class="tab-btn" id="tabBtnPrompts">Adjudication Prompts</button>
+          <button class="tab-btn active" data-pane="paneCaption">FastVLM Description</button>
+          <button class="tab-btn" data-pane="paneEvidence">Evidence Schema (JSON)</button>
+          <button class="tab-btn" data-pane="panePrompts">Adjudication Prompts</button>
         </div>
         <div class="inspector-content">
-          <!-- Caption Pane -->
           <div id="paneCaption" class="tab-pane active">
             <div class="caption-box">
               <span class="caption-icon">✨</span>
               <p id="dashCaptionText">Load or capture an image to generate FastVLM 0.5B multimodal visual reasoning and captioning.</p>
             </div>
           </div>
-          <!-- Evidence Pane -->
           <div id="paneEvidence" class="tab-pane">
             <pre class="json-viewer" id="dashJsonViewer">// Evidence JSON will be populated here</pre>
           </div>
-          <!-- Prompts Pane -->
           <div id="panePrompts" class="tab-pane">
             <pre class="prompt-viewer" id="dashPromptViewer">// FastVLM adjudication prompt will appear here</pre>
           </div>
@@ -183,6 +162,12 @@
     </main>
   </div>
 
+  <!-- NOTE: dashboard logic lives in dashboard.js (external file). MV3
+       extension pages run under "script-src 'self' 'wasm-unsafe-eval'"
+       (see manifest.json), which blocks inline scripts and inline event
+       handlers — the preview-only inline script from the supplied mockups
+       would silently never execute once packaged. dashboard.js implements
+       the same interactions plus the real on-device pipeline wiring. -->
   <script type="module" src="dashboard.js"></script>
 </body>
 </html>

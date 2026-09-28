@@ -1,0 +1,8 @@
+{
+  "_schema": "perscope-benchmark-ground-truth/v1",
+  "_fixture": "document.html",
+  "_note": "Full-viewport scanned certificate image (fixtures/img/doc-face.png). Pixel content cannot be enumerated from the DOM, so text entities are NOT listed here: OCR-derived expected strings for this image are NOT MEASURED until a labeled transcription exists. The whole image region is visual-sensitive (photo + print) and resolved at runtime via face_detection.faces and OCR bboxes.",
+  "entities": [
+    { "id": "doc-r1", "fixture": "document.html", "entity_type": "FACE", "text": null, "action": "REDACT", "source": "body > img (scanned certificate photo area)", "note": "ID photo inside the scan; bbox resolved at runtime", "bbox": null, "bbox_method": "runtime: evidence.face_detection.faces[*].bbox in evidence.image WxH pixels" }
+  ]
+}

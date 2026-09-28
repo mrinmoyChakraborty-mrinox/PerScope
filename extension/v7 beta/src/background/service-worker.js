@@ -146,6 +146,35 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  // Phase 4 mitigation: the offscreen document asks for a fresh life after
+  // N captures or a GPU event. Grace period lets the in-flight result
+  // deliver first; returning true + late sendResponse keeps the worker
+  // alive across the sleep (an un-awaited fire-and-forget here could die
+  // to worker suspension and never recycle). Pairing is unaffected —
+  // the new document's bridge-link reconnects with stored credentials.
+  if (message.action === "REQUEST_OFFSCREEN_RECYCLE") {
+    (async () => {
+      const reason = String(message.reason || "unknown");
+      try {
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+        try {
+          await chrome.offscreen.closeDocument();
+        } catch (err) {
+          console.warn("[Service Worker] Recycle: closeDocument:", err?.message || err);
+        }
+        await ensureOffscreenDocument();
+        console.warn(`[RECYCLE] offscreen document recreated (reason: ${reason}). Next capture pays cold-model reload.`);
+        sendResponse({ status: "SUCCESS", recycled: true });
+      } catch (err) {
+        console.error("[Service Worker] Recycle failed:", err?.message || err);
+        try {
+          sendResponse({ status: "ERROR", error: err?.message || String(err) });
+        } catch {}
+      }
+    })();
+    return true;
+  }
+
   // -- Bridge control plane --------------------------------------------------
   // The WS connection itself lives in the offscreen document (MV3 service
   // workers suspend and kill sockets; offscreen stays alive). The worker

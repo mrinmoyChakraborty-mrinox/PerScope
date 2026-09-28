@@ -77,8 +77,24 @@ function extractJsonObject(text) {
         }
         throw new Error("JSON output truncated or incomplete. Preview: " + src.slice(base, base+500));
     }
-    const jsonStr = src.slice(base, end + 1);
-    return jsonStr;
+    // JSON-compliance repair (attempt-only, never corrupting): the 0.5B model
+    // emits JS-object-literal shape with UNQUOTED keys
+    // ({redactions: [..], caption: ".."}). Try quoting bare keys; success is
+    // proven by JSON.parse — on failure the exact original slice is returned
+    // and the caller follows the normal path. String contents may contain
+    // `word:` patterns the regex also quotes, but a mangled string still
+    // fails parse, so repair can only turn failure into success, never
+    // success into failure.
+    const rawSlice = src.slice(base, end + 1);
+    const repairedSlice = rawSlice.replace(/([{,]\s*)([A-Za-z_][A-Za-z0-9_]*)(\s*:)/g, '$1"$2"$3');
+    if (repairedSlice !== rawSlice) {
+        try {
+            JSON.parse(repairedSlice);
+            console.warn("[FASTVLM] Repaired unquoted JSON keys");
+            return repairedSlice;
+        } catch {}
+    }
+    return rawSlice;
 }
 
 function normalizeFastVLMRedactionItem(r, evidence) {
@@ -504,20 +520,26 @@ function resolveFinalRedactionRegions(fastvlmResult, evidence) {
 function applySafetyGates(findings, evidence, imageWidth, imageHeight) {
     const ocrById = new Map((evidence.ocr || []).map((o) => [o.id, o]));
     const ocrTexts = new Map((evidence.ocr || []).map((o) => [o.id, normalizeCandidateText(o.text)]));
+    // Content-free per-candidate trace (always on): ids, types, sources,
+    // scores and LENGTHS only — never text values, so no PII reaches the
+    // console. Every gate drop logs which gate ate it; "no more dark
+    // corners", only readings.
+    const traceId = (f) => `${f.candidate_id ?? f.source_id ?? "?"}[${((f.candidate_types || [f.entity]) || []).filter(Boolean).join("+")}|${(f.sources || []).join("+")}|${Number(f.score ?? f.confidence ?? 0).toFixed(2)}|len=${String(f.text ?? "").length}]`;
+    const traceDrop = (f, gate, note) => console.log(`[TRACE] drop ${traceId(f)} gate=${gate}${note ? ` ${note}` : ""}`);
     const filtered = [];
     for (const f of findings) {
         // Gate 1: valid bbox
-        if (!Array.isArray(f.bbox) || f.bbox.length !== 4) continue;
+        if (!Array.isArray(f.bbox) || f.bbox.length !== 4) { traceDrop(f, 1, "bbox-shape"); continue; }
         const nums = f.bbox.map(Number);
-        if (!nums.every(Number.isFinite)) continue;
+        if (!nums.every(Number.isFinite)) { traceDrop(f, 1, "bbox-nan"); continue; }
         const w = Math.abs(nums[2] - nums[0]);
         const h = Math.abs(nums[3] - nums[1]);
-        if (w <= 0 || h <= 0) continue;
+        if (w <= 0 || h <= 0) { traceDrop(f, 1, "bbox-area"); continue; }
         const rect = clampBBox(f.bbox, imageWidth, imageHeight, 0);
-        if (!rect) continue;
+        if (!rect) { traceDrop(f, 1, "bbox-clamp"); continue; }
         // Gate 2: valid OCR mapping (at least one ocr_id known)
         const hasKnownOcr = (f.ocr_ids ?? []).some((id) => ocrTexts.has(id)) || ocrTexts.has(f.source_id) || !!f.bbox;
-        if (!hasKnownOcr) continue;
+        if (!hasKnownOcr) { traceDrop(f, 2, "ocr-map"); continue; }
         // Gate 3: text consistency
         if (f.text) {
             const nt = normalizeCandidateText(f.text);
@@ -535,7 +557,17 @@ function applySafetyGates(findings, evidence, imageWidth, imageHeight) {
             if (ocrItem && f.text && ocrItem.text) {
                 const normOcr = normalizeCandidateText(ocrItem.text);
                 const normVal = normalizeCandidateText(f.text);
-                if (normOcr.includes(normVal) && normOcr.length > normVal.length + 3) {
+                // Spacing-tolerant (live-OCR fix): OCR inserts spaces inside
+                // tokens ("W BSC0LM 1234"), so raw substring checks fail on
+                // values the row-joined pass already resolved to a
+                // value-specific union bbox. Compare whitespace-collapsed
+                // forms; when those match but raw substring geometry is
+                // unavailable, KEEP the candidate bbox instead of dropping.
+                const flatOcr = normOcr.replace(/\s+/g, "");
+                const flatVal = normVal.replace(/\s+/g, "");
+                const rawIncludes = normOcr.includes(normVal) && normOcr.length > normVal.length + 3;
+                const flatIncludes = flatOcr.includes(flatVal) && flatOcr.length > flatVal.length + 3;
+                if (rawIncludes) {
                     const expected = estimateTextSubBBox(ocrItem, f.text);
                     if (expected) {
                         const expW = Math.abs(expected[2] - expected[0]);
@@ -546,9 +578,10 @@ function applySafetyGates(findings, evidence, imageWidth, imageHeight) {
                             // NEVER enlarge: replace with tighter value-only bbox (shrinking)
                             const isValueOnly = isLikelyValueOnlyBBox({ bbox: expected, item: ocrItem, targetText: f.text });
                             if (isValueOnly) f.bbox = expected;
-                            else continue;
+                            else { traceDrop(f, 7, "wide-box"); continue; }
                         } else if (!isLikelyValueOnlyBBox({ bbox: f.bbox, item: ocrItem, targetText: f.text })) {
                             console.log(`[SECURITY] rejecting non-value-specific bbox`);
+                            traceDrop(f, 7, "not-value-only");
                             continue;
                         }
                     } else {
@@ -558,24 +591,47 @@ function applySafetyGates(findings, evidence, imageWidth, imageHeight) {
                             if (FASTVLM_DEBUG) console.log(`[GATE] Geometry suspicious at ${ocrId}`);
                             const est = estimateTextSubBBox(ocrItem, f.text);
                             if (est && isLikelyValueOnlyBBox({ bbox: est, item: ocrItem, targetText: f.text })) f.bbox = est;
-                            else continue;
+                            else if (flatIncludes) {
+                                // Spacing-only mismatch: the value IS in this
+                                // OCR region modulo inserted spaces (row-joined
+                                // union bbox already value-specific). Keep it.
+                                if (FASTVLM_DEBUG) console.log(`[GATE] keeping spacing-mismatched value bbox at ${ocrId}`);
+                            }
+                            else { traceDrop(f, 7, "geometry"); continue; }
                         }
                     }
                 }
             }
         }
-        // Gate 5: no label-only redaction â€” value must be plausible
-        if (!isPlausibleValue(f.text ?? "")) continue;
+        // Gate 5: no label-only redaction - value must be plausible.
+        // EMAIL-shaped values are never prose: spoken addresses fail the
+        // generic letters-only prose branch, so they get a narrow shape
+        // check instead (mirrors the Tier-0 sub-pass exemption).
+        {
+            const gv = String(f.text ?? '');
+            const emailShaped = /@/.test(gv) || (/\bdot\b/i.test(gv) && /\bat\b/i.test(gv));
+            if (emailShaped) {
+                if (!/[a-z0-9]/i.test(gv) || gv.length < 6 || gv.length > 80) { traceDrop(f, 5, "email-shape"); continue; }
+            } else if (!isPlausibleValue(f.text ?? '')) { traceDrop(f, 5, "implausible"); continue; }
+        }
         // Also reject if text looks like a pure label
         if (findFieldLabelMatch(f.text ?? "")) {
             const labelMatch = findFieldLabelMatch(f.text);
-            if (labelMatch && normalizeCandidateText(labelMatch.label) === normalizeCandidateText(f.text)) continue;
+            if (labelMatch && normalizeCandidateText(labelMatch.label) === normalizeCandidateText(f.text)) { traceDrop(f, 5, "label-only"); continue; }
         }
         // Gate 6: confidence policy — tiered threshold based on evidence strength:
         // - FastVLM-adjudicated: FINAL_REDACTION_CONFIDENCE_THRESHOLD (0.5)
         // - Dual-source (NER + deterministic agree): 0.5 — two independent detectors
         //   agreeing is equivalent confidence to FastVLM confirmation (parity with v7.mjs)
+        // - Fail-closed (T2 attempted but failed): 0.5 for everything at/above
+        //   the floor — a T2 failure must never mean less protection (leak fix).
+        //   Geometry/plausibility gates still apply; only the confidence floor
+        //   moves. "skipped" keeps old thresholds.
         // - Prose-salvage (FastVLM mentioned OCR/Candidate ID in prose): 0.5
+        // - T2 crop-confirmed (per-candidate FastVLM check said "yes"): 0.5 —
+        //   a legible-crop verdict is first-hand confirmation, equivalent to
+        //   adjudication (mirrors _prose_salvage; set pre-fallback in
+        //   v7-extension.js, carried through the fallback push below).
         // - Name entities (first_name, last_name, user_name, person, name): 0.5
         //   (names lack deterministic regex support, so single-source floor 0.72 overlooks them)
         // - Single-source fusion fallback for other fields: FALLBACK_CONFIDENCE_THRESHOLD (0.72)
@@ -587,6 +643,7 @@ function applySafetyGates(findings, evidence, imageWidth, imageHeight) {
                 f.sources.includes("ettin") &&
                 f.sources.includes("deterministic_context");
             const isProseSalvage = !!f._prose_salvage;
+            const isT2Confirmed = !!f._t2_confirmed;
             const entityType = String(f.entity || "").toLowerCase();
             const isNameEntity =
                 entityType.includes("name") ||
@@ -598,15 +655,16 @@ function applySafetyGates(findings, evidence, imageWidth, imageHeight) {
             const threshold =
                 f.decision_source !== "fusion_fallback"
                     ? FINAL_REDACTION_CONFIDENCE_THRESHOLD
-                    : (isDualSource || isProseSalvage || isNameEntity)
+                    : (isDualSource || isProseSalvage || isNameEntity || isT2Confirmed || f.t2Failed === true)
                         ? FINAL_REDACTION_CONFIDENCE_THRESHOLD
                         : FALLBACK_CONFIDENCE_THRESHOLD;
             if (Number(f.score) < threshold) {
                 if (FASTVLM_DEBUG) console.log(
                     `[GATE6] filtered ${f.candidate_id ?? f.source_id}` +
                     ` score=${Number(f.score).toFixed(3)} < ${threshold}` +
-                    ` (${f.decision_source}${isDualSource ? "/dual" : ""}${isProseSalvage ? "/salvage" : ""}${isNameEntity ? "/name" : ""})`
+                    ` (${f.decision_source}${isDualSource ? "/dual" : ""}${isProseSalvage ? "/salvage" : ""}${isNameEntity ? "/name" : ""}${isT2Confirmed ? "/t2confirmed" : ""}${f.t2Failed === true ? "/failclosed" : ""})`
                 );
+                traceDrop(f, 6, `conf<${threshold}${isDualSource ? "/dual" : ""}${isNameEntity ? "/name" : ""}${isT2Confirmed ? "/t2confirmed" : ""}${f.t2Failed === true ? "/failclosed" : ""}`);
                 continue;
             }
         }
@@ -617,10 +675,15 @@ function applySafetyGates(findings, evidence, imageWidth, imageHeight) {
     const deduped = [];
     for (const f of filtered) {
         const nt = normalizeCandidateText(f.text);
+        // Spacing-insensitive twin of the includes below: OCR spacing splits
+        // ("Tamluk @ 2019" vs "Tamluk@2019") must not double-redact the same
+        // region (mirrors isContained in heuristics.js).
+        const nft = nt.replace(/\s+/g, "");
         let contained = false;
         for (const k of deduped) {
             const kText = normalizeCandidateText(k.text);
-            if (kText.includes(nt) && nt !== kText) {
+            const kft = kText.replace(/\s+/g, "");
+            if (((kText.includes(nt) && nt !== kText) || (kft.includes(nft) && nft !== kft && nft && kft)) || (nt === kText) || (nft === kft && nft)) {
                 const sameOcr = (f.ocr_ids || []).some((id) => (k.ocr_ids || []).includes(id));
                 const overlap = f.bbox && k.bbox ? !(f.bbox[2] < k.bbox[0] || f.bbox[0] > k.bbox[2] || f.bbox[3] < k.bbox[1] || f.bbox[1] > k.bbox[3]) : false;
                 if (sameOcr || overlap) { contained = true; break; }
@@ -632,7 +695,9 @@ function applySafetyGates(findings, evidence, imageWidth, imageHeight) {
             }
         }
         if (!contained) deduped.push(f);
+        else traceDrop(f, 4, "contained");
     }
+    console.log(`[TRACE] gates kept ${deduped.length}/${findings.length}${findings.length ? `: ${deduped.map((d) => d.candidate_id ?? d.source_id).join(",")}` : ""}`);
     return deduped;
 }
 
@@ -743,6 +808,19 @@ function adjudicateOrFallback({
 
     const fallback = [];
 
+    // Fail-closed doctrine (PII-leak fix): when T2 was attempted but produced
+    // nothing usable (error/load_failed/timeout/validation_failed/garbage),
+    // the old 0.72 single-source floor in Gate 6 dropped nearly everything
+    // (ambiguous: 4 fused -> 1 name-only finding = a leak). A T2 failure must
+    // never mean less protection: every fused candidate at/above the floor F
+    // (0.50) is kept. Geometry/plausibility gates still apply — fail-closed
+    // never invents a bbox. "skipped" (T2 never fired: clean pages) keeps the
+    // old thresholds; only attempted-but-failed gets the floor. Crop-check
+    // statuses ("candidate_checks", "partial") count as attempted here —
+    // harmless: HIGH passes normal thresholds by construction and confirmed
+    // items carry _t2_confirmed, so the floor only ever nets stragglers.
+    const t2Failed = !!fastvlmResult && !["ok", "skipped"].includes(fastvlmResult.status);
+
     for (
         const candidate
             of fusedCandidates || []
@@ -794,9 +872,18 @@ function adjudicateOrFallback({
                 candidate.ocr_ids,
 
             // Preserve sources so Gate 6 in applySafetyGates can apply
-            // the dual-source threshold (NER + deterministic → 0.5 instead of 0.72)
+            // the dual-source threshold (NER + deterministic → 0.5 instead of 0.72).
+            // Fail-closed: when T2 was attempted but failed, every item keeps
+            // the 0.50 floor regardless of source count (see Gate 6).
             sources:
                 candidate.sources ?? [],
+
+            t2Failed,
+
+            // T2 crop-check confirmation (see Gate 6): a "yes" verdict on a
+            // legible native-res crop clears the 0.5 floor honestly.
+            _t2_confirmed:
+                candidate._t2_confirmed === true,
 
             reason:
                 candidate.reason ??

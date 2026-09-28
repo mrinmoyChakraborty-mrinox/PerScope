@@ -327,15 +327,15 @@ export function reconstructDocument(segments) {
  * document-style labels; the password/secret family here is DOM-first.)
  */
 export const SECRET_LABEL_VOCABULARY = [
-  { match: ["password", "passwd", "pwd", "passcode"], type: "PASSWORD" },
+  { match: ["password", "passwd", "pwd", "passcode", "gate pass"], type: "PASSWORD", valueTest: /@|(?=.*[a-zA-Z])(?=.*\d).{6,}/ },
   { match: ["one time password", "one-time password", "otp"], type: "OTP" },
   { match: ["pin number", "pin"], type: "PIN" },
-  { match: ["email address", "e-mail", "email"], type: "EMAIL_ID" },
-  { match: ["phone number", "mobile number", "contact number", "telephone", "mobile", "phone"], type: "PHONE_NUMBER" },
+  { match: ["email address", "e-mail", "email"], type: "EMAIL_ID", valueTest: /@/ },
+  { match: ["phone number", "mobile number", "contact number", "telephone", "mobile", "phone"], type: "PHONE_NUMBER", valueTest: (v) => String(v).replace(/\D/g, "").length >= 7 },
   { match: ["upi id", "upi", "vpa"], type: "UPI_VPA" },
   { match: ["account number", "account no", "acct"], type: "BANK_ACCOUNT" },
-  { match: ["card number"], type: "CARD_NUMBER" },
-  { match: ["ifsc"], type: "IFSC_CODE" },
+  { match: ["card number"], type: "CARD_NUMBER", valueTest: /\d{4}/ },
+  { match: ["ifsc"], type: "IFSC_CODE", valueTest: /^[A-Z]{4}0[A-Z0-9]{6}$/i },
   { match: ["date of birth", "birth date", "dob"], type: "DATE_OF_BIRTH" },
   { match: ["aadhaar", "aadhar", "uidai"], type: "AADHAAR" },
   { match: ["passport number", "passport no"], type: "PASSPORT_NUMBER" },
@@ -355,21 +355,76 @@ function escapeRegExp(s) {
 
 const SECRET_LABEL_PATTERNS = SECRET_LABEL_VOCABULARY.map((entry) => {
   const alts = [...entry.match].sort((a, b) => b.length - a.length).map(escapeRegExp);
-  return { type: entry.type, re: new RegExp(`\\b(?:${alts.join("|")})\\b`) };
+  return { type: entry.type, valueTest: entry.valueTest ?? null, re: new RegExp(`\\b(?:${alts.join("|")})\\b`) };
 });
 
 /**
  * Match secret-label vocabulary against free text. Returns
- * { label, type } on first (longest-phrase-first) hit, else null.
+ * { label, type, valueTest } on first (longest-phrase-first) hit, else null.
+ *
+ * Lead-or-validate doctrine (M3, mirrors image findFieldLabelMatch): a label
+ * word buried in prose ("email" in "an email, just a filename", 5/30 chars)
+ * must not anchor. Exact matches always pass; substring hits need coverage
+ * (matched label >= 40% of normalized text). Low-coverage prose labels may
+ * still anchor when the VALUE validates for the type (enforced by callers
+ * via valueTest — e.g. "gate pass ...: Tamluk@2019" passes on the @).
  */
 export function findSecretLabelMatch(text) {
   const norm = normalizeSecretLabel(text);
   if (!norm) return null;
-  for (const { type, re } of SECRET_LABEL_PATTERNS) {
+  let weak = null;
+  for (const { type, valueTest, re } of SECRET_LABEL_PATTERNS) {
     const m = norm.match(re);
-    if (m) return { label: m[0], type };
+    if (!m) continue;
+    if (norm === m[0]) return { label: m[0], type, valueTest, weak: false };
+    if (m[0].length / norm.length >= 0.4) return { label: m[0], type, valueTest, weak: false };
+    if (!weak) weak = { label: m[0], type, valueTest, weak: true };
+  }
+  return weak;
+}
+
+function valuePassesSecretTest(hit, value) {
+  if (!hit || !hit.valueTest) return null;
+  const t = hit.valueTest;
+  const v = String(value ?? "");
+  if (t instanceof RegExp) return t.test(v);
+  if (typeof t === "function") {
+    try {
+      return !!t(v);
+    } catch {
+      return false;
+    }
   }
   return null;
+}
+
+/* Spoken/obfuscated email spans ("jeet dot routh at gmail") for the DOM
+   path. piidetector.js is a fixed-contract dependency (do not modify), so
+   this lives extension-side: runTier0OnSegments merges these spans into the
+   piidetector detections before redactPII, using the existing EMAIL_ID
+   replacement — no new format, no lib change. Dot-chain required on at
+   least one side keeps "meet me at noon" out. */
+const SPOKEN_EMAIL_RE = /\b[a-z0-9._-]+(?:\s+dot\s+[a-z0-9._-]+)+\s+at\s+[a-z0-9-]+(?:\s+dot\s+[a-z0-9-]+)*\b/gi;
+
+export function extractSpokenEmailSpans(text) {
+  const src = String(text ?? "");
+  const spans = [];
+  SPOKEN_EMAIL_RE.lastIndex = 0;
+  let m;
+  while ((m = SPOKEN_EMAIL_RE.exec(src)) !== null) {
+    const value = m[0];
+    if (value.length < 6 || value.length > 80) continue;
+    spans.push({
+      type: "EMAIL_ID",
+      value,
+      start: m.index,
+      end: m.index + value.length,
+      confidence: 0.85,
+      spoken: true,
+    });
+    if (value.length === 0) SPOKEN_EMAIL_RE.lastIndex++;
+  }
+  return spans;
 }
 
 /**
@@ -395,7 +450,7 @@ export function isBareLabelSegment(text) {
   const norm = normalizeSecretLabel(text);
   if (!norm || norm.length > 60) return null;
   const hit = findSecretLabelMatch(norm);
-  if (!hit) return null;
+  if (!hit || hit.weak) return null;
   const remainder = norm.replace(hit.label, "").replace(/[:\s]+/g, " ").trim();
   if (remainder && isPlausibleValueDom(remainder)) return null;
   return hit;
@@ -492,6 +547,10 @@ function splitLabelValueSegment(seg) {
   const hit = findSecretLabelMatch(labelPart);
   if (!hit) return null;
   if (!isPlausibleValueDom(valuePart)) return null;
+  // Lead-or-validate: a weak (prose-embedded) label anchors ONLY when the
+  // value validates for the type — "gate pass ...: Tamluk@2019" passes on
+  // the @; "an email, just a filename: quarterly....pdf" fails it.
+  if (hit.weak && valuePassesSecretTest(hit, valuePart) !== true) return null;
   const valueLabelHit = findSecretLabelMatch(valuePart);
   if (valueLabelHit && !isPlausibleValueDom(valuePart.replace(valueLabelHit.label, ""))) {
     return null; // value side is itself just a label — leave for neighbor pass
