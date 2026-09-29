@@ -1,9 +1,12 @@
-# Ship only the static landing page to Vercel.
 # The repo root contains heavy native deps (sharp, onnxruntime),
-# multi-GB extension/docs folders and node_modules — none of which
-# the landing page needs. Ignoring them keeps uploads fast and
-# prevents Vercel from running a needless (and failing) install.
+# multi-GB extension/models folders and node_modules — none of which
+# any Vercel deployment needs. The docs project (Root Directory=docs)
+# MUST stay shippable: docs/package.json missing from the upload fails
+# the install with ENOENT (seen 2026-09-29). Landing_page/ stays
+# shippable for the static landing project.
 *
 !Landing_page/
 !Landing_page/**
 !vercel.json
+!docs/
+!docs/**
