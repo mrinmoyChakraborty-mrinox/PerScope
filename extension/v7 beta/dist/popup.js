@@ -915,4 +915,4 @@ document.getElementById("demoStates").addEventListener("click", (e) => {
   await initDeviceStatus();
   await refreshBridgeStatus();
 })();
-;globalThis.__PERSCOPE_BUILD={"commit":"43bed93","time":"2026-09-28T18:53:33.220Z"};
+;globalThis.__PERSCOPE_BUILD={"commit":"cf88751","time":"2026-09-29T18:55:43.197Z"};

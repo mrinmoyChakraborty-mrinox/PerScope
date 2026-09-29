@@ -13,3 +13,5 @@ docs/.next/
 docs/out/
 models
 .playwright-mcp/
+# Packaged extension releases (large, built on demand via npm run pack)
+extension/v7 beta/releases/

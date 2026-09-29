@@ -1,6 +1,6 @@
 import * as esbuild from "esbuild";
 import { rmSync, mkdirSync, copyFileSync, cpSync, existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { resolve, dirname } from "node:path";
+import { resolve, dirname, sep } from "node:path";
 import { execSync } from "node:child_process";
 
 const root = resolve(import.meta.dirname);
@@ -132,7 +132,14 @@ const requiredModelDirs = ["paddleocr", "blazeface", "ettin-68m-nemotron-pii-onn
 for (const sub of requiredModelDirs) {
   const srcSub = resolve(root, "models", sub);
   if (existsSync(srcSub)) {
-    cpSync(srcSub, resolve(dist, "models", sub), { recursive: true, dereference: true });
+    // Ettin ships WITHOUT its onnx/ subdir (model.onnx + model_q4.onnx,
+    // ~523MB): upstream-repo strays that no code path loads (verified:
+    // zero references in src/; loader reads root model.onnx via
+    // model_file_name "model" + subfolder ""). Source files stay on disk.
+    const skipEttinOnnxSubdir = sub === "ettin-68m-nemotron-pii-onnx"
+      ? { filter: (s) => !s.endsWith(`${srcSub}${sep}onnx`) && !s.startsWith(`${srcSub}${sep}onnx${sep}`) }
+      : {};
+    cpSync(srcSub, resolve(dist, "models", sub), { recursive: true, dereference: true, ...skipEttinOnnxSubdir });
     console.log(`[BUILD] Copied models/${sub} to dist/models/${sub}`);
   }
 }

@@ -21,6 +21,16 @@ and Playground described below are the locked next-phase plan built on top of it
 see **Section 7** for the full spec, current status of each piece, and what each
 contributor should build next.
 
+## Download (v1.0.1 early beta, image pipeline)
+
+Prebuilt, load-unpacked Chrome extension — no build step needed:
+
+- [perscope-v1.0.1-slim.zip](https://github.com/mrinmoyChakraborty-mrinox/PerScope/releases/download/early_beta/perscope-v1.0.1-slim.zip) (~277 MB) — PaddleOCR + BlazeFace + Ettin NER. Everyday use; FastVLM downloads once on first gated use, then caches.
+- [perscope-v1.0.1-full.zip](https://github.com/mrinmoyChakraborty-mrinox/PerScope/releases/download/early_beta/perscope-v1.0.1-full.zip) (~909 MB) — Slim + FastVLM 0.5B bundled. Fully offline.
+- [Release page](https://github.com/mrinmoyChakraborty-mrinox/PerScope/releases/tag/early_beta) — notes, hashes, install steps.
+
+Install: unzip → `chrome://extensions` → Developer mode → Load unpacked → select the folder.
+
 ## 1. Overview
 
 Given an input image (file upload or visible-tab capture), PerScope:
