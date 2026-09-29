@@ -212,22 +212,6 @@ main {
   color: var(--color-on-surface);
 }
 
-.version-badge {
-  display: none;
-  align-items: center;
-  padding: var(--space-xs) var(--space-sm);
-  border-radius: var(--radius);
-  background-color: var(--color-surface-container-low);
-  border: 1px solid rgba(60, 74, 70, 0.4);
-  font-family: var(--font-label);
-  font-size: var(--fs-label-sm);
-  font-weight: 600;
-  letter-spacing: var(--ls-label-sm);
-  color: var(--color-primary);
-  text-transform: uppercase;
-}
-@media (min-width: 640px) { .version-badge { display: inline-flex; } }
-
 .main-nav {
   display: none;
   align-items: center;
@@ -259,15 +243,6 @@ main {
 .github-link:hover { color: var(--color-on-surface); }
 @media (min-width: 768px) { .github-link { display: inline-flex; } }
 
-.avatar-btn {
-  width: 2rem; height: 2rem;
-  border-radius: var(--radius-full);
-  background-color: var(--color-primary);
-  display: flex; align-items: center; justify-content: center;
-  color: var(--color-on-primary);
-  flex-shrink: 0;
-}
-
 .mobile-menu-toggle {
   display: inline-flex;
   align-items: center;
@@ -284,7 +259,6 @@ main {
 @media (max-width: 480px) {
   .header-inner { gap: var(--space-sm); }
   .header-actions { gap: var(--space-sm); }
-  .avatar-btn { display: none; }
 }
 
 .mobile-nav {
@@ -1166,22 +1140,6 @@ main {
 .cta-link-secondary:hover { color: var(--color-primary); }
 .cta-link-secondary .material-symbols-outlined { transition: transform 0.2s ease; }
 .cta-link-secondary:hover .material-symbols-outlined { transform: translateX(4px); }
-
-.cta-meta {
-  margin-top: 3rem;
-  display: flex;
-  align-items: center;
-  gap: var(--space-md);
-  color: var(--color-on-surface-variant);
-  font-family: var(--font-label);
-  font-size: var(--fs-label-md);
-  letter-spacing: var(--ls-label-md);
-  flex-wrap: wrap;
-  justify-content: center;
-}
-.cta-meta-links { margin-top: 1rem; }
-.dot-sep { width: 4px; height: 4px; border-radius: 50%; background-color: var(--color-outline-variant); }
-.cta-meta a:hover { color: var(--color-primary); }
 
 /* ==========================================================================
    Footer
