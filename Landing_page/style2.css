@@ -514,20 +514,15 @@ main {
   white-space: nowrap;
 }
 
+/* Aspect ratio matches before.png / after.png (1011x663) so the two
+   full-bleed captures align pixel-perfect under the slider clip. */
 .demo-canvas {
   position: relative;
   width: 100%;
-  height: 400px;
+  aspect-ratio: 1011 / 663;
   background-color: var(--color-surface-container-lowest);
   overflow: hidden;
 }
-@media (min-width: 640px) { .demo-canvas { height: 430px; } }
-/* Below 640px the mail header wraps (priority badge drops to its own line)
-   and the address/value tags take more vertical room, so the fixed-height
-   canvas needs to grow at narrower widths to avoid clipping the mail body. */
-@media (max-width: 639px) { .demo-canvas { height: 480px; } }
-@media (max-width: 479px) { .demo-canvas { height: 580px; } }
-@media (max-width: 359px) { .demo-canvas { height: 660px; } }
 
 .demo-layer {
   position: absolute;
@@ -544,6 +539,28 @@ main {
 .demo-layer-redacted {
   background-color: var(--color-surface-container-lowest);
   clip-path: polygon(52% 0, 100% 0, 100% 100%, 52% 100%);
+}
+
+/* Full-bleed before/after capture layers */
+.demo-layer--image {
+  padding: 0;
+  justify-content: flex-end;
+}
+.demo-image {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  pointer-events: none;
+}
+.mail-footer--overlay {
+  position: absolute;
+  left: 0; right: 0; bottom: 0;
+  padding: var(--space-sm) var(--space-md);
+  background-color: rgba(13, 14, 17, 0.85);
+  backdrop-filter: blur(6px);
+  border-top: 1px solid rgba(60, 74, 70, 0.4);
 }
 
 .mail-header {

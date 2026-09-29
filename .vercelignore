@@ -1,0 +1,9 @@
+# Ship only the static landing page to Vercel.
+# The repo root contains heavy native deps (sharp, onnxruntime),
+# multi-GB extension/docs folders and node_modules — none of which
+# the landing page needs. Ignoring them keeps uploads fast and
+# prevents Vercel from running a needless (and failing) install.
+*
+!Landing_page/
+!Landing_page/**
+!vercel.json
