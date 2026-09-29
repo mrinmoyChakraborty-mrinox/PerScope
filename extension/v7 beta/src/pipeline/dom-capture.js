@@ -26,6 +26,7 @@ import {
   getBlockRole,
   reconstructDocument,
   extractSpokenEmailSpans,
+  extractCredentialSpans,
 } from "./dom-heuristics.js";
 
 export const IGNORED_TAGS = new Set([
@@ -424,6 +425,13 @@ export function runTier0OnSegments(segments, detector) {
     // merge spans that don't overlap a piidetector hit, then redact jointly
     // so offsets stay consistent (redactPII sorts right-to-left).
     for (const span of extractSpokenEmailSpans(text)) {
+      const collides = detections.some((d) => span.start < d.end && span.end > d.start);
+      if (!collides) detections.push(span);
+    }
+    // Freestanding credential spans (same merge doctrine): piidetector
+    // PASSWORD needs a password:/passwd:/pwd: label and EMAIL_ID needs a
+    // dotted TLD, so bare "Tamluk@2019" survives detectPII unclaimed.
+    for (const span of extractCredentialSpans(text)) {
       const collides = detections.some((d) => span.start < d.end && span.end > d.start);
       if (!collides) detections.push(span);
     }

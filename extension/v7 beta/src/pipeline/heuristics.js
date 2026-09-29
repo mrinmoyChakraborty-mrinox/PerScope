@@ -42,6 +42,28 @@ function estimateTextSubBBox(item, targetText) {
         // Normalized whitespace matching: cleanText already collapses,
         // so "Certificate   No:   ABC123XY98" -> "Certificate No: ABC123XY98"
         let startIndex = lowerFull.indexOf(lowerTarget);
+        // Spacing-split values: item "W BSC0LM 1234" vs canonical target
+        // "WBSC0LM1234" (live IFSC miss 2026-09-28 — normalizeValue outputs
+        // spaceless values individual OCR boxes never contain contiguously).
+        // Collapse both, locate exactly, map collapsed span back to original
+        // offsets for a precise proportional box (not the lossy approx below).
+        if (startIndex < 0) {
+            const flatFull = lowerFull.replace(/\s+/g, "");
+            const flatTarget = lowerTarget.replace(/\s+/g, "");
+            const flatIdx = flatTarget ? flatFull.indexOf(flatTarget) : -1;
+            if (flatIdx >= 0) {
+                let origStart = -1, origEnd = -1, ci = 0;
+                for (let oi = 0; oi < fullText.length; oi++) {
+                    if (/\s/.test(fullText[oi])) continue;
+                    if (ci === flatIdx) origStart = oi;
+                    if (ci === flatIdx + flatTarget.length - 1) { origEnd = oi + 1; break; }
+                    ci++;
+                }
+                if (origStart >= 0 && origEnd > origStart) {
+                    return _proportionalBBox([x1, y1, x2, y2], origStart / fullText.length, origEnd / fullText.length);
+                }
+            }
+        }
         // If not found with cleanText, try whitespace-normalized raw fallback
         if (startIndex < 0) {
             const wsFull = rawFull.replace(/\s+/g, " ").trim().toLowerCase();
@@ -225,6 +247,37 @@ function resolveSensitiveValueBBox({ text, ocrIds, evidence, fusedCandidate = nu
                         return [...fusedCandidate.bbox.map(Number)];
                     } else {
                         if (FASTVLM_DEBUG) console.log(`[SECURITY] rejecting non-value-specific fused bbox`);
+                    }
+                }
+                // Fragment-union trust (IFSC-split fix 2026-09-28): the
+                // canonical value spans fragments ("W BSC0LM 1234") so no
+                // single OCR item contains it and per-id resolution above
+                // always skips. Trust the fused (union/estimated) box ONLY
+                // when the collapsed value is fragmented across the ids —
+                // prose lines contain themselves spaced, so they can never
+                // take this path — and only when the box is not a whole-line
+                // box holding much more text (same doctrine as above).
+                if (ocrIds && ocrIds.length > 0) {
+                    const flatWant = want.toLowerCase().replace(/\s+/g, "");
+                    const flats = ocrIds.map((oid) => cleanText(ocrById.get(oid)?.text ?? "").toLowerCase().replace(/\s+/g, ""));
+                    const singleHasSpaced = ocrIds.some((oid) => cleanText(ocrById.get(oid)?.text ?? "").toLowerCase().includes(want.toLowerCase()));
+                    if (flatWant && flats.join("").includes(flatWant) && !singleHasSpaced) {
+                        const fb = fusedCandidate.bbox.map(Number);
+                        if (fb.every(Number.isFinite)) {
+                            let wholeLine = false;
+                            for (const oid of ocrIds) {
+                                const oi = ocrById.get(oid);
+                                if (!oi?.bbox) continue;
+                                const ob = oi.bbox.map(Number);
+                                if (!ob.every(Number.isFinite)) continue;
+                                const same = ob.every((v, i) => Math.abs(v - fb[i]) < 2);
+                                if (same && cleanText(oi.text).length > want.length + 10) { wholeLine = true; break; }
+                            }
+                            if (!wholeLine) {
+                                if (FASTVLM_DEBUG) console.log(`[GEOMETRY] Fallback to fragment-union fused bbox`);
+                                return [...fb];
+                            }
+                        }
                     }
                 }
             }
@@ -711,6 +764,13 @@ function extractLabelValueSideBySide(orderedItems, rows) {
                 const gap = valueItem.bbox[0] - labelItem.bbox[2];
                 if (gap < -5) continue; // overlapping
                 if (!isPlausibleValue(valueItem.text)) continue;
+                // Strict-type guard (live FP fix 2026-09-28): plausibility
+                // alone let "IFSC looks like ..." emit IFSC="looks" at 0.92.
+                // fieldValuePasses returning explicit false (IFSC shape,
+                // phone digits, @-email, date shape) vetoes; null (unknown
+                // types) preserves old behavior. Spoken emails stay covered
+                // by the unlabeled sub-pass (no label needed).
+                if (fieldValuePasses(labelMatch.field_type, valueItem.text) === false) continue;
                 // also need horizontal proximity â€” not across whole page without gap check
                 candidates.push({
                     source: "deterministic_context",
@@ -752,6 +812,8 @@ function extractLabelValueVertical(orderedItems, rows) {
                 const centerDx = Math.abs((labelItem.bbox[0] + labelItem.bbox[2]) / 2 - (valueItem.bbox[0] + valueItem.bbox[2]) / 2);
                 if (ratio < 0.15 && centerDx > maxW * 0.8) continue;
                 if (!isPlausibleValue(valueItem.text)) continue;
+                // Same strict-type guard as side-by-side (IFSC="looks" class).
+                if (fieldValuePasses(labelMatch.field_type, valueItem.text) === false) continue;
                 candidates.push({
                     source: "deterministic_context",
                     ocr_ids: [labelItem.id, valueItem.id],
@@ -925,7 +987,18 @@ const UNLABELED_FORMAT_TYPES = [
         confidence: 0.95,
         // Exact format port (piidetector IFSC_CODE shape): 4 letters + 0 +
         // 6 alphanumerics. Catches WBSC0LM1234 with no label needed.
-        regexes: [/\b[A-Z]{4}0[A-Z0-9]{6}\b/gi],
+        // Spaced variant (live miss 2026-09-28: OCR split "W BSC0LM 1234"
+        // across fragments at 959px width — condensed-row glues words and
+        // kills the \b the exact pattern needs, per-item can't span
+        // fragments). The 4-letter bank is UPPERCASE-only and space-splittable
+        // ([A-Z](?:\s*[A-Z]){3}): this is what keeps "Call 0123456" (lowercase
+        // prose) out while "W BSC" assembles. All-caps prose + 0 + 6 alnum
+        // remains a stated residual. Runs on spaced text everywhere;
+        // normalizeValue collapses to canonical, validateValue enforces
+        // the strict shape on the collapsed form.
+        regexes: [/\b[A-Z]{4}0[A-Z0-9]{6}\b/gi, /\b[A-Z](?:\s*[A-Z]){3}\s*0(?:\s*[A-Za-z0-9]){6}\b/g],
+        normalizeValue: (v) => v.replace(/\s+/g, ""),
+        validateValue: (v) => /^[A-Z]{4}0[A-Z0-9]{6}$/i.test(v.replace(/\s+/g, "")),
     },
     {
         field_type: "TRACKING_NUMBER",
@@ -985,6 +1058,11 @@ function extractUnlabeledFormatCandidates(ocrItems) {
                         spanStart = m.index + full.indexOf(value);
                     }
                     value = cleanText(value);
+                    if (!value) continue;
+                    // Canonicalize glue-sensitive values (IFSC "W BSC0LM 1234"
+                    // -> "WBSC0LM1234") before validation so spaced matches
+                    // face the strict shape, not the spaced accident.
+                    if (type.normalizeValue) value = type.normalizeValue(value);
                     if (!value) continue;
                     if (type.skipValue && type.skipValue(value)) continue;
                     if (type.validateValue && !type.validateValue(value)) continue;
@@ -1087,11 +1165,23 @@ function extractRowJoinedFormats(rows) {
         // whole boxes).
         let condensed = "";
         const prov = [];
+        // Spaced mirror of the visual line (single-space item joins +
+        // original intra-item spaces) with per-char mapping into condensed
+        // coords. Space-tolerant patterns match here; condensed-only
+        // matching glues words ("likeWBSC...") and kills the \b exact
+        // patterns need (IFSC live miss 2026-09-28).
+        let spaced = "";
+        const spMap = [];
+        let firstItem = true;
         for (const it of rowItems) {
+            if (!firstItem) { spaced += " "; spMap.push(-1); }
+            firstItem = false;
             const t = String(it.text ?? "");
             for (let oi = 0; oi < t.length; oi++) {
                 const ch = t[oi];
-                if (/\s/.test(ch)) continue;
+                if (/\s/.test(ch)) { spaced += ch; spMap.push(-1); continue; }
+                spaced += ch;
+                spMap.push(condensed.length);
                 condensed += ch;
                 prov.push({ it, off: oi });
             }
@@ -1112,6 +1202,8 @@ function extractRowJoinedFormats(rows) {
                     }
                     value = cleanText(value);
                     if (!value) continue;
+                    if (type.normalizeValue) value = type.normalizeValue(value);
+                    if (!value) continue;
                     if (type.skipValue && type.skipValue(value)) continue;
                     if (type.validateValue && !type.validateValue(value)) continue;
                     if (type.field_type === "EMAIL") {
@@ -1119,6 +1211,50 @@ function extractRowJoinedFormats(rows) {
                     } else if (!isPlausibleValue(value)) continue;
                     raw.push({ field_type: type.field_type, confidence: type.confidence, value, start: spanStart, end: spanStart + value.length });
                     if (full.length === 0) re.lastIndex++;
+                }
+            }
+        }
+        // Spaced-row pass: same patterns against the visual line with real
+        // spaces ("IFSC looks like W BSC0LM 1234 verify"). Match spans map
+        // back to condensed coords via spMap so boxes, ids and the overlap
+        // dedup below stay unified; values come from the condensed slice
+        // (canonical, spaceless). Duplicates of condensed matches collapse
+        // in kept-overlap; validators + gates still apply.
+        for (const type of UNLABELED_FORMAT_TYPES) {
+            for (const re of type.regexes) {
+                re.lastIndex = 0;
+                let m;
+                while ((m = re.exec(spaced)) !== null) {
+                    const full = m[0];
+                    if (full.length === 0) { re.lastIndex++; continue; }
+                    let vStart = m.index;
+                    if (type.valueGroup != null && m[type.valueGroup] != null) {
+                        vStart = m.index + full.indexOf(m[type.valueGroup]);
+                    }
+                    const vLen = (type.valueGroup != null && m[type.valueGroup] != null ? m[type.valueGroup] : full).length;
+                    let cs = -1, ce = -1;
+                    for (let si = vStart; si < vStart + vLen && si < spMap.length; si++) {
+                        const ci = spMap[si];
+                        if (ci < 0) continue;
+                        if (cs < 0) cs = ci;
+                        ce = ci + 1;
+                    }
+                    if (cs < 0 || ce <= cs) continue;
+                    // True-span value: the spaced slice preserves original
+                    // spacing ("jeet dot routh at gmail", not the glued
+                    // condensed form); boxes still come from condensed coords
+                    // above. normalizeValue canonicalizes glue-sensitive
+                    // types (IFSC) back to spaceless afterwards.
+                    let value = cleanText(spaced.slice(vStart, vStart + vLen));
+                    if (!value) continue;
+                    if (type.normalizeValue) value = type.normalizeValue(value);
+                    if (!value) continue;
+                    if (type.skipValue && type.skipValue(value)) continue;
+                    if (type.validateValue && !type.validateValue(value)) continue;
+                    if (type.field_type === "EMAIL") {
+                        if (!/[a-z0-9]/i.test(value) || value.length < 6 || value.length > 80) continue;
+                    } else if (!isPlausibleValue(value)) continue;
+                    raw.push({ field_type: type.field_type, confidence: type.confidence, value, start: cs, end: ce });
                 }
             }
         }

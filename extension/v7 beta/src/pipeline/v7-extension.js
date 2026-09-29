@@ -41,6 +41,7 @@ import {
 import {
   buildFastVLMRedactionEvidence,
   buildCandidateCheckPrompt,
+  buildTemplateCaption,
   buildPerceptionPrompt,
 } from "./prompts.js";
 import {
@@ -108,6 +109,9 @@ const FASTVLM_CANDIDATE_TIMEOUT_MS = 30_000;
 // Native-res crop margin per side (locked 25%): short numeric spans
 // ("3524") need surrounding context to be legible; clamped to the frame.
 const T2_CROP_MARGIN = 0.25;
+// Async-caption decode budget (2026-09-28): one scene sentence, non-blocking.
+const CAPTION_MAX_TOKENS = 40;
+const CAPTION_TIMEOUT_MS = 60_000;
 
 // Verbose per-item OCR/NER/heuristics/finding dumps are useful when actively
 // debugging the pipeline but are pure overhead (console + string building +
@@ -380,6 +384,14 @@ async function loadNER(computeDevice) {
     // which crash the threaded WASM build ("operation does not support unaligned
     // accesses" — seen in MV3 offscreen). WebGPU handles int64 natively, so it is
     // the primary EP; single-thread WASM is the CPU fallback (no SAB/atomics path).
+    // iGPU A/B outcome 2026-09-28: the buffer-cache bucket modes +
+    // validationMode:wgpuOnly from the ORT Web docs are NOT honored by the
+    // bundled onnxruntime-web 1.29.0 — verified in dist source: the webgpu
+    // EP branch accepts exactly one extra key (preferredLayout NCHW/NHWC)
+    // and silently ignores the rest, so the A/B would have compared
+    // identical sessions. Bare ["webgpu"] stands; re-check after an ORT
+    // upgrade. preferredLayout stays default (matmul-dominated decoder
+    // wants NCHW; NHWC helps vision only — parked experiment).
     const webgpuSessionOptions = { executionProviders: ["webgpu"] };
     const wasmSessionOptions = { executionProviders: ["wasm"], intraOpNumThreads: 1, interOpNumThreads: 1 };
     console.log(`[NER] Loading Ettin NER: ${modelId} (${targetDevice})`);
@@ -854,6 +866,77 @@ async function runFastVLMCandidateChecks({ imageBlob, imageW, imageH, reviewCand
 }
 
 /**
+ * Async VLM caption on the ALREADY-REDACTED image (2026-09-28, user's
+ * corrected architecture). Runs strictly after output delivery — never on
+ * the critical path. Redacted pixels can't leak, so this prompt carries
+ * no constraints, no rule 10, no scrubbing: "describe this image" is the
+ * whole instruction, and whatever prose comes back is safe by
+ * construction. Skips (template stands) while a T2 cooldown is armed or
+ * the model is unreachable — caption is UI sugar, never load-bearing.
+ * Scene-level only: downscaled to 448px like the retired call.
+ */
+export async function generateCaptionOnRedactedImage(redactedBlob, computeDevice) {
+  if (Date.now() < _fastvlmCooldownUntil) {
+    throw new Error("caption skipped: T2 cooling down after abandoned generate");
+  }
+  const device = computeDevice && computeDevice.type === "webgpu" ? computeDevice : { type: "webgpu", label: "caption" };
+  const fastvlm = await loadFastVLM(device);
+  const bitmap = await createImageBitmap(redactedBlob);
+  let frameBlob = redactedBlob;
+  try {
+    const max = 448;
+    if (bitmap.width > max || bitmap.height > max) {
+      const scale = Math.min(max / bitmap.width, max / bitmap.height);
+      const canvas = new OffscreenCanvas(Math.max(1, Math.round(bitmap.width * scale)), Math.max(1, Math.round(bitmap.height * scale)));
+      canvas.getContext("2d").drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+      frameBlob = await canvas.convertToBlob({ type: "image/png" });
+    }
+  } finally {
+    closeBitmap(bitmap);
+  }
+  const image = await load_image(frameBlob);
+  const messages = [{ role: "user", content: "<image>Describe this image briefly in one sentence." }];
+  const rendered = fastvlm.processor.apply_chat_template(messages, { add_generation_prompt: true });
+  const inputs = await fastvlm.processor(image, rendered, { add_special_tokens: false });
+  const inputLength = Number(inputs?.input_ids?.dims?.at(-1) ?? 0);
+  const generatePromise = fastvlm.model.generate({
+    ...inputs,
+    max_new_tokens: CAPTION_MAX_TOKENS,
+    do_sample: false,
+    repetition_penalty: 1.05,
+  });
+  generatePromise.catch(() => {});
+  let generated;
+  try {
+    generated = await Promise.race([
+      generatePromise,
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error(`caption generate timed out after ${CAPTION_TIMEOUT_MS}ms`)), CAPTION_TIMEOUT_MS),
+      ),
+    ]);
+  } catch (err) {
+    if (String(err?.message || "").includes("timed out")) {
+      _fastvlmCooldownUntil = Date.now() + FASTVLM_TIMEOUT_COOLDOWN_MS;
+    }
+    throw err;
+  }
+  disposeTensors(inputs);
+  let text = "";
+  try {
+    const generatedOnly = inputLength > 0 ? generated.slice(null, [inputLength, null]) : generated;
+    text = fastvlm.processor.batch_decode(generatedOnly, { skip_special_tokens: true })[0] ?? "";
+    if (generatedOnly && generatedOnly !== generated) disposeTensors({ generatedOnly });
+  } catch {
+    text = fastvlm.processor.batch_decode(generated, { skip_special_tokens: true })[0] ?? "";
+  } finally {
+    disposeTensors({ generated });
+  }
+  text = String(text).replace(/\s+/g, " ").trim().slice(0, 300);
+  if (!text) throw new Error("caption generate returned empty text");
+  return text;
+}
+
+/**
  * Main Pipeline Entry Point for Chrome Extension
  * @param {Blob|ArrayBuffer|string} inputImage
  * @param {Object} options
@@ -1175,14 +1258,21 @@ async function _runExtensionPipelineInner(inputImage, options = {}, onProgress =
   // above, so this is the steady number — residue here is a leak signal.
   const memAfter = heapSample();
 
-  // Centralized display caption: parsed.caption is already sanitized at the
-  // source, but the raw-prose fallback below is NOT — scrub it here so no
-  // unsanitized model text ever reaches evidence or the UI.
-  const _rawFallback =
-    fastvlmResult?.raw && !String(fastvlmResult.raw).trim().startsWith("{")
-      ? sanitizeCaption(String(fastvlmResult.raw).trim(), fastvlmEvidence)
-      : null;
-  const safeCaption = sanitizeCaption(fastvlmResult?.parsed?.caption || _rawFallback || "", fastvlmEvidence) || null;
+  // Centralized display caption: template-first architecture (2026-09-28).
+  // The template is instant, deterministic and unleakable (counts/types
+  // only) — it ships on the fast path so output never waits for the model.
+  // The legacy VLM-caption producers are gone (full-page call deleted, crop
+  // checks emit verdicts not prose); the async VLM caption, when requested,
+  // arrives later via CAPTION_RESULT and upgrades this string in the UI.
+  const templateCaption = buildTemplateCaption({
+    width: decoded.width,
+    height: decoded.height,
+    finalFindings,
+    faceCount: faceFindings.length,
+  });
+  const legacyCaption = sanitizeCaption(fastvlmResult?.parsed?.caption || "", fastvlmEvidence) || null;
+  const safeCaption = legacyCaption || templateCaption;
+  const captionSource = legacyCaption ? "fastvlm" : "template";
 
   // Assemble comprehensive evidence schema (100% v7.mjs parity)
   const evidenceOutput = {
@@ -1197,14 +1287,15 @@ async function _runExtensionPipelineInner(inputImage, options = {}, onProgress =
     },
     global_description: {
       caption: safeCaption,
-      source: "fastvlm",
+      source: captionSource,
       model: FASTVLM_MODEL,
       status: fastvlmResult?.status ?? "unknown",
+      captionPending: options.asyncCaption === true,
     },
     florence: {
       description: safeCaption ?? "",
       caption: safeCaption ?? "",
-      source: "fastvlm",
+      source: captionSource,
       model: FASTVLM_MODEL,
     },
     ocr: {

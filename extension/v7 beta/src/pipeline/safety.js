@@ -841,6 +841,8 @@ function adjudicateOrFallback({
             });
 
         if (!bbox) {
+            // Content-free: ids/types only, never values (mirrors [TRACE]).
+            console.log(`[TRACE] drop ${candidate.candidate_id}[${(candidate.candidate_types || []).join("+")}] gate=0 nobbox`);
             continue;
         }
 

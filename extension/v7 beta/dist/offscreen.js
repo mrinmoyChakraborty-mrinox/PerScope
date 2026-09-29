@@ -45494,6 +45494,26 @@ function estimateTextSubBBox(item, targetText) {
     if (width <= 0) return null;
     let startIndex = lowerFull.indexOf(lowerTarget);
     if (startIndex < 0) {
+      const flatFull = lowerFull.replace(/\s+/g, "");
+      const flatTarget = lowerTarget.replace(/\s+/g, "");
+      const flatIdx = flatTarget ? flatFull.indexOf(flatTarget) : -1;
+      if (flatIdx >= 0) {
+        let origStart = -1, origEnd = -1, ci = 0;
+        for (let oi = 0; oi < fullText.length; oi++) {
+          if (/\s/.test(fullText[oi])) continue;
+          if (ci === flatIdx) origStart = oi;
+          if (ci === flatIdx + flatTarget.length - 1) {
+            origEnd = oi + 1;
+            break;
+          }
+          ci++;
+        }
+        if (origStart >= 0 && origEnd > origStart) {
+          return _proportionalBBox([x1, y1, x2, y2], origStart / fullText.length, origEnd / fullText.length);
+        }
+      }
+    }
+    if (startIndex < 0) {
       const wsFull = rawFull.replace(/\s+/g, " ").trim().toLowerCase();
       const wsTarget = rawTarget.replace(/\s+/g, " ").trim().toLowerCase();
       const wsIdx = wsFull.indexOf(wsTarget);
@@ -45636,6 +45656,32 @@ function resolveSensitiveValueBBox({ text, ocrIds, evidence, fusedCandidate = nu
             return [...fusedCandidate.bbox.map(Number)];
           } else {
             if (FASTVLM_DEBUG) console.log(`[SECURITY] rejecting non-value-specific fused bbox`);
+          }
+        }
+        if (ocrIds && ocrIds.length > 0) {
+          const flatWant = want.toLowerCase().replace(/\s+/g, "");
+          const flats = ocrIds.map((oid) => cleanText(ocrById.get(oid)?.text ?? "").toLowerCase().replace(/\s+/g, ""));
+          const singleHasSpaced = ocrIds.some((oid) => cleanText(ocrById.get(oid)?.text ?? "").toLowerCase().includes(want.toLowerCase()));
+          if (flatWant && flats.join("").includes(flatWant) && !singleHasSpaced) {
+            const fb2 = fusedCandidate.bbox.map(Number);
+            if (fb2.every(Number.isFinite)) {
+              let wholeLine = false;
+              for (const oid of ocrIds) {
+                const oi = ocrById.get(oid);
+                if (!oi?.bbox) continue;
+                const ob2 = oi.bbox.map(Number);
+                if (!ob2.every(Number.isFinite)) continue;
+                const same = ob2.every((v, i) => Math.abs(v - fb2[i]) < 2);
+                if (same && cleanText(oi.text).length > want.length + 10) {
+                  wholeLine = true;
+                  break;
+                }
+              }
+              if (!wholeLine) {
+                if (FASTVLM_DEBUG) console.log(`[GEOMETRY] Fallback to fragment-union fused bbox`);
+                return [...fb2];
+              }
+            }
           }
         }
       }
@@ -45947,6 +45993,7 @@ function extractLabelValueSideBySide(orderedItems, rows) {
         const gap = valueItem.bbox[0] - labelItem.bbox[2];
         if (gap < -5) continue;
         if (!isPlausibleValue(valueItem.text)) continue;
+        if (fieldValuePasses(labelMatch.field_type, valueItem.text) === false) continue;
         candidates.push({
           source: "deterministic_context",
           ocr_ids: [labelItem.id, valueItem.id],
@@ -45984,6 +46031,7 @@ function extractLabelValueVertical(orderedItems, rows) {
         const centerDx = Math.abs((labelItem.bbox[0] + labelItem.bbox[2]) / 2 - (valueItem.bbox[0] + valueItem.bbox[2]) / 2);
         if (ratio < 0.15 && centerDx > maxW * 0.8) continue;
         if (!isPlausibleValue(valueItem.text)) continue;
+        if (fieldValuePasses(labelMatch.field_type, valueItem.text) === false) continue;
         candidates.push({
           source: "deterministic_context",
           ocr_ids: [labelItem.id, valueItem.id],
@@ -46075,6 +46123,8 @@ function extractUnlabeledFormatCandidates(ocrItems) {
           }
           value = cleanText(value);
           if (!value) continue;
+          if (type.normalizeValue) value = type.normalizeValue(value);
+          if (!value) continue;
           if (type.skipValue && type.skipValue(value)) continue;
           if (type.validateValue && !type.validateValue(value)) continue;
           if (type.field_type === "EMAIL") {
@@ -46149,11 +46199,25 @@ function extractRowJoinedFormats(rows) {
     const rowItems = [...row.items].sort((a, b) => a.bbox[0] - b.bbox[0]);
     let condensed = "";
     const prov = [];
+    let spaced = "";
+    const spMap = [];
+    let firstItem = true;
     for (const it3 of rowItems) {
+      if (!firstItem) {
+        spaced += " ";
+        spMap.push(-1);
+      }
+      firstItem = false;
       const t = String(it3.text ?? "");
       for (let oi = 0; oi < t.length; oi++) {
         const ch2 = t[oi];
-        if (/\s/.test(ch2)) continue;
+        if (/\s/.test(ch2)) {
+          spaced += ch2;
+          spMap.push(-1);
+          continue;
+        }
+        spaced += ch2;
+        spMap.push(condensed.length);
         condensed += ch2;
         prov.push({ it: it3, off: oi });
       }
@@ -46174,6 +46238,8 @@ function extractRowJoinedFormats(rows) {
           }
           value = cleanText(value);
           if (!value) continue;
+          if (type.normalizeValue) value = type.normalizeValue(value);
+          if (!value) continue;
           if (type.skipValue && type.skipValue(value)) continue;
           if (type.validateValue && !type.validateValue(value)) continue;
           if (type.field_type === "EMAIL") {
@@ -46181,6 +46247,42 @@ function extractRowJoinedFormats(rows) {
           } else if (!isPlausibleValue(value)) continue;
           raw.push({ field_type: type.field_type, confidence: type.confidence, value, start: spanStart, end: spanStart + value.length });
           if (full2.length === 0) re.lastIndex++;
+        }
+      }
+    }
+    for (const type of UNLABELED_FORMAT_TYPES) {
+      for (const re of type.regexes) {
+        re.lastIndex = 0;
+        let m;
+        while ((m = re.exec(spaced)) !== null) {
+          const full2 = m[0];
+          if (full2.length === 0) {
+            re.lastIndex++;
+            continue;
+          }
+          let vStart = m.index;
+          if (type.valueGroup != null && m[type.valueGroup] != null) {
+            vStart = m.index + full2.indexOf(m[type.valueGroup]);
+          }
+          const vLen = (type.valueGroup != null && m[type.valueGroup] != null ? m[type.valueGroup] : full2).length;
+          let cs3 = -1, ce = -1;
+          for (let si = vStart; si < vStart + vLen && si < spMap.length; si++) {
+            const ci = spMap[si];
+            if (ci < 0) continue;
+            if (cs3 < 0) cs3 = ci;
+            ce = ci + 1;
+          }
+          if (cs3 < 0 || ce <= cs3) continue;
+          let value = cleanText(spaced.slice(vStart, vStart + vLen));
+          if (!value) continue;
+          if (type.normalizeValue) value = type.normalizeValue(value);
+          if (!value) continue;
+          if (type.skipValue && type.skipValue(value)) continue;
+          if (type.validateValue && !type.validateValue(value)) continue;
+          if (type.field_type === "EMAIL") {
+            if (!/[a-z0-9]/i.test(value) || value.length < 6 || value.length > 80) continue;
+          } else if (!isPlausibleValue(value)) continue;
+          raw.push({ field_type: type.field_type, confidence: type.confidence, value, start: cs3, end: ce });
         }
       }
     }
@@ -46913,7 +47015,18 @@ var init_heuristics = __esm({
         confidence: 0.95,
         // Exact format port (piidetector IFSC_CODE shape): 4 letters + 0 +
         // 6 alphanumerics. Catches WBSC0LM1234 with no label needed.
-        regexes: [/\b[A-Z]{4}0[A-Z0-9]{6}\b/gi]
+        // Spaced variant (live miss 2026-09-28: OCR split "W BSC0LM 1234"
+        // across fragments at 959px width — condensed-row glues words and
+        // kills the \b the exact pattern needs, per-item can't span
+        // fragments). The 4-letter bank is UPPERCASE-only and space-splittable
+        // ([A-Z](?:\s*[A-Z]){3}): this is what keeps "Call 0123456" (lowercase
+        // prose) out while "W BSC" assembles. All-caps prose + 0 + 6 alnum
+        // remains a stated residual. Runs on spaced text everywhere;
+        // normalizeValue collapses to canonical, validateValue enforces
+        // the strict shape on the collapsed form.
+        regexes: [/\b[A-Z]{4}0[A-Z0-9]{6}\b/gi, /\b[A-Z](?:\s*[A-Z]){3}\s*0(?:\s*[A-Za-z0-9]){6}\b/g],
+        normalizeValue: (v) => v.replace(/\s+/g, ""),
+        validateValue: (v) => /^[A-Z]{4}0[A-Z0-9]{6}$/i.test(v.replace(/\s+/g, ""))
       },
       {
         field_type: "TRACKING_NUMBER",
@@ -47295,6 +47408,19 @@ Suspected type: ${types}
 Reply with exactly this JSON and nothing else: {"verdict":"yes","confidence":0.9} or {"verdict":"no","confidence":0.9}.
 Example: region "Tamluk@2019" near "Gate Pass valid till Friday" -> {"verdict":"yes","confidence":0.9}
 verdict "yes" means redact (passwords, account numbers, ID codes, private emails). "no" means ordinary words, masked values (98XXX-XX210), hashtags, filenames.`;
+}
+function buildTemplateCaption({ width, height, finalFindings, faceCount = 0 }) {
+  const text = (finalFindings || []).filter((f) => !/face/i.test(String(f.entity || "")));
+  const counts = /* @__PURE__ */ new Map();
+  for (const f of text) {
+    const t = String(f.entity || "PII");
+    counts.set(t, (counts.get(t) ?? 0) + 1);
+  }
+  const parts = [...counts.entries()].map(([t, n]) => `${t} x${n}`);
+  let s = `Screenshot ${width}x${height}`;
+  s += text.length ? ` with ${text.length} redacted region${text.length === 1 ? "" : "s"} (${parts.join(", ")})` : " with no detected sensitive regions";
+  if (faceCount) s += ` and ${faceCount} blurred face${faceCount === 1 ? "" : "s"}`;
+  return `${s}.`;
 }
 var ALLOWED_FASTVLM_TYPES;
 var init_prompts = __esm({
@@ -48100,6 +48226,7 @@ function adjudicateOrFallback({
       fusedCandidate: candidate
     });
     if (!bbox) {
+      console.log(`[TRACE] drop ${candidate.candidate_id}[${(candidate.candidate_types || []).join("+")}] gate=0 nobbox`);
       continue;
     }
     fallback.push({
@@ -48402,6 +48529,7 @@ var v7_extension_exports = {};
 __export(v7_extension_exports, {
   _prewarmModels: () => _prewarmModels,
   decodeImageInput: () => decodeImageInput,
+  generateCaptionOnRedactedImage: () => generateCaptionOnRedactedImage,
   runExtensionPipeline: () => runExtensionPipeline
 });
 async function _prewarmModels() {
@@ -48899,6 +49027,67 @@ async function runFastVLMCandidateChecks({ imageBlob, imageW, imageH, reviewCand
     errored
   };
 }
+async function generateCaptionOnRedactedImage(redactedBlob, computeDevice) {
+  if (Date.now() < _fastvlmCooldownUntil) {
+    throw new Error("caption skipped: T2 cooling down after abandoned generate");
+  }
+  const device = computeDevice && computeDevice.type === "webgpu" ? computeDevice : { type: "webgpu", label: "caption" };
+  const fastvlm = await loadFastVLM(device);
+  const bitmap = await createImageBitmap(redactedBlob);
+  let frameBlob = redactedBlob;
+  try {
+    const max2 = 448;
+    if (bitmap.width > max2 || bitmap.height > max2) {
+      const scale = Math.min(max2 / bitmap.width, max2 / bitmap.height);
+      const canvas = new OffscreenCanvas(Math.max(1, Math.round(bitmap.width * scale)), Math.max(1, Math.round(bitmap.height * scale)));
+      canvas.getContext("2d").drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+      frameBlob = await canvas.convertToBlob({ type: "image/png" });
+    }
+  } finally {
+    closeBitmap(bitmap);
+  }
+  const image = await load_image(frameBlob);
+  const messages = [{ role: "user", content: "<image>Describe this image briefly in one sentence." }];
+  const rendered = fastvlm.processor.apply_chat_template(messages, { add_generation_prompt: true });
+  const inputs = await fastvlm.processor(image, rendered, { add_special_tokens: false });
+  const inputLength = Number(inputs?.input_ids?.dims?.at(-1) ?? 0);
+  const generatePromise = fastvlm.model.generate({
+    ...inputs,
+    max_new_tokens: CAPTION_MAX_TOKENS,
+    do_sample: false,
+    repetition_penalty: 1.05
+  });
+  generatePromise.catch(() => {
+  });
+  let generated;
+  try {
+    generated = await Promise.race([
+      generatePromise,
+      new Promise(
+        (_, reject) => setTimeout(() => reject(new Error(`caption generate timed out after ${CAPTION_TIMEOUT_MS}ms`)), CAPTION_TIMEOUT_MS)
+      )
+    ]);
+  } catch (err) {
+    if (String(err?.message || "").includes("timed out")) {
+      _fastvlmCooldownUntil = Date.now() + FASTVLM_TIMEOUT_COOLDOWN_MS;
+    }
+    throw err;
+  }
+  disposeTensors(inputs);
+  let text = "";
+  try {
+    const generatedOnly = inputLength > 0 ? generated.slice(null, [inputLength, null]) : generated;
+    text = fastvlm.processor.batch_decode(generatedOnly, { skip_special_tokens: true })[0] ?? "";
+    if (generatedOnly && generatedOnly !== generated) disposeTensors({ generatedOnly });
+  } catch {
+    text = fastvlm.processor.batch_decode(generated, { skip_special_tokens: true })[0] ?? "";
+  } finally {
+    disposeTensors({ generated });
+  }
+  text = String(text).replace(/\s+/g, " ").trim().slice(0, 300);
+  if (!text) throw new Error("caption generate returned empty text");
+  return text;
+}
 async function runExtensionPipeline(inputImage, options = {}, onProgress = null) {
   if (_pipelineRunning) {
     throw new Error("PerScope: a capture is already in progress. Please wait for it to finish.");
@@ -49156,8 +49345,15 @@ async function _runExtensionPipelineInner(inputImage, options = {}, onProgress =
   });
   const totalTimeMs = Math.round(performance.now() - tTotalStart);
   const memAfter = heapSample();
-  const _rawFallback = fastvlmResult?.raw && !String(fastvlmResult.raw).trim().startsWith("{") ? sanitizeCaption(String(fastvlmResult.raw).trim(), fastvlmEvidence) : null;
-  const safeCaption = sanitizeCaption(fastvlmResult?.parsed?.caption || _rawFallback || "", fastvlmEvidence) || null;
+  const templateCaption = buildTemplateCaption({
+    width: decoded.width,
+    height: decoded.height,
+    finalFindings,
+    faceCount: faceFindings.length
+  });
+  const legacyCaption = sanitizeCaption(fastvlmResult?.parsed?.caption || "", fastvlmEvidence) || null;
+  const safeCaption = legacyCaption || templateCaption;
+  const captionSource = legacyCaption ? "fastvlm" : "template";
   const evidenceOutput = {
     input_mode: {
       image: true,
@@ -49170,14 +49366,15 @@ async function _runExtensionPipelineInner(inputImage, options = {}, onProgress =
     },
     global_description: {
       caption: safeCaption,
-      source: "fastvlm",
+      source: captionSource,
       model: FASTVLM_MODEL,
-      status: fastvlmResult?.status ?? "unknown"
+      status: fastvlmResult?.status ?? "unknown",
+      captionPending: options.asyncCaption === true
     },
     florence: {
       description: safeCaption ?? "",
       caption: safeCaption ?? "",
-      source: "fastvlm",
+      source: captionSource,
       model: FASTVLM_MODEL
     },
     ocr: {
@@ -49253,7 +49450,7 @@ async function _runExtensionPipelineInner(inputImage, options = {}, onProgress =
     totalTimeMs
   };
 }
-var FASTVLM_MODEL, FASTVLM_DTYPE, FASTVLM_TIMEOUT_COOLDOWN_MS, _fastvlmCooldownUntil, FASTVLM_CANDIDATE_MAX_TOKENS, FASTVLM_CANDIDATE_TIMEOUT_MS, T2_CROP_MARGIN, PII_DEBUG, _pipelineRunning, NER_MODEL_LOCAL, NER_MODEL_REMOTE, NER_MAX_TOKENS, _ocrServiceCache, _nerCache, _fastvlmCache, MAX_WORKING_DIMENSION, _nerLoadPromise, _fastvlmLoadPromise, BalancedJsonStoppingCriteria;
+var FASTVLM_MODEL, FASTVLM_DTYPE, FASTVLM_TIMEOUT_COOLDOWN_MS, _fastvlmCooldownUntil, FASTVLM_CANDIDATE_MAX_TOKENS, FASTVLM_CANDIDATE_TIMEOUT_MS, T2_CROP_MARGIN, CAPTION_MAX_TOKENS, CAPTION_TIMEOUT_MS, PII_DEBUG, _pipelineRunning, NER_MODEL_LOCAL, NER_MODEL_REMOTE, NER_MAX_TOKENS, _ocrServiceCache, _nerCache, _fastvlmCache, MAX_WORKING_DIMENSION, _nerLoadPromise, _fastvlmLoadPromise, BalancedJsonStoppingCriteria;
 var init_v7_extension = __esm({
   "src/pipeline/v7-extension.js"() {
     init_ort_bundle_min();
@@ -49277,6 +49474,8 @@ var init_v7_extension = __esm({
     FASTVLM_CANDIDATE_MAX_TOKENS = 48;
     FASTVLM_CANDIDATE_TIMEOUT_MS = 3e4;
     T2_CROP_MARGIN = 0.25;
+    CAPTION_MAX_TOKENS = 40;
+    CAPTION_TIMEOUT_MS = 6e4;
     PII_DEBUG = false;
     _pipelineRunning = false;
     if (typeof chrome !== "undefined" && chrome?.runtime?.getURL) {
@@ -49659,14 +49858,15 @@ function _maybeRequestRecycle({ options, evidence }) {
   } catch {
   }
 }
-async function runPipelineJob({ jobId, imageBytes, options, onProgress }) {
+async function runPipelineJob({ jobId, imageBytes, options, onProgress, wantCaption = false }) {
   const t0 = performance.now();
   const buffer = new Uint8Array(imageBytes).buffer;
-  const result = await runExtensionPipeline(buffer, options || {}, onProgress);
+  const pipelineOptions = { ...options || {}, asyncCaption: wantCaption };
+  const result = await runExtensionPipeline(buffer, pipelineOptions, onProgress);
   const outputArrayBuffer = await result.outputBlob.arrayBuffer();
   const outputBase64 = uint8ToBase64(new Uint8Array(outputArrayBuffer));
   _maybeRequestRecycle({ options, evidence: result.evidence });
-  return {
+  const response = {
     status: "SUCCESS",
     jobId,
     outputBase64,
@@ -49675,6 +49875,8 @@ async function runPipelineJob({ jobId, imageBytes, options, onProgress }) {
     computeDevice: result.computeDevice,
     totalTimeMs: Math.round(performance.now() - t0)
   };
+  const captionJob = wantCaption && outputBase64 ? { jobId, imageBase64: outputBase64, computeDevice: result.computeDevice } : null;
+  return { response, captionJob };
 }
 var APPROVAL_WAIT_MS = 6e4;
 function approvalVerdict({ tool, label, text, reasons }) {
@@ -49733,12 +49935,13 @@ async function handleBridgeTool({ tool, params }) {
       }
       const res = await runPipelineJob({ jobId, imageBytes, options: bridgeOptions, onProgress: () => {
       } });
+      const response = res.response || res;
       return {
         status: "ok",
-        redactedImage: res.outputBase64,
-        evidence: res.evidence,
-        totalTimeMs: res.totalTimeMs,
-        computeDevice: res.computeDevice
+        redactedImage: response.outputBase64,
+        evidence: response.evidence,
+        totalTimeMs: response.totalTimeMs,
+        computeDevice: response.computeDevice
       };
     } catch (err) {
       return { status: "error", reason: err?.message || "pipeline-failed" };
@@ -49907,7 +50110,26 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     (async () => {
       try {
         console.log(`[PerScope Offscreen] Starting pipeline job ${jobId}...`);
-        sendResponse(await runPipelineJob({ jobId, imageBytes, options, onProgress }));
+        const { response, captionJob } = await runPipelineJob({ jobId, imageBytes, options, onProgress, wantCaption: true });
+        sendResponse(response);
+        if (captionJob) {
+          (async () => {
+            try {
+              const bytes = Uint8Array.from(atob(captionJob.imageBase64), (ch2) => ch2.charCodeAt(0));
+              const caption = await generateCaptionOnRedactedImage(
+                new Blob([bytes], { type: "image/png" }),
+                captionJob.computeDevice
+              );
+              console.log(`[CAPTION] async VLM caption landed for ${jobId} (${caption.length} chars)`);
+              try {
+                await chrome.runtime.sendMessage({ target: "ui", action: "CAPTION_RESULT", jobId, caption });
+              } catch {
+              }
+            } catch (err) {
+              console.warn(`[CAPTION] async caption skipped for ${jobId}: ${err.message}`);
+            }
+          })();
+        }
       } catch (error) {
         console.error(`[PerScope Offscreen] Pipeline error on job ${jobId}:`, error);
         sendResponse({
@@ -49994,4 +50216,4 @@ onnxruntime-web/dist/ort.webgpu.bundle.min.mjs:
    * Licensed under the MIT License.
    *)
 */
-;globalThis.__PERSCOPE_BUILD={"commit":"d8072c4","time":"2026-09-28T17:26:47.256Z"};
+;globalThis.__PERSCOPE_BUILD={"commit":"43bed93","time":"2026-09-28T18:53:33.220Z"};

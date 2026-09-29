@@ -99,6 +99,40 @@ Measurement:
    fix scopes on both paths.
 4. [M4] First live CPU table from the full run; decide verdicts later, if ever.
 
+## Optimization pass 2026-09-28 (locked decisions H=0.90 F=0.50 N=6 margin 25%)
+
+- Gate closed on clean (0 HIGH 0 LOW, T2 skipped, ~2s); ambiguous now 5/5
+  M3 in ~7s with T2 fully skipped (all HIGH). Kill chain was fusion
+  containment keeping NER sentence-spans over deterministic values, then
+  Gate 5 dropping sentences as prose — fixed by value-rescue (smaller
+  deterministic span wins when larger is ettin-only prose >2x).
+- [iGPU] Session A/B CLOSED as no-op: bundled onnxruntime-web 1.29.0 honors
+  exactly one WebGPU EP key (preferredLayout NCHW/NHWC); buffer-cache bucket
+  modes + validationMode:wgpuOnly would be silently ignored. Bare
+  ["webgpu"] stands; re-check after an ORT upgrade. Code comment at NER
+  session options records the verification.
+- [Caption] Async caption on redacted image (user architecture): template
+  caption ships instantly in every evidence (counts/types only, unleakable);
+  VLM caption runs strictly post-delivery on the redacted pixels with an
+  unconstrained 40-token prompt (no rule 10, no scrub — safe by
+  construction), landing via CAPTION_RESULT in popup/dashboard. Bridge
+  caption omitted by decision. 8/8 Node suites pass (adds template-caption).
+- [DOM-text] Tamluk@2019 bare in read_page text while image redacted it:
+  piidetector PASSWORD needs password:/passwd:/pwd: labels ("gate pass:"
+  falls through) and EMAIL_ID needs a dotted TLD. Fix extension-side
+  (contract untouched): freestanding credential-shape spans merged in
+  runTier0OnSegments pre-redactPII, PASSWORD placeholder via existing
+  NER_REPLACEMENTS. DOM e2e proves s1-><PASSWORD> with spoken-email intact.
+- [IFSC-split] Live miss @959px: OCR fragmented "W BSC0LM 1234" and the
+  condensed-row glue killed \b while per-item could not span fragments.
+  Fix stack: space-tolerant IFSC variant (uppercase-letter bank keeps
+  "Call 0123456" prose out) + spaced-row matching via condensed coord map
+  + normalizeValue canonicalization + collapsed-form sub-bbox mapping +
+  fragment-union trust in the bbox resolver (fragmentation-scoped, prose
+  lines untouched) + strict-type guard on side-by-side/vertical label
+  paths (killed the IFSC="looks" @0.92 FP class). Popup gains a Download
+  result image button beside copy.
+
 ## Harness changes made during shakedown (in tree, unpushed)
 
 - Degraded-run handling (stage error/open => excluded from stats, flagged).

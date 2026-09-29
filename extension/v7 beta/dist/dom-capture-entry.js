@@ -1107,6 +1107,30 @@ function extractSpokenEmailSpans(text) {
   }
   return spans;
 }
+var CREDENTIAL_RE = /\b(?=[A-Za-z0-9._-]*@)(?=[A-Za-z0-9._-]*[A-Za-z])[A-Za-z0-9._-]+@[A-Za-z0-9.-]+\b/gi;
+function extractCredentialSpans(text) {
+  const src = String(text ?? "");
+  const spans = [];
+  CREDENTIAL_RE.lastIndex = 0;
+  let m;
+  while ((m = CREDENTIAL_RE.exec(src)) !== null) {
+    const value = m[0];
+    if (value.length === 0) {
+      CREDENTIAL_RE.lastIndex++;
+      continue;
+    }
+    if (value.length < 8 || !/\d/.test(value) && !/[#$%&*!?_]/.test(value)) continue;
+    spans.push({
+      type: "PASSWORD",
+      value,
+      start: m.index,
+      end: m.index + value.length,
+      confidence: 0.85,
+      credential: true
+    });
+  }
+  return spans;
+}
 function isPlausibleValueDom(text) {
   const v = String(text ?? "").trim();
   if (!v || v.length < 2 || v.length > 80) return false;
@@ -1636,6 +1660,10 @@ function runTier0OnSegments(segments, detector) {
     const detection = detector.detectPII(text);
     const detections = [...detection && detection.detections || []];
     for (const span of extractSpokenEmailSpans(text)) {
+      const collides = detections.some((d) => span.start < d.end && span.end > d.start);
+      if (!collides) detections.push(span);
+    }
+    for (const span of extractCredentialSpans(text)) {
       const collides = detections.some((d) => span.start < d.end && span.end > d.start);
       if (!collides) detections.push(span);
     }
@@ -2235,4 +2263,4 @@ if (typeof chrome !== "undefined" && chrome?.runtime?.onMessage) {
     return true;
   });
 }
-;globalThis.__PERSCOPE_BUILD={"commit":"d8072c4","time":"2026-09-28T17:26:47.256Z"};
+;globalThis.__PERSCOPE_BUILD={"commit":"43bed93","time":"2026-09-28T18:53:33.220Z"};

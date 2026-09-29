@@ -292,7 +292,18 @@ async function processImage(blob) {
 // Progress listener (packaged extension only).
 if (hasExtensionAPIs && chrome.runtime && chrome.runtime.onMessage) {
   chrome.runtime.onMessage.addListener((msg) => {
-    if (msg.target !== "ui" || msg.action !== "PIPELINE_PROGRESS") return;
+    if (msg.target !== "ui") return;
+    // Async VLM caption upgrade (see popup.js): template stands on mismatch.
+    if (msg.action === "CAPTION_RESULT") {
+      if (msg.jobId !== activeJobId || !msg.caption) return;
+      if (evidenceData && evidenceData.global_description) {
+        evidenceData.global_description.caption = String(msg.caption);
+        evidenceData.global_description.source = "fastvlm-caption";
+      }
+      D.dashCaptionText.textContent = String(msg.caption);
+      return;
+    }
+    if (msg.action !== "PIPELINE_PROGRESS") return;
     if (msg.jobId !== activeJobId) return;
     D.dashStatusIndicator.textContent = `Running ${msg.progress.stage}...`;
   });

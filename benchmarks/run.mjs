@@ -19,6 +19,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
+import { pathToFileURL } from "node:url";
 import { execSync } from "node:child_process";
 import { checkHealth, callTool, listTabs, DEFAULT_MCP_URL, DEFAULT_HEALTH_URL } from "./lib/mcp-client.mjs";
 import { startFixtureServer } from "./lib/serve.mjs";
@@ -124,9 +125,11 @@ function gitCommit() {
   }
 }
 
+export { gitCommit };
+
 /* Environment actually observable from the bench host. Anything we cannot
  * observe is reported as NOT MEASURED rather than guessed (Phase 7 rule). */
-function collectEnv() {
+export function collectEnv() {
   let cpuModel = null;
   let cpuCount = null;
   try {
@@ -254,7 +257,7 @@ function extractRun(result, wallMs) {
 
 /* ---- aggregation ---- */
 
-function aggregateFixture(fixture, cold, steady, ctx = {}) {
+export function aggregateFixture(fixture, cold, steady, ctx = {}) {
   // Steady stats cover clean runs only: failed runs errored at the top
   // level, degraded runs finished on a failure fast-path (their ~3s
   // totals would otherwise masquerade as miraculous latency). Both are
@@ -913,10 +916,21 @@ async function selfTest() {
   console.log("self-test passed (plumbing + accuracy layers end-to-end against stub bridge).");
 }
 
-const opts = parseArgs(process.argv.slice(2));
+const isMainModule = (() => {
+  try {
+    const entry = process.argv[1] ? pathToFileURL(process.argv[1]).href : null;
+    return entry !== null && import.meta.url === entry;
+  } catch {
+    return false;
+  }
+})();
+if (!isMainModule) {
+  console.error("benchmarks/run.mjs imported as a module - aggregation functions available, no run launched.");
+} else {
 // NOTE: never process.exit() here - on Windows/Node 24 exiting with live
 // fetch-pool handles trips a UV assertion. Setting exitCode lets the loop
 // drain instead.
+const opts = parseArgs(process.argv.slice(2));
 if (opts.selfTest) {
   selfTest().then(
     () => {},
@@ -933,4 +947,5 @@ if (opts.selfTest) {
       process.exitCode = 1;
     },
   );
+}
 }

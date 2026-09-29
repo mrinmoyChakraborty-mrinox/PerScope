@@ -66,6 +66,10 @@ Client-measured wall time is recorded alongside but never mixed into stats.
 ## Outputs
 
 - `results/<timestamp>.json` — full raw data (git-ignored).
+- `results/official-baseline-<timestamp>.json` — multi-batch official
+  aggregate via `node benchmarks/combine-baseline.mjs --files=a.json,b.json,...
+  [--label=...]` (same per-fixture code as live runs; use when wedge-aborts
+  force small `--runs=N` top-up batches instead of one `--runs=20`).
 - `latest.md` — tracked summary: stage latency stats, cold-vs-steady table,
   memory deltas + drift verdicts, escalation rate, per-fixture breakdown,
   accuracy proxies, flags. Diff it across commits.

@@ -1,77 +1,90 @@
-# PerScope benchmark — validity statement (accuracy-extended harness)
+# PerScope benchmark — validity statement (official live baseline)
 
-Bench commit: `d8072c4`. Harness: `benchmarks/` (extended in place; no separate system).
+Bench commit: `43bed93` **plus uncommitted extension changes** (heuristics,
+safety, prompts, offscreen — all built into `extension/v7 beta/dist/` before
+the session; `dist/offscreen.js` contains the benchmark instrumentation and is
+newer than `src/`). Official baseline:
+`benchmarks/results/official-baseline-2026-09-28_23-37-36.json`, aggregated
+with `benchmarks/combine-baseline.mjs` from 21 preserved batch JSONs using the
+exact per-fixture code as live runs (`aggregateFixture` imported from
+`benchmarks/run.mjs`).
 
 ## What was measured
 
-- Latency/resource layer (pre-existing, preserved unchanged): end-to-end and
-  per-stage latency (DEVICE, IMAGE_DECODE, FACE, OCR, NER, HEURISTICS, FASTVLM,
-  REDACT), offscreen JS-heap before/after + drift verdict, Windows Chrome CPU
-  per run, tier-escalation path/rate, fallback/degraded-run accounting with
-  cold/steady separation. Untouched semantics: same orchestration, same
-  `summarize` (nearest-rank p95), same degraded-run exclusion, same JSON schema
-  plus additive accuracy fields.
-- Accuracy layer (new, this change): PII precision/recall/F1 vs
-  `benchmarks/ground_truth/*.json` (TP = REDACT entity text-matched by >=1
-  finding; FP = finding matching no REDACT entity; FN = unmatched REDACT;
-  normalized containment either direction, min 3 chars; type aliases
-  PERSON_NAME~FIRST/LAST/NAME, ADDRESS~STREET_ADDRESS, DATE~DOB/TIME; code:
-  `benchmarks/lib/accuracy.mjs`); redaction text-coverage/under/over/
-  preservation/OCR-leak plus box-IoU where GT boxes exist, predicted regions
-  via `canvas-redactor.js` dedup+clamp semantics with parity unit tests
-  (`benchmarks/lib/redaction.mjs`); deterministic visual-context tasks, static
-  (fixture source) + live (run evidence), reported separately
-  (`benchmarks/lib/visual-tasks.mjs`, `ground_truth/visual-tasks.json`).
-- Verified this session: `node benchmarks/run.mjs --self-test` passes (incl.
-  new assertions); 10/10 static visual tasks pass against fixture sources;
-  ground-truth census (60 entities); daemon reachable but no live guided runs.
+120 clean steady runs (20/fixture × 6 fixtures), each fixture's cold excluded;
+14 failed captures (5 FastVLM-hang timeouts + 9 unpaired follow-ups) counted,
+never averaged; 0 degraded runs. Latency (E2E + 8 stages), offscreen JS heap
+before/after + drift verdict, Windows Chrome CPU/run, tier paths, fallback
+flags, PII P/R/F1 vs `benchmarks/ground_truth/*.json`, redaction
+coverage/under/over/preservation/OCR-leak (+IoU machinery present but null —
+no GT boxes), 17 visual tasks (10 static + 7 live), env + model census.
+Pre-existing latency/resource semantics untouched; accuracy fields additive.
 
 ## Methodology
 
-Live runs drive `capture_tab` over MCP exactly like an agent, one cold warm-up
-+ N steady runs per fixture with active-tab verification, gap settle delay,
-and abort-safety. Accuracy is scored micro (TP/FP/FN summed) over clean steady
-runs only — degraded/failed runs are counted, never averaged in. Static visual
-tasks read the fixture files; live tasks read stored run fields (ocrItems from
-OCR stage info, tier2Fired from FASTVLM status, findingCount, faceCount).
+`capture_tab` over MCP HTTP exactly like an agent, guided active-tab flow with
+URL verification (one wrong-tab refusal observed live: harness aborted cleanly
+with an empty file, proving the guard). Sequential, 2 s settle gap, 600 s
+per-capture ceiling, 3-consecutive-failure abort, offscreen recycle default
+15. Wedge-aborted batches were topped up with small `--runs=N` batches;
+micro-aggregation across batch files is identical to one long run (all batch
+IDs and per-batch colds preserved in each fixture's `batches`/`batchColds`).
+Matching rules (`lib/accuracy.mjs`) frozen before the session; no post-hoc
+tuning — GT gaps found during analysis are reported as artifacts, not fixed.
 
 ## Dataset size
 
-6 fixtures, 60 ground-truth entities (37 REDACT-with-text positives, 23 LEAVE
-decoys/negatives), 17 visual tasks (10 static, 7 live). invoice-v2.html added
-so recall is measurable on non-placeholder domains (@acme-invoice.test);
-text-heavy placeholder emails are LEAVE decoys by pipeline design
-(EXAMPLE_EMAIL_DOMAINS). No real personal data anywhere; all values synthetic.
+6 localhost fixtures, 60 GT entities (37 REDACT-with-text positives, 23 LEAVE
+decoys), 17 visual tasks. `invoice-v2.html` (new, `@acme-invoice.test`
+positives) makes recall measurable; text-heavy `@example.*` stays LEAVE decoys
+by pipeline design. All values synthetic except the repo's sample certificate
+image (`doc-face.png`), whose printed text the pipeline reads and the
+face/document GT does not enumerate (see limitations). No real personal data.
 
 ## Ground-truth definition
 
-ambiguous.html GT = user-approved shakedown.md M3 list (REDACT 3524/8810/
-WBSC0LM1234/Tamluk@2019/jeet-dot-routh-at-gmail; 10 LEAVE items) — not
-re-decided. text-heavy/invoice-v2/face/clean/document GT derived from fixture
-content with per-entity rationale in-file. No pixel bboxes are hand-invented:
-FACE regions resolve at runtime from `face_detection.faces` + image dims.
+ambiguous.html GT = user-approved shakedown M3 list, not re-decided.
+text-heavy/invoice-v2 entities derived from fixture content with per-entity
+rationale in-file. Face/document GT covers the DOM layer; FACE regions carry
+`bbox_method: runtime` (resolved from `face_detection.faces`, never
+hand-invented). TP/FP/FN per `lib/accuracy.mjs` header; redaction metrics per
+`lib/redaction.mjs` header.
 
 ## Known limitations
 
-1. No live controlled baseline yet (N=20x6 pending a guided session); all live
-   metrics are NOT MEASURED, never estimated.
-2. Text matching is normalized-containment, not span-exact; OCR garbling
-   ("em ail") can cause FNs the pipeline arguably got right visually.
-3. IoU is null until GT boxes exist (only FACE runtime boxes); text redaction
-   is scored via region/text outcomes, not pixels (pixels need OffscreenCanvas).
-4. FastVLM-error fallback runs still score (detection may come from fusion
-   fallback — adjudication/fallback fields are recorded alongside).
-5. Prior issues carried forward: FastVLM dominance on dense pages, Tier-0
-   under-fire hypothesis, session degradation (recycle default 15), OCR ~0-1ms
-   anomaly, clean-T2 anomalies — now measurable, not yet resolved live.
-6. face.html/document.html image paths fixed this change; live runs pending.
+1. FastVLM wedge: 5 events / 68 Tier-2 attempts (7.4%), any page size; each
+   kills the offscreen document (bridge exonerated from code: no socket
+   timeouts exist; extension reconnect loop never self-healed → full document
+   death). Session required 11 reload+repairs.
+2. Recall gaps (F2): invoice ADDRESS-family/TAX_ID/ORDER_REF/TRACKING/
+   ACCESS_CODE/EMPLOYEE_ID and second names systematically missed.
+3. OCR-leak 0.44: missed values persist in `redacted_ocr_text` (spacing-split
+   values partially evade chunk masking).
+4. GT-incompleteness artifacts (unfixed by design): document P=0.000 and 17
+   face FPs are correct FACE detections the text-matcher can't score; 20 face
+   FPs are a missing submitted-date decoy; 12 are true certificate print
+   outside GT scope. Overall P=0.790 includes these; per-fixture rows tell the
+   true story.
+5. `fallback=true` on 100% of runs (flag means fusion/fallback path taken,
+   including T2-skips — a semantics note, not a failure).
+6. OCR/NER report ~0 ms on fast paths while `done` (F5 open); clean E2E is
+   bimodal across sessions (1.1 s smoke vs 2.1 s baseline); document min
+   227 ms single-run outlier retained, cause not established.
+7. Heap verdicts GC-confounded except ambiguous's clean +2.8 MB/run climb
+   (candidate, needs longer N).
+8. NOT MEASURED: pixel-level redaction, IoU, browser version (Chrome
+   154.0.8037.57 is host-observed, not from evidence), GPU/VRAM utilization,
+   per-model ablation, cross-device comparison (record-only device).
 
 ## Reproducibility
 
-Run: start bridge daemon with `PERSCOPE_TOOL_TIMEOUT_MS=600000`, load extension
-from current `extension/v7 beta` build, pair once, serve fixtures, then
-`npm run benchmark -- --runs=20 --fixtures=all --yes`. Every result JSON stores
-commit, env (Node/OS/CPU/RAM; browser/GPU recorded when observable), models
-seen in evidence, flags, GT files, and per-run finding text/bbox excerpts.
-`benchmarks/latest.md` regenerates each run with PII/redaction/visual/
-environment sections appended to the preserved latency report.
+Daemon with `PERSCOPE_TOOL_TIMEOUT_MS=600000`; extension loaded from current
+`extension/v7 beta` build + paired; `node benchmarks/serve-fixtures.mjs`
+(any free port) or `--fixture-base`; `node benchmarks/run.mjs --runs=20
+--fixtures=<id> --fixture-base=<url> --yes` per fixture (or `--fixtures=all`
+with guided prompts); `node benchmarks/combine-baseline.mjs --files=...`
+for the official aggregate; `node benchmarks/run.mjs --self-test` for
+harness verification (passes). Every result JSON stores commit, env, models,
+flags, GT files, and per-run finding text/bbox excerpts. `latest.md`
+regenerates per aggregate. Expect wedge-aborts on T2 fixtures: keep batch
+files, top up with small `--runs`, combine — do not cherry-pick.

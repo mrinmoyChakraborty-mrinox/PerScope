@@ -150,6 +150,7 @@ let redactedImageBlob = null;
 let redactedImageUrl = null;
 let currentEvidence = null;
 let currentCaption = "";
+let lastTotalTimeMs = null; // last completed job wall time (caption rebuild)
 let currentDevice = null;
 let currentBridge = null;
 let activeJobId = null;
@@ -336,7 +337,20 @@ function runSimulatedSteps(onDone) {
 // Real pipeline progress from the offscreen document.
 if (hasExtensionAPIs && chrome.runtime && chrome.runtime.onMessage) {
   chrome.runtime.onMessage.addListener((message) => {
-    if (message.target !== "ui" || message.action !== "PIPELINE_PROGRESS") return;
+    if (message.target !== "ui") return;
+    // Async VLM caption (post-delivery upgrade of the template caption):
+    // only applies to the currently displayed job; template stands otherwise.
+    if (message.action === "CAPTION_RESULT") {
+      if (message.jobId !== activeJobId || !message.caption) return;
+      currentCaption = String(message.caption);
+      if (currentEvidence && currentEvidence.global_description) {
+        currentEvidence.global_description.caption = currentCaption;
+        currentEvidence.global_description.source = "fastvlm-caption";
+      }
+      buildContextBlock(currentEvidence, lastTotalTimeMs);
+      return;
+    }
+    if (message.action !== "PIPELINE_PROGRESS") return;
     if (message.jobId !== activeJobId) return;
     const stage = message.progress && message.progress.stage;
     const map = { OCR: 0, NER: 1, FACE: 2, FASTVLM: 2, REDACT: 3 };
@@ -503,6 +517,7 @@ function onPipelineComplete(response, sourceLabel) {
   redactedImageUrl = URL.createObjectURL(redactedImageBlob);
 
   currentEvidence = response.evidence || null;
+  lastTotalTimeMs = response.totalTimeMs ?? null;
   currentCaption = String(
     (currentEvidence && (currentEvidence.fastvlm_adjudication?.caption ||
       currentEvidence.global_description?.caption)) ||
@@ -1035,6 +1050,27 @@ document.getElementById("btnCopyImage").addEventListener("click", async () => {
     flashLabel(label, "Copied ✓");
   } catch {
     flashLabel(label, "Clipboard blocked — try again");
+  }
+});
+
+// Download the final result image as a PNG file (same blob as copy).
+document.getElementById("btnDownloadImage").addEventListener("click", async () => {
+  const label = document.getElementById("btnDownloadImageLabel");
+  let url = null;
+  try {
+    const blob = await getResultImageBlob();
+    url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `perscope-redacted-${Date.now()}.png`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    flashLabel(label, "Downloaded ✓");
+  } catch {
+    flashLabel(label, "Download failed — try again");
+  } finally {
+    if (url) setTimeout(() => URL.revokeObjectURL(url), 5000);
   }
 });
 

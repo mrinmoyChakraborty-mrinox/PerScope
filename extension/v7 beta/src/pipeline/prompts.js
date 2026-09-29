@@ -337,10 +337,33 @@ function buildCandidateCheckPrompt(candidate, lineText) {
 
 
 
+// Instant template caption (async-caption architecture 2026-09-28): free,
+// deterministic, unleakable — counts and types only, never values. Ships in
+// every evidence on the fast path; the VLM caption (if requested) upgrades
+// it later via CAPTION_RESULT. Redaction boxes visible in-frame are fine.
+function buildTemplateCaption({ width, height, finalFindings, faceCount = 0 }) {
+    const text = (finalFindings || []).filter((f) => !/face/i.test(String(f.entity || "")));
+    const counts = new Map();
+    for (const f of text) {
+        const t = String(f.entity || "PII");
+        counts.set(t, (counts.get(t) ?? 0) + 1);
+    }
+    const parts = [...counts.entries()].map(([t, n]) => `${t} x${n}`);
+    let s = `Screenshot ${width}x${height}`;
+    s += text.length
+        ? ` with ${text.length} redacted region${text.length === 1 ? "" : "s"} (${parts.join(", ")})`
+        : " with no detected sensitive regions";
+    if (faceCount) s += ` and ${faceCount} blurred face${faceCount === 1 ? "" : "s"}`;
+    return `${s}.`;
+}
+
+
+
 export {
     ALLOWED_FASTVLM_TYPES,
     buildFastVLMRedactionEvidence,
     buildFastVLMRedactionPrompt,
     buildCandidateCheckPrompt,
+    buildTemplateCaption,
     buildPerceptionPrompt
 };

@@ -11,7 +11,7 @@
  *            as a JSON number array, and ~10× faster to serialise/parse).
  */
 import { resolveComputeDevice } from "../pipeline/gpu.js";
-import { runExtensionPipeline } from "../pipeline/v7-extension.js";
+import { runExtensionPipeline, generateCaptionOnRedactedImage } from "../pipeline/v7-extension.js";
 import { mapDomCaptureToReadPage } from "../shared/read-page-mapping.js";
 import { isDestructive } from "../shared/is-destructive.js";
 import { startBridgeLink } from "./bridge-link.js";
@@ -101,11 +101,15 @@ function _maybeRequestRecycle({ options, evidence }) {
 // -- Pipeline job (shared by popup UI and bridge capture_tab) ----------------
 // Refactored out of the RUN_PIPELINE handler so the bridge route invokes the
 // exact same path the popup's Capture button triggers — no divergent logic.
-async function runPipelineJob({ jobId, imageBytes, options, onProgress }) {
+// wantCaption (UI only, never bridge): after the response is built, the
+// caller may fire the async VLM caption on the redacted image via
+// captionJob. Caption is strictly post-delivery — output never waits.
+async function runPipelineJob({ jobId, imageBytes, options, onProgress, wantCaption = false }) {
   const t0 = performance.now();
   // Reconstruct ArrayBuffer from the number array sent via message
   const buffer = new Uint8Array(imageBytes).buffer;
-  const result = await runExtensionPipeline(buffer, options || {}, onProgress);
+  const pipelineOptions = { ...(options || {}), asyncCaption: wantCaption };
+  const result = await runExtensionPipeline(buffer, pipelineOptions, onProgress);
 
   // Encode output PNG as base64 — avoids the massive Array.from(Uint8Array)
   // serialisation that was the primary source of UI jitter.
@@ -115,7 +119,7 @@ async function runPipelineJob({ jobId, imageBytes, options, onProgress }) {
   // Phase 4: count + maybe schedule a recycle AFTER this result returns.
   _maybeRequestRecycle({ options, evidence: result.evidence });
 
-  return {
+  const response = {
     status: "SUCCESS",
     jobId,
     outputBase64,
@@ -124,6 +128,12 @@ async function runPipelineJob({ jobId, imageBytes, options, onProgress }) {
     computeDevice: result.computeDevice,
     totalTimeMs: Math.round(performance.now() - t0),
   };
+  // Caption input rides the already-encoded output (no second transfer):
+  // base64 redacted PNG + the device the pipeline resolved.
+  const captionJob = wantCaption && outputBase64
+    ? { jobId, imageBase64: outputBase64, computeDevice: result.computeDevice }
+    : null;
+  return { response, captionJob };
 }
 
 // -- Bridge tool routing -----------------------------------------------------
@@ -204,12 +214,15 @@ async function handleBridgeTool({ tool, params }) {
         bridgeOptions.recycleAfterCaptures = params.recycleAfterCaptures;
       }
       const res = await runPipelineJob({ jobId, imageBytes, options: bridgeOptions, onProgress: () => {} });
+      // Bridge caption: omitted by decision (agents rarely need it; the
+      // template caption already ships inside evidence). captionJob ignored.
+      const response = res.response || res;
       return {
         status: "ok",
-        redactedImage: res.outputBase64,
-        evidence: res.evidence,
-        totalTimeMs: res.totalTimeMs,
-        computeDevice: res.computeDevice,
+        redactedImage: response.outputBase64,
+        evidence: response.evidence,
+        totalTimeMs: response.totalTimeMs,
+        computeDevice: response.computeDevice,
       };
     } catch (err) {
       return { status: "error", reason: err?.message || "pipeline-failed" };
@@ -404,7 +417,28 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     (async () => {
       try {
         console.log(`[PerScope Offscreen] Starting pipeline job ${jobId}...`);
-        sendResponse(await runPipelineJob({ jobId, imageBytes, options, onProgress }));
+        const { response, captionJob } = await runPipelineJob({ jobId, imageBytes, options, onProgress, wantCaption: true });
+        sendResponse(response);
+        // Async caption, strictly post-delivery: output is already with the
+        // caller, so this burn never blocks anything. Lands in the UI via
+        // CAPTION_RESULT; failures keep the template caption silently.
+        if (captionJob) {
+          (async () => {
+            try {
+              const bytes = Uint8Array.from(atob(captionJob.imageBase64), (ch) => ch.charCodeAt(0));
+              const caption = await generateCaptionOnRedactedImage(
+                new Blob([bytes], { type: "image/png" }),
+                captionJob.computeDevice
+              );
+              console.log(`[CAPTION] async VLM caption landed for ${jobId} (${caption.length} chars)`);
+              try {
+                await chrome.runtime.sendMessage({ target: "ui", action: "CAPTION_RESULT", jobId, caption });
+              } catch {}
+            } catch (err) {
+              console.warn(`[CAPTION] async caption skipped for ${jobId}: ${err.message}`);
+            }
+          })();
+        }
       } catch (error) {
         console.error(`[PerScope Offscreen] Pipeline error on job ${jobId}:`, error);
         sendResponse({

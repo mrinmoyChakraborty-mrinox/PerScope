@@ -349,4 +349,4 @@ async function updateBridgeBadge(s) {
 export {
   ensureOffscreenDocument
 };
-;globalThis.__PERSCOPE_BUILD={"commit":"d8072c4","time":"2026-09-28T17:26:47.256Z"};
+;globalThis.__PERSCOPE_BUILD={"commit":"43bed93","time":"2026-09-28T18:53:33.220Z"};

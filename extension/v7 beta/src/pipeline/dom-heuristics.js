@@ -427,6 +427,39 @@ export function extractSpokenEmailSpans(text) {
   return spans;
 }
 
+/* Freestanding credential spans ("Tamluk@2019") for the DOM text path.
+   piidetector PASSWORD fires only on password:/passwd:/pwd: labels and
+   piidetector EMAIL_ID needs a dotted TLD — so a bare credential survives
+   DOM text redaction while the image pipeline redacts it (live miss
+   2026-09-28: text showed Tamluk@2019 bare, image showed [REDACTED]).
+   Mirrors the image Tier-0 PASSWORD-shape rule: @-form, >=8 chars,
+   digit-or-symbol. Letter-only "name@host" and short tokens stay out;
+   real dotted emails collide with piidetector hits and are skipped at
+   merge time in dom-capture.js (same pattern as spoken-email spans).
+   piidetector.js contract untouched. */
+const CREDENTIAL_RE = /\b(?=[A-Za-z0-9._-]*@)(?=[A-Za-z0-9._-]*[A-Za-z])[A-Za-z0-9._-]+@[A-Za-z0-9.-]+\b/gi;
+
+export function extractCredentialSpans(text) {
+  const src = String(text ?? "");
+  const spans = [];
+  CREDENTIAL_RE.lastIndex = 0;
+  let m;
+  while ((m = CREDENTIAL_RE.exec(src)) !== null) {
+    const value = m[0];
+    if (value.length === 0) { CREDENTIAL_RE.lastIndex++; continue; }
+    if (value.length < 8 || (!/\d/.test(value) && !/[#$%&*!?_]/.test(value))) continue;
+    spans.push({
+      type: "PASSWORD",
+      value,
+      start: m.index,
+      end: m.index + value.length,
+      confidence: 0.85,
+      credential: true,
+    });
+  }
+  return spans;
+}
+
 /**
  * DOM mirror of the image isPlausibleValue guards: rejects empties,
  * punctuation-only strings, overlong blobs, and long pure-alpha prose.

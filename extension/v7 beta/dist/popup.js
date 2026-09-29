@@ -94,6 +94,7 @@ var redactedImageBlob = null;
 var redactedImageUrl = null;
 var currentEvidence = null;
 var currentCaption = "";
+var lastTotalTimeMs = null;
 var currentDevice = null;
 var currentBridge = null;
 var activeJobId = null;
@@ -232,7 +233,18 @@ function runSimulatedSteps(onDone) {
 }
 if (hasExtensionAPIs && chrome.runtime && chrome.runtime.onMessage) {
   chrome.runtime.onMessage.addListener((message) => {
-    if (message.target !== "ui" || message.action !== "PIPELINE_PROGRESS") return;
+    if (message.target !== "ui") return;
+    if (message.action === "CAPTION_RESULT") {
+      if (message.jobId !== activeJobId || !message.caption) return;
+      currentCaption = String(message.caption);
+      if (currentEvidence && currentEvidence.global_description) {
+        currentEvidence.global_description.caption = currentCaption;
+        currentEvidence.global_description.source = "fastvlm-caption";
+      }
+      buildContextBlock(currentEvidence, lastTotalTimeMs);
+      return;
+    }
+    if (message.action !== "PIPELINE_PROGRESS") return;
     if (message.jobId !== activeJobId) return;
     const stage = message.progress && message.progress.stage;
     const map = { OCR: 0, NER: 1, FACE: 2, FASTVLM: 2, REDACT: 3 };
@@ -364,6 +376,7 @@ function onPipelineComplete(response, sourceLabel) {
   if (redactedImageUrl) URL.revokeObjectURL(redactedImageUrl);
   redactedImageUrl = URL.createObjectURL(redactedImageBlob);
   currentEvidence = response.evidence || null;
+  lastTotalTimeMs = response.totalTimeMs ?? null;
   currentCaption = String(
     currentEvidence && (currentEvidence.fastvlm_adjudication?.caption || currentEvidence.global_description?.caption) || ""
   ).trim();
@@ -791,6 +804,25 @@ document.getElementById("btnCopyImage").addEventListener("click", async () => {
     flashLabel(label, "Clipboard blocked \u2014 try again");
   }
 });
+document.getElementById("btnDownloadImage").addEventListener("click", async () => {
+  const label = document.getElementById("btnDownloadImageLabel");
+  let url = null;
+  try {
+    const blob = await getResultImageBlob();
+    url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `perscope-redacted-${Date.now()}.png`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    flashLabel(label, "Downloaded \u2713");
+  } catch {
+    flashLabel(label, "Download failed \u2014 try again");
+  } finally {
+    if (url) setTimeout(() => URL.revokeObjectURL(url), 5e3);
+  }
+});
 btnSend.addEventListener("click", async () => {
   if (btnSend.disabled) return;
   const ok = await copyTextToClipboard(getSanitizedPayload());
@@ -883,4 +915,4 @@ document.getElementById("demoStates").addEventListener("click", (e) => {
   await initDeviceStatus();
   await refreshBridgeStatus();
 })();
-;globalThis.__PERSCOPE_BUILD={"commit":"d8072c4","time":"2026-09-28T17:26:47.256Z"};
+;globalThis.__PERSCOPE_BUILD={"commit":"43bed93","time":"2026-09-28T18:53:33.220Z"};
